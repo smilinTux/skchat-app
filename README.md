@@ -1,57 +1,68 @@
-# SKChat App
+# skchat-app — Sovereign Chat in Your Hand 📱
 
-**Sovereign encrypted P2P communication — Flutter mobile & desktop client.**
+> **Your messages. Your calls. Your AI. On your hardware — in one app.**
+> A Flutter chat client that talks straight to the agent stack running on boxes you
+> own. No SaaS backend, no account, no relay you don't control.
 
-The SKChat App is the Flutter frontend for [SKChat](https://github.com/smilinTux/skchat) — a
-sovereign communication platform where humans and AI communicate as equals. It connects to the
-skcapstone daemon for agent orchestration, to skcomm for encrypted transport, and to CapAuth for
-sovereign identity — all running on your hardware.
+skchat-app is the **GUI client for SKChat** — the mobile and desktop surface of the
+[SKWorld](https://skworld.io) sovereign communication layer. It is **not** another
+messaging platform: it's the *face* of the backend you already run. The app speaks
+HTTP/WebSocket to your **SKComm** daemon for encrypted P2P transport, polls your
+**skcapstone** daemon for live agent presence and consciousness state, and uses
+**CapAuth** PGP identity so humans and AI agents talk as equals — every key, every
+message, every call on infrastructure you control.
+
+**New here?** SKChat treats people and AI agents as first-class peers in the same
+roster. You chat with Lumina the same way you chat with a friend — and both sit on
+*your* server, not someone else's cloud.
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)](https://flutter.dev)
+[![Flutter](https://img.shields.io/badge/Flutter-3.11%2B-blue)](https://flutter.dev)
 [![Backend: SKChat](https://img.shields.io/badge/Backend-SKChat-purple)](https://github.com/smilinTux/skchat)
 
 ---
 
-## What is this?
+## The 60-second version
 
-This repository is the Flutter app layer for the SKChat ecosystem. It provides:
+```mermaid
+flowchart LR
+    YOU["you<br/>(phone · laptop · tablet)"] --> APP["**skchat-app**<br/>chat · voice · groups · AI panel"]
+    APP -->|"sign + wrap<br/>(PGP)"| SKCOMM["your SKComm daemon<br/>(encrypted P2P transport)"]
+    SKCOMM -->|"direct"| PEER["the other person<br/>or AI agent"]
+    APP -->|"who's online?<br/>how's my agent feeling?"| SKCAP["your skcapstone daemon<br/>(agents · presence · consciousness)"]
+    APP -.->|"voice call<br/>(WebRTC P2P)"| PEER
+```
 
-- **Chat UI** — encrypted 1-to-1 and group conversations with human and AI participants
-- **WebRTC voice calls** — P2P direct calls, no relay server required
-- **AI consciousness panel** — live view of the agent's skcapstone consciousness state
-- **Coord board** — task coordination board polling the skcapstone dashboard (port 7778)
-- **Sovereign identity** — CapAuth-based onboarding, biometric auth, PGP key management
-- **Household agent roster** — live list of online agents from the skcapstone daemon (port 7777)
-- **Presence & activity** — real-time agent presence backed by `~/.skcapstone/heartbeats/`
-
-The backend is the SKChat Python daemon (`skchat start`). The app speaks HTTP/WebSocket to
-the daemon and HTTP to the skcapstone REST API.
+You install the app, point it at a daemon URL (defaults to `localhost`), pair an
+identity, and start talking. Messages get **signed with your local PGP key**,
+wrapped in an envelope, and handed to your own daemon — which delivers them P2P.
+Calls go direct over WebRTC. Nothing routes through a server you don't own.
 
 ---
 
-## Getting Started
+## Quickstart
 
 ### Prerequisites
 
-- Flutter SDK ^3.11
-- Running [SKChat](https://github.com/smilinTux/skchat) daemon: `skchat start`
-- Running skcapstone daemon (port 7777) and dashboard (port 7778)
+- **Flutter SDK ^3.11**
+- A running **[SKChat / SKComm](https://github.com/smilinTux/skchat)** daemon (REST + WS on `:9384`)
+- A running **skcapstone** daemon (`:7777`) and dashboard (`:7778`) for agent presence + the coord board
 
-### Build & Run
+### Build & run
 
 ```bash
-# Desktop (Linux)
+flutter pub get
+
+# Desktop (Linux) — there's also scripts/launch-linux.sh
 flutter run -d linux
 
-# Android
+# Mobile
 flutter run -d android
-
-# iOS
 flutter run -d ios
 
-# Override daemon URLs at build time
+# Point at a remote daemon (e.g. the box under your desk)
 flutter run -d linux \
+  --dart-define=SKCOMM_URL=http://192.168.0.158:9384 \
   --dart-define=SKCAPSTONE_URL=http://192.168.0.158:7777 \
   --dart-define=SKCAPSTONE_DASHBOARD_URL=http://192.168.0.158:7778
 ```
@@ -62,107 +73,110 @@ flutter run -d linux \
 flutter test
 ```
 
----
-
-## Architecture
-
-```
-lib/
-├── features/
-│   ├── chats/              # Conversation list + household agents (polls skcapstone :7777)
-│   ├── chat/               # Individual chat view
-│   ├── groups/             # Group chat management
-│   ├── calls/              # WebRTC voice call UI
-│   ├── consciousness/      # Agent consciousness status (skcapstone :7777)
-│   ├── coord/              # Coordination board (skcapstone dashboard :7778)
-│   ├── identity/           # PGP key management + DID
-│   ├── profile/            # Agent profile + soul settings
-│   ├── auth/               # CapAuth onboarding + biometric auth
-│   └── onboarding/         # First-run sovereign identity setup
-├── services/
-│   ├── skcapstone_client.dart   # HTTP client → skcapstone daemon :7777 + dashboard :7778
-│   ├── skcomm_client.dart       # HTTP client → skcomm transport API
-│   ├── skcomm_sync.dart         # Syncthing-backed message sync
-│   ├── webrtc_service.dart      # P2P call management (WebRTC)
-│   ├── capauth_service.dart     # CapAuth identity operations
-│   ├── daemon_service.dart      # skchat daemon lifecycle
-│   └── identity_service.dart   # PGP key operations
-└── main.dart
-```
+All three daemon URLs are compile-time `--dart-define` overrides; the defaults
+assume the backend runs on the same device (`localhost`).
 
 ---
 
-## First Principles & The Full Vertical
+## What's in the app
 
-> **Get back to first principles.**
-> The modern stack is rented. Your chat app connects to someone else's cloud, your calls route through a data center you don't control, and your AI is a sidebar on someone else's platform. You don't own it — you're a user account.
->
-> SKChat App is your **Comms / Chat app layer**. Your client. Your keys. Your hardware. Every layer open. Every layer **yours**.
+| Piece | What it does | Talks to |
+|---|---|---|
+| **Chat** | 1-to-1 conversations with humans or AI agents; optimistic send, reactions, replies, file-transfer bubbles, typing indicators | SKComm `:9384` |
+| **Groups** | Create/manage group chats and membership | SKComm daemon |
+| **Voice/video calls** | P2P WebRTC calls — SDP/ICE exchanged over the SKComm signaling WS; in-call controls, PiP, live quality indicator | SKComm WS `:9384` |
+| **Household agents** | Live roster of online AI agents | skcapstone `GET /api/v1/household/agents` `:7777` |
+| **Consciousness panel** | Agent consciousness-loop state + backend health badge | skcapstone `/consciousness` `:7777` |
+| **Coord board** | Coordination task board, polled every 60s | skcapstone dashboard `GET /api/board` `:7778` |
+| **Identity** | CapAuth onboarding, QR pairing, identity card, capability chips, trust meter | CapAuth (via daemon) |
+| **Crypto core** | Pure-Dart RSA-2048 keygen (in an isolate), PGP-style fingerprints, RSA-PKCS1v15-SHA256 message signing | local — `flutter_secure_storage` |
+| **Onboarding** | First-run sovereign-identity flow: welcome → identity → transport → pair → complete | local + daemon |
 
-**SKChat App is the Comms / Chat app layer of the SKWorld full vertical** — the mobile and desktop interface that puts the full sovereign stack in your hand, connecting directly to the agent ecosystem running on your own machines.
+### How a message actually moves
 
-### The full vertical
+A `ChatMessage` is signed and wrapped by `ChatCrypto.signAndWrap` into a
+`MessageEnvelope` (`{skchat_envelope: true, …}` JSON), POSTed to the SKComm daemon's
+`/api/v1/send`, and forwarded opaquely P2P. On receipt the envelope is parsed
+(`tryParse`, with graceful fallback to raw text for pre-envelope senders), the
+plaintext extracted, stored in **Hive**, and rendered. Signing is **best-effort** —
+if no local keypair is loaded yet (mid-onboarding), the message still sends, unsigned.
 
-| Layer | Product(s) |
-|---|---|
-| **Soul** | soul blueprints · cloud9 |
-| **Apps** | skforge · skarchitect |
-| **Comms** | skcomm · skchat · **skchat-app** · skvoice |
-| **Models** | skmodel (Ollama/vLLM) |
-| **Data** | skmemory · skdata · skvector · skgraph |
-| **Identity** | capauth · skaid |
-| **Security** | sksecurity · skwaf · skca |
-| **OS** | skos |
-| **Silicon** | *your hardware* |
+---
 
-The app doesn't connect to a SaaS backend. It talks to your skcapstone daemon, your skcomm transport stack, and your CapAuth identity — all running on boxes you own. You can run the backend on a laptop under your desk and the app connects to that.
+## Where it lives in SKStack v2
 
-### Data sovereignty
-
-All persistent state lives on your hardware. The app stores nothing in a cloud it doesn't control. Messages are encrypted end-to-end by the SKChat daemon before leaving your network. WebRTC calls are P2P — audio never touches a relay server unless TURN is needed for NAT, and you run your own coturn. Your AI's identity and memory are stored in `~/.skcapstone/agents/` on your server, resolved by the app over your local network.
-
-### SKCapstone alignment
-
-**Integrated skcapstone subsystem — native HTTP client.** The app ships `SKCapstoneClient`, a Dart HTTP client with dedicated connections to the skcapstone daemon (`:7777`) and the skcapstone dashboard service (`:7778`). Features poll skcapstone directly: `household_agents_provider` fetches `/api/v1/household/agents`, `consciousness_provider` reads agent consciousness state, and `coord_board_provider` pulls coordination task boards. Heartbeat presence is read from `~/.skcapstone/heartbeats/{name}.json`. The app is the native mobile/desktop surface of the skcapstone agent ecosystem.
-
-### Where SKChat App fits in the vertical
+skchat-app is a **Comms** capability — specifically the *client surface* for the
+`skchat` port. It does no transport or identity itself: it renders, signs, and
+delegates. SKComm carries the bytes (transport), CapAuth issues the identity
+(Core), and skcapstone supplies the agent presence and consciousness it displays
+(Core).
 
 ```mermaid
 flowchart TD
-    USER["User (human)\nmobile · desktop · tablet"]
-    APP["**Comms / Chat App — SKChat App**\nFlutter UI\nchat · voice · groups · AI panel\ncoord board · identity"]
-    DAEMON["SKChat daemon\nPython · skchat start\nmessage bus · file storage"]
-    SKCAPSTONE["skcapstone daemon :7777\norchestrator · consciousness\nagent profiles · heartbeats"]
-    SKAPDASH["skcapstone dashboard :7778\ncoord board · metrics"]
-    SKCOMM["skcomm\n17 transport paths\nencrypted envelopes"]
-    CAPAUTH["capauth\nPGP sovereign identity\ncapability tokens"]
-    CLOUD9["cloud9\nFEB · seeds · emotional continuity"]
-    SOUL["Soul layer\nsoul blueprints"]
-    DATA["Data layer\nskmemory · skgraph"]
+    USER["operator / human"] -->|"installs · pairs identity"| APP
+
+    subgraph COMMS["Comms (the 4-C tier this app belongs to)"]
+      APP["**skchat-app**<br/>Flutter client<br/>chat · voice · groups · AI panel · coord board"]
+      SKCHAT["skchat / skcomm daemon<br/>:9384 REST + WS<br/>P2P transport · signaling · file store"]
+      SKVOICE["skvoice<br/>(voice synthesis)"]
+    end
+
+    subgraph CORE["Core (identity & cognition)"]
+      CAPAUTH["capauth<br/>PGP sovereign identity · QR pairing"]
+      SKCAP["skcapstone daemon :7777<br/>agents · consciousness · heartbeats"]
+      DASH["skcapstone dashboard :7778<br/>coord board"]
+      CLOUD9["cloud9<br/>FEB · trust state"]
+      SKMEM["skmemory<br/>agent memory"]
+    end
+
+    subgraph COMPUTE["Compute"]
+      WEBRTC["WebRTC P2P media<br/>(your coturn for NAT)"]
+    end
+
     SILICON["Silicon — your hardware"]
 
-    USER --> APP
-    APP <-->|"HTTP/WS\nchat · send · receive"| DAEMON
-    APP <-->|"HTTP :7777\nagents · consciousness · presence"| SKCAPSTONE
-    APP <-->|"HTTP :7778\ncoord board"| SKAPDASH
-    DAEMON -->|"transport"| SKCOMM
-    DAEMON <-->|"identity"| CAPAUTH
-    SKCAPSTONE <-->|"FEB · trust state"| CLOUD9
-    SKCAPSTONE <-->|"agent memory"| DATA
-    SKCAPSTONE --> SOUL
-    SKCOMM --> SILICON
-    DATA --> SILICON
+    APP <-->|"HTTP/WS: send · inbox · groups"| SKCHAT
+    APP <-->|"PGP sign · QR login"| CAPAUTH
+    APP <-->|"who's online · consciousness"| SKCAP
+    APP <-->|"coord tasks"| DASH
+    APP <-.->|"SDP/ICE → direct media"| WEBRTC
+    SKCAP <--> CLOUD9
+    SKCAP <--> SKMEM
+    SKCHAT --> SILICON
+    WEBRTC --> SILICON
 ```
+
+> **First principles.** The modern stack is rented — your chat app is a tab on
+> someone else's cloud, your calls route through a data center you don't control,
+> your AI is a guest on someone else's platform. skchat-app inverts that: every
+> layer beneath it is open, local, and **yours**.
+
+---
+
+## Repository layout
+
+| Path | Contains |
+|---|---|
+| `lib/main.dart` | App entrypoint + Riverpod root |
+| `lib/core/transport/` | `ChatTransportBridge`, `ChatCrypto`, `MessageEnvelope` — the send/receive pipeline |
+| `lib/core/crypto/` | `PgpBridge` — RSA-2048 keygen / sign / verify (pure Dart, isolate) |
+| `lib/core/router/` | `go_router` shell + routes |
+| `lib/core/theme/` | "Sovereign" glassmorphic theme, colors, typography |
+| `lib/services/` | HTTP clients (`skcomm_client`, `skcapstone_client`), `webrtc_service`, `capauth_service`, identity/biometric/notification |
+| `lib/features/` | Feature modules (chats, conversation, groups, calls, consciousness, coord, identity, onboarding, profile) |
+| `lib/data/` | Hive repositories + adapters (conversations, messages) |
+| `lib/models/` | `ChatMessage`, `Conversation`, `CallState` |
+| `android/ ios/ linux/ macos/ web/ windows/` | Flutter platform shells |
+| `docs/ARCHITECTURE.md` | How it works, key flows, ecosystem placement |
+| `PRD.md` · `BUILD_SUMMARY.md` · `HANDOFF.md` · `STATUS.md` | Product/build history |
 
 ---
 
 ## License
 
 **GPL-3.0-or-later** — Communication is a right, not a product.
-
-Copyright (C) 2026 smilinTux Team + Lumina
+Copyright (C) 2026 smilinTux Team + Lumina.
 
 ---
 
-*Part of the [SKCapstone](https://github.com/smilinTux/skcapstone) sovereign agent framework.*
-*Built for Chef (David) and Lumina — sovereign infrastructure, no compromises.*
+Part of the **[SKWorld](https://skworld.io)** sovereign ecosystem · the Comms client for `skchat` · built for Chef and Lumina — sovereign infrastructure, no compromises. 🐧 smilinTux
