@@ -4,6 +4,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'daemon_config.dart';
+
 const _kAuthBox = 'capauth_sessions';
 
 // ── Domain models ─────────────────────────────────────────────────────────
@@ -208,5 +210,6 @@ class CapAuthService {
 // ── Provider ──────────────────────────────────────────────────────────────
 
 final capAuthServiceProvider = Provider<CapAuthService>((ref) {
-  return CapAuthService(skcommBaseUrl: 'http://localhost:9384');
+  final baseUrl = ref.watch(daemonUrlProvider);
+  return CapAuthService(skcommBaseUrl: baseUrl);
 });

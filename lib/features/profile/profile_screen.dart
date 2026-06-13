@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
+import '../../services/daemon_config.dart';
 import '../../services/skcomm_client.dart';
 import '../../services/skcomm_sync.dart';
 
@@ -128,6 +129,7 @@ class ProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final identity = ref.watch(localIdentityProvider);
     final daemon = ref.watch(skcommSyncProvider);
+    final daemonUrl = ref.watch(daemonUrlProvider);
     final transports = ref.watch(transportHealthProvider);
     final themeMode = ref.watch(themeProvider);
     final soulColor = SovereignColors.fromFingerprint(identity.fingerprint);
@@ -238,14 +240,14 @@ class ProfileScreen extends ConsumerWidget {
                     leading: const Icon(Icons.storage_outlined),
                     title: const Text('SKComm Daemon'),
                     subtitle: Text(
-                      identity.daemonUrl,
+                      daemonUrl,
                       style: tt.labelSmall?.copyWith(
                         color: SovereignColors.textTertiary,
                         fontFamily: 'JetBrainsMono',
                       ),
                     ),
                     trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => _showDaemonSettings(context, ref, identity),
+                    onTap: () => _showDaemonSettings(context, ref, daemonUrl),
                   ),
                 ],
               ),
@@ -275,9 +277,9 @@ class ProfileScreen extends ConsumerWidget {
   void _showDaemonSettings(
     BuildContext context,
     WidgetRef ref,
-    LocalIdentity identity,
+    String currentUrl,
   ) {
-    final controller = TextEditingController(text: identity.daemonUrl);
+    final controller = TextEditingController(text: currentUrl);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -301,6 +303,16 @@ class ProfileScreen extends ConsumerWidget {
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'On native this is your local daemon. In a browser, point this at '
+              'a network-reachable daemon (e.g. a tailnet host) with CORS '
+              'enabled — localhost is this device, which has no daemon.',
+              style: TextStyle(
+                fontSize: 12,
+                color: SovereignColors.textTertiary,
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -333,11 +345,12 @@ class ProfileScreen extends ConsumerWidget {
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () {
-                ref.read(localIdentityProvider.notifier).update(
-                      identity.copyWith(
-                        daemonUrl: controller.text.trim(),
-                      ),
-                    );
+                // Persist + rebuild every daemon-facing client.
+                ref
+                    .read(daemonUrlProvider.notifier)
+                    .setUrl(controller.text.trim());
+                // Re-fetch identity from the (possibly new) daemon.
+                ref.read(localIdentityProvider.notifier).refresh();
                 Navigator.of(ctx).pop();
               },
               style: FilledButton.styleFrom(
@@ -349,6 +362,19 @@ class ProfileScreen extends ConsumerWidget {
                 ),
               ),
               child: const Text('Save'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () {
+                // Reset to the compile-time default.
+                ref.read(daemonUrlProvider.notifier).setUrl('');
+                ref.read(localIdentityProvider.notifier).refresh();
+                Navigator.of(ctx).pop();
+              },
+              child: const Text(
+                'Reset to default',
+                style: TextStyle(color: SovereignColors.textTertiary),
+              ),
             ),
           ],
         ),

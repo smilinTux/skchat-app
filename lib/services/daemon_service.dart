@@ -2,7 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'daemon_config.dart';
 
 // ── Data Transfer Objects ──────────────────────────────────────────────────
 
@@ -61,18 +64,26 @@ class DaemonSendResult {
 /// Bridges the Flutter UI to the local skchat daemon.
 ///
 /// Two channels:
-/// - **HTTP** – health check at `localhost:9385/health` (daemon's built-in server).
+/// - **HTTP** – health check at `<daemonHost>:9385/health` (daemon's built-in
+///   server).  The host is derived from the configured SKComm daemon URL so a
+///   tailnet daemon is reachable from a remote web client.
 /// - **CLI**  – `skchat inbox --json` / `skchat send` via dart:io [Process].
 ///
-/// All CLI calls run from [workingDir] (default: `$HOME`) to avoid the
-/// skmemory namespace collision that occurs when CWD is the project root.
+/// The CLI channel is **native-only**.  On the web there is no local process to
+/// spawn, so every CLI method is a no-op there and the app relies entirely on
+/// the HTTP [SKCommClient].  All CLI calls run from [workingDir] (default:
+/// `$HOME`) to avoid the skmemory namespace collision that occurs when CWD is
+/// the project root.
 class DaemonService {
   DaemonService({
     String? healthBaseUrl,
     String? workingDir,
   })  : _healthBaseUrl = healthBaseUrl ?? 'http://127.0.0.1:9385',
-        _workingDir =
-            workingDir ?? Platform.environment['HOME'] ?? '/home/${Platform.environment['USER'] ?? 'user'}',
+        _workingDir = workingDir ??
+            (kIsWeb
+                ? ''
+                : (Platform.environment['HOME'] ??
+                    '/home/${Platform.environment['USER'] ?? 'user'}')),
         _dio = Dio(
           BaseOptions(
             connectTimeout: const Duration(seconds: 3),
@@ -86,7 +97,9 @@ class DaemonService {
 
   /// The local skchat identity URI from the environment, e.g.
   /// `capauth:opus@skworld.io`.  Used to classify messages as outbound.
-  String? get localIdentity => Platform.environment['SKCHAT_IDENTITY'];
+  /// Always null on the web (no process environment).
+  String? get localIdentity =>
+      kIsWeb ? null : Platform.environment['SKCHAT_IDENTITY'];
 
   /// Extract the short peer name from a CapAuth URI.
   /// `capauth:lumina@skworld.io` → `lumina`
@@ -127,7 +140,9 @@ class DaemonService {
   /// Runs: `skchat inbox --json --limit <limit>` from `$HOME`.
   ///
   /// Returns an empty list on error (daemon not running, CLI not in PATH, etc.).
+  /// On the web there is no local CLI, so this always returns an empty list.
   Future<List<SkchatCliMessage>> getInbox({int limit = 100}) async {
+    if (kIsWeb) return [];
     try {
       final result = await Process.run(
         'skchat',
@@ -181,6 +196,13 @@ class DaemonService {
     required String recipient,
     required String content,
   }) async {
+    if (kIsWeb) {
+      // No local CLI on the web — caller falls back to the HTTP SKComm client.
+      return const DaemonSendResult(
+        success: false,
+        error: 'CLI unavailable on web',
+      );
+    }
     try {
       final result = await Process.run(
         'skchat',
@@ -204,7 +226,23 @@ class DaemonService {
 
 // ── Riverpod provider ──────────────────────────────────────────────────────
 
-/// Singleton [DaemonService] instance.
+/// [DaemonService] bound to the configured daemon host.
+///
+/// The skchat daemon's health endpoint lives on port 9385 of the same host
+/// that serves the SKComm REST API (port 9384).  We rewrite the configured
+/// SKComm URL's port to 9385 so a remote web client checks the right host.
 final daemonServiceProvider = Provider<DaemonService>((ref) {
-  return DaemonService();
+  final daemonUrl = ref.watch(daemonUrlProvider);
+  return DaemonService(healthBaseUrl: _healthUrlFromDaemonUrl(daemonUrl));
 });
+
+/// Derive the skchat health URL (port 9385) from the SKComm daemon URL.
+///
+/// `http://host:9384` → `http://host:9385`.  If the URL can't be parsed,
+/// fall back to the local default.
+String _healthUrlFromDaemonUrl(String daemonUrl) {
+  final normalized = normalizeDaemonUrl(daemonUrl);
+  final uri = Uri.tryParse(normalized);
+  if (uri == null || uri.host.isEmpty) return 'http://127.0.0.1:9385';
+  return uri.replace(port: 9385).toString();
+}

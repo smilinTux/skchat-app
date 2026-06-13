@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import '../../core/theme/sovereign_colors.dart';
 import '../../models/call_state.dart';
+import '../../services/daemon_config.dart';
 import '../../services/skcomm_client.dart';
 import '../../services/webrtc_service.dart';
 
@@ -50,7 +50,7 @@ class CallNotifier extends Notifier<CallState?> {
 
       final iceServers = await client.getIceConfig();
 
-      _webrtc = WebRTCCallService(signalingBaseUrl: 'ws://localhost:9384');
+      _webrtc = WebRTCCallService(signalingBaseUrl: ref.read(daemonWsUrlProvider));
       await _webrtc!.initLocalMedia(withVideo: type == CallType.video);
       await _webrtc!.connect(
         roomId: _roomId(peerId),
@@ -98,7 +98,7 @@ class CallNotifier extends Notifier<CallState?> {
     try {
       final iceServers = await ref.read(skcommClientProvider).getIceConfig();
 
-      _webrtc = WebRTCCallService(signalingBaseUrl: 'ws://localhost:9384');
+      _webrtc = WebRTCCallService(signalingBaseUrl: ref.read(daemonWsUrlProvider));
       await _webrtc!.initLocalMedia(withVideo: current.type == CallType.video);
       await _webrtc!.connect(
         roomId: _roomId(current.peerId),

@@ -1,21 +1,25 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Default base URL for the SKComm daemon.
-/// Override at runtime via the SKCOMM_URL environment variable
-/// (pass --dart-define=SKCOMM_URL=http://host:port at build time)
-/// or by passing [baseUrl] to the constructor.
-const _kDefaultBaseUrl = 'http://localhost:9384';
+import 'daemon_config.dart';
 
 /// Low-level HTTP client wrapping the SKComm daemon REST API.
-/// Default base URL is localhost:9384 — the daemon runs on the same device.
+///
+/// The base URL is resolved (in priority order) from:
+///   1. the [baseUrl] constructor argument (used by the provider, which
+///      reads the runtime-configurable [daemonUrlProvider]);
+///   2. the `SKCOMM_URL` compile-time dart-define;
+///   3. the `http://localhost:9384` fallback.
+///
+/// On native (daemon on the same device) the default works.  On a WEB build
+/// served to a remote browser, the URL must point at a network-reachable
+/// daemon (e.g. a tailnet host) — set it via the profile/settings screen or
+/// `--dart-define=SKCOMM_URL=...` at build time.
 class SKCommClient {
   SKCommClient({String? baseUrl})
     : _dio = Dio(
         BaseOptions(
-          baseUrl: baseUrl ??
-              const String.fromEnvironment('SKCOMM_URL',
-                  defaultValue: _kDefaultBaseUrl),
+          baseUrl: baseUrl ?? kDefaultDaemonUrl,
           connectTimeout: const Duration(seconds: 5),
           receiveTimeout: const Duration(seconds: 10),
           headers: {'Content-Type': 'application/json'},
@@ -397,9 +401,13 @@ class IdentityInfo {
 
 // ── Riverpod provider ──────────────────────────────────────────────────────
 
-/// Singleton SKCommClient — base URL can be overridden for testing.
+/// SKCommClient bound to the runtime-configurable daemon URL.
+///
+/// Watching [daemonUrlProvider] means changing the daemon URL in the settings
+/// screen rebuilds this client so all subsequent calls hit the new host.
 final skcommClientProvider = Provider<SKCommClient>((ref) {
-  return SKCommClient();
+  final baseUrl = ref.watch(daemonUrlProvider);
+  return SKCommClient(baseUrl: baseUrl);
 });
 
 
