@@ -141,7 +141,7 @@ class LiveKitCallService {
 
   /// Mint a room token by calling POST /livekit/token on the skchat web-UI.
   ///
-  /// [roomName] — deterministic per-pair room, e.g. 'sk-room-<fp1>-<fp2>'.
+  /// [roomName] — deterministic per-pair room, e.g. `sk-room-<fp1>-<fp2>`.
   ///              The server derives the canonical room from the sorted pair
   ///              so both parties always land in the same room.
   /// [identity] — caller's agent name or fingerprint.

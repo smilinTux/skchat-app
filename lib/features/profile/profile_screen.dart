@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
 import '../../services/daemon_config.dart';
@@ -228,6 +229,14 @@ class ProfileScreen extends ConsumerWidget {
               padding: EdgeInsets.zero,
               child: Column(
                 children: [
+                  ListTile(
+                    leading: const Icon(Icons.podcasts_rounded),
+                    title: const Text('Spaces'),
+                    subtitle: const Text('Live sovereign audio rooms'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => context.push(AppRoutes.spaces),
+                  ),
+                  const Divider(height: 1, indent: 56),
                   ListTile(
                     leading: const Icon(Icons.qr_code_scanner_rounded),
                     title: const Text('QR Login / Pair Device'),

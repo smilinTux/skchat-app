@@ -16,6 +16,9 @@ import '../../features/calls/outgoing_call_screen.dart';
 import '../../features/calls/incoming_call_screen.dart';
 import '../../features/calls/in_call_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
+import '../../features/spaces/spaces_directory_screen.dart';
+import '../../features/spaces/space_room_screen.dart';
+import '../../features/spaces/space_models.dart';
 
 /// Named route paths.
 class AppRoutes {
@@ -25,6 +28,12 @@ class AppRoutes {
   static const groups = '/groups';
   static const activity = '/activity';
   static const profile = '/profile';
+
+  /// SK Spaces directory (live audio rooms): /spaces
+  static const spaces = '/spaces';
+
+  /// A single Space room (takes a SpaceJoin via extra): /spaces/:id
+  static const spaceRoom = '/spaces/:id';
 
   /// Peer picker: /chats/new
   static const peerPicker = '/chats/new';
@@ -59,6 +68,7 @@ class AppRoutes {
   static String outgoingCallPath(String peerId) => '/call/outgoing/$peerId';
   static String incomingCallPath(String peerId) => '/call/incoming/$peerId';
   static String inCallPath(String peerId) => '/call/active/$peerId';
+  static String spaceRoomPath(String spaceId) => '/spaces/$spaceId';
 
   /// LiveKit SFU call screen: /call/livekit
   static const livekitCall = '/call/livekit';
@@ -128,6 +138,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               const ProfileScreen(),
             ),
           ),
+          GoRoute(
+            path: AppRoutes.spaces,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const SpacesDirectoryScreen(),
+            ),
+          ),
         ],
       ),
       GoRoute(
@@ -184,6 +201,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return MaterialPage(
             fullscreenDialog: true,
             child: LiveKitCallScreen(args: args),
+          );
+        },
+      ),
+
+      // -- SK Space audio room (role-scoped LiveKit token via extra)
+      GoRoute(
+        path: AppRoutes.spaceRoom,
+        pageBuilder: (context, state) {
+          final join = state.extra as SpaceJoin;
+          return MaterialPage(
+            fullscreenDialog: true,
+            child: SpaceRoomScreen(join: join),
           );
         },
       ),
