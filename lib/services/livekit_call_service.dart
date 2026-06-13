@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -60,6 +61,8 @@ class LiveKitParticipantSnapshot {
     required this.isLocal,
     required this.isMuted,
     required this.isCameraEnabled,
+    this.canPublish = false,
+    this.handRaised = false,
     this.isSpeaking = false,
     this.metadata,
   });
@@ -69,9 +72,43 @@ class LiveKitParticipantSnapshot {
   final bool isMuted;
   final bool isCameraEnabled;
 
+  /// Whether the LiveKit grant lets this participant publish tracks.
+  ///
+  /// This is the authoritative speaker/listener signal: a speaker who
+  /// self-mutes still has [canPublish] == true (a muted speaker, not a
+  /// listener). Sourced from `Participant.permissions.canPublish`.
+  final bool canPublish;
+
+  /// Whether this participant has raised their hand (✋) to be invited to
+  /// the stage. Parsed from the `hand_raised` key of the participant
+  /// metadata JSON written by the Space moderation layer. Defaults to false
+  /// on missing / malformed metadata.
+  final bool handRaised;
+
   /// True when LiveKit detects active audio from this participant.
   final bool isSpeaking;
+
+  /// Raw participant metadata JSON (as written by the Space moderation API).
   final String? metadata;
+
+  /// Parse the `hand_raised` boolean out of a participant metadata JSON blob.
+  ///
+  /// The Space moderation layer writes
+  /// `{"hand_raised": bool, "invited_to_stage": bool}` into participant
+  /// metadata. This is defensive: any missing key, non-object payload, or
+  /// invalid JSON yields false.
+  static bool parseHandRaised(String? metadata) {
+    if (metadata == null || metadata.isEmpty) return false;
+    try {
+      final decoded = jsonDecode(metadata);
+      if (decoded is Map<String, dynamic>) {
+        return decoded['hand_raised'] == true;
+      }
+    } on FormatException {
+      // Malformed metadata — treat as no hand raised.
+    }
+    return false;
+  }
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -329,6 +366,8 @@ class LiveKitCallService {
       isLocal: true,
       isMuted: !p.isMicrophoneEnabled(),
       isCameraEnabled: p.isCameraEnabled(),
+      canPublish: p.permissions.canPublish,
+      handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       isSpeaking: p.isSpeaking,
       metadata: p.metadata,
     );
@@ -340,6 +379,8 @@ class LiveKitCallService {
       isLocal: false,
       isMuted: !p.isMicrophoneEnabled(),
       isCameraEnabled: p.isCameraEnabled(),
+      canPublish: p.permissions.canPublish,
+      handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       isSpeaking: p.isSpeaking,
       metadata: p.metadata,
     );

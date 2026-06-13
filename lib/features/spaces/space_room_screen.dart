@@ -322,9 +322,8 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final listeners = state.participants
-        .where((p) => !p.isSpeaking && p.isMuted)
-        .length;
+    final listeners =
+        state.participants.where((p) => !p.canPublish).length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 16, 8),
       child: Row(
@@ -413,17 +412,36 @@ class _Stage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Speakers = anyone not muted, OR the local participant if host.
+    // Speakers = anyone the LiveKit grant lets publish (a self-muted speaker
+    // is still a speaker, just muted) OR the local participant if host (the
+    // host's publish grant may not have propagated on the very first frame).
     final speakers = state.participants
-        .where((p) => !p.isMuted || (p.isLocal && join.isHost))
+        .where((p) => p.canPublish || (p.isLocal && join.isHost))
         .toList();
-    final listeners = state.participants
-        .where((p) => !speakers.contains(p))
-        .toList();
+    final listeners =
+        state.participants.where((p) => !speakers.contains(p)).toList();
+    // Raised hands: listeners (cannot publish) who asked for the stage.
+    final raisedHands = listeners.where((p) => p.handRaised).toList();
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
+        if (join.isHost && raisedHands.isNotEmpty) ...[
+          _sectionLabel("Raised hands", raisedHands.length),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 16,
+            runSpacing: 16,
+            children: [
+              for (final p in raisedHands)
+                _RaisedHand(
+                  snapshot: p,
+                  onTap: () => _inviteRaisedHand(ref, p.identity),
+                ),
+            ],
+          ),
+          const SizedBox(height: 28),
+        ],
         _sectionLabel("Speakers", speakers.length),
         const SizedBox(height: 12),
         Wrap(
@@ -460,6 +478,13 @@ class _Stage extends ConsumerWidget {
         ],
       ],
     );
+  }
+
+  /// Host tapped a raised hand — invite them straight to the stage.
+  void _inviteRaisedHand(WidgetRef ref, String identity) {
+    ref
+        .read(spaceRoomProvider(join).notifier)
+        .invite(join.identity, identity);
   }
 
   Widget _sectionLabel(String label, int count) {
@@ -716,6 +741,98 @@ class _ListenerDot extends StatelessWidget {
                   color: SovereignColors.textSecondary,
                   fontSize: 11,
                 ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A listener who raised their hand (✋), shown in the host's invite queue.
+/// Tapping invites them to the stage.
+class _RaisedHand extends StatelessWidget {
+  const _RaisedHand({required this.snapshot, required this.onTap});
+
+  final LiveKitParticipantSnapshot snapshot;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final soul = _soulColorFor(snapshot.identity);
+    final initials =
+        snapshot.identity.isNotEmpty ? snapshot.identity[0].toUpperCase() : "?";
+    return Semantics(
+      label: "${snapshot.identity}, raised hand. Tap to invite to speak.",
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: soul.withValues(alpha: 0.15),
+                    border: Border.all(
+                      color: SovereignColors.soulLumina,
+                      width: 2,
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      initials,
+                      style: TextStyle(
+                        color: soul,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: SovereignColors.surfaceCard,
+                    ),
+                    child: const Icon(
+                      Icons.back_hand_rounded,
+                      size: 14,
+                      color: SovereignColors.soulLumina,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: 68,
+              child: Text(
+                snapshot.isLocal ? "You" : snapshot.identity,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: SovereignColors.textPrimary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const Text(
+              "tap to invite",
+              style: TextStyle(
+                color: SovereignColors.textTertiary,
+                fontSize: 9,
               ),
             ),
           ],

@@ -14,6 +14,8 @@ LiveKitParticipantSnapshot _snap(
   bool isLocal = false,
   bool isMuted = false,
   bool isSpeaking = false,
+  bool canPublish = false,
+  bool handRaised = false,
 }) {
   return LiveKitParticipantSnapshot(
     identity: identity,
@@ -21,6 +23,8 @@ LiveKitParticipantSnapshot _snap(
     isMuted: isMuted,
     isCameraEnabled: false,
     isSpeaking: isSpeaking,
+    canPublish: canPublish,
+    handRaised: handRaised,
   );
 }
 
@@ -40,9 +44,10 @@ void main() {
   setUp(() {
     svc = MockLiveKitCallService();
     final participants = <LiveKitParticipantSnapshot>[
-      _snap("chef@dk.skworld", isLocal: true, isSpeaking: true), // host speaker
-      _snap("alice", isMuted: true), // listener
-      _snap("bob", isMuted: true), // listener
+      _snap("chef@dk.skworld",
+          isLocal: true, isSpeaking: true, canPublish: true), // host speaker
+      _snap("alice"), // listener (no publish grant)
+      _snap("bob"), // listener (no publish grant)
     ];
     when(() => svc.participants)
         .thenAnswer((_) => Stream.value(participants));
@@ -91,5 +96,51 @@ void main() {
     // Host controls present (End + Mute available to host).
     expect(find.text("End"), findsOneWidget);
     expect(find.text("Mute"), findsOneWidget);
+  });
+
+  testWidgets(
+      "a canPublish speaker who self-mutes renders as a SPEAKER, not a listener",
+      (tester) async {
+    final participants = <LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+      // Speaker with publish grant but currently muted - must stay a speaker.
+      _snap("dana", canPublish: true, isMuted: true),
+      _snap("alice"), // listener
+    ];
+    when(() => svc.participants).thenAnswer((_) => Stream.value(participants));
+    when(() => svc.currentParticipants).thenReturn(participants);
+
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // 2 speakers (host + muted-but-can-publish dana), 1 listener.
+    expect(find.text("SPEAKERS"), findsOneWidget);
+    expect(find.text("dana"), findsOneWidget); // dana shows on the speaker grid
+    // Muted speaker still carries the muted mic indicator (secondary signal).
+    expect(find.byIcon(Icons.mic_off_rounded), findsWidgets);
+    // Listener section has alice.
+    expect(find.text("LISTENERS"), findsOneWidget);
+    expect(find.text("alice"), findsOneWidget);
+  });
+
+  testWidgets("a handRaised listener appears in the host raised-hands queue",
+      (tester) async {
+    final participants = <LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+      _snap("evan", handRaised: true), // listener who raised their hand
+      _snap("alice"), // plain listener
+    ];
+    when(() => svc.participants).thenAnswer((_) => Stream.value(participants));
+    when(() => svc.currentParticipants).thenReturn(participants);
+
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Raised-hands section visible to the host with the raised-hand listener.
+    expect(find.text("RAISED HANDS"), findsOneWidget);
+    expect(find.text("evan"), findsWidgets);
+    expect(find.text("tap to invite"), findsWidgets);
   });
 }
