@@ -58,6 +58,9 @@ dependencies:
   flutter_webrtc: ^0.11.0
   web_socket_channel: ^3.0.0
 
+  # LiveKit SFU client — group/agent room calls
+  livekit_client: ^2.2.6
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

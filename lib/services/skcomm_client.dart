@@ -240,6 +240,19 @@ class SKCommClient {
     );
     return (resp.data ?? {})['signature'] as String? ?? '';
   }
+  // ── File Transfers ────────────────────────────────────────────────────────
+
+  /// GET /api/v1/file_status?transfer_id={id} — poll file transfer progress.
+  ///
+  /// Returns a [FileTransferStatus] or throws on HTTP error.
+  Future<FileTransferStatus> getFileStatus(String transferId) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/v1/file_status',
+      queryParameters: {'transfer_id': transferId},
+    );
+    return FileTransferStatus.fromJson(resp.data ?? {});
+  }
+
 }
 
 // ── Data transfer objects ──────────────────────────────────────────────────
@@ -388,3 +401,78 @@ class IdentityInfo {
 final skcommClientProvider = Provider<SKCommClient>((ref) {
   return SKCommClient();
 });
+
+
+// ── File Transfer ──────────────────────────────────────────────────────────
+
+/// Status snapshot for an in-flight or completed file transfer.
+///
+/// Returned by GET /api/v1/file_status?transfer_id={id}.
+/// The widget polls every 2 s and stops once [isTerminal] is true.
+class FileTransferStatus {
+  const FileTransferStatus({
+    required this.transferId,
+    required this.status,
+    required this.fileName,
+    required this.fileSize,
+    required this.bytesTransferred,
+    this.speedBps = 0,
+    this.errorMessage,
+  });
+
+  final String transferId;
+
+  /// Raw status string from the daemon:
+  ///   'pending' | 'in_progress' | 'completed' | 'failed'
+  final String status;
+
+  /// Display name of the file being transferred.
+  final String fileName;
+
+  /// Total file size in bytes (may be 0 if unknown).
+  final int fileSize;
+
+  /// Number of bytes transferred so far.
+  final int bytesTransferred;
+
+  /// Current transfer speed in bytes per second (0 when not transferring).
+  final int speedBps;
+
+  /// Set when [isFailed] is true.
+  final String? errorMessage;
+
+  // ── Derived helpers ──────────────────────────────────────────────────────
+
+  bool get isCompleted => status == 'completed';
+  bool get isFailed => status == 'failed';
+  bool get isTerminal => isCompleted || isFailed;
+
+  /// Transfer progress in [0.0, 1.0]. Returns 1.0 when completed.
+  double get progress {
+    if (isCompleted) return 1.0;
+    if (fileSize <= 0) return 0.0;
+    return (bytesTransferred / fileSize).clamp(0.0, 1.0);
+  }
+
+  /// Human-readable transfer speed, e.g. "1.4 MB/s".
+  String get speedLabel {
+    if (speedBps <= 0) return '';
+    if (speedBps < 1024) return '$speedBps B/s';
+    if (speedBps < 1024 * 1024) {
+      return '${(speedBps / 1024).toStringAsFixed(1)} KB/s';
+    }
+    return '${(speedBps / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+  }
+
+  factory FileTransferStatus.fromJson(Map<String, dynamic> json) {
+    return FileTransferStatus(
+      transferId: json['transfer_id'] as String? ?? '',
+      status: json['status'] as String? ?? 'pending',
+      fileName: json['file_name'] as String? ?? '',
+      fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
+      bytesTransferred: (json['bytes_transferred'] as num?)?.toInt() ?? 0,
+      speedBps: (json['speed_bps'] as num?)?.toInt() ?? 0,
+      errorMessage: json['error_message'] as String?,
+    );
+  }
+}

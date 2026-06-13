@@ -8,6 +8,7 @@ class SovereignColors {
   // ── Surface ──────────────────────────────────────────────────────────────
   static const Color surfaceBase = Color(0xFF000000); // OLED black
   static const Color surfaceRaised = Color(0xFF0A0A0F); // card backgrounds
+  static const Color surfaceCard = Color(0xFF0B0D10); // near-black surface (2027 token)
   static const Color surfaceGlass = Color(0x0FFFFFFF); // ~6% white opacity
   static const Color surfaceGlassBorder = Color(0x14FFFFFF); // ~8% white
 
