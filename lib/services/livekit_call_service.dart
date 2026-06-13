@@ -60,6 +60,7 @@ class LiveKitParticipantSnapshot {
     required this.isLocal,
     required this.isMuted,
     required this.isCameraEnabled,
+    this.isSpeaking = false,
     this.metadata,
   });
 
@@ -67,6 +68,9 @@ class LiveKitParticipantSnapshot {
   final bool isLocal;
   final bool isMuted;
   final bool isCameraEnabled;
+
+  /// True when LiveKit detects active audio from this participant.
+  final bool isSpeaking;
   final String? metadata;
 }
 
@@ -187,26 +191,8 @@ class LiveKitCallService {
     // 2. Prefer the server-supplied URL (geo-routing), fall back to default.
     final wsUrl = tokenResult.livekitUrl ?? _defaultLivekitUrl;
 
-    // 3. Create the room with publish options, then wire event listeners.
-    _room = Room(
-      roomOptions: RoomOptions(
-        adaptiveStream: true,
-        dynacast: true,
-        defaultAudioPublishOptions: const AudioPublishOptions(
-          name: 'mic',
-          stream: 'mic_audio',
-        ),
-        defaultVideoPublishOptions: const VideoPublishOptions(
-          simulcast: true,
-        ),
-      ),
-    );
-    _bindRoomListeners();
-
-    // 4. Connect to LiveKit.
-    await _room!.connect(wsUrl, tokenResult.token);
-
-    _localParticipant = _room!.localParticipant;
+    // 3-4. Construct the room, bind listeners, connect.
+    await _connectRoom(wsUrl: wsUrl, token: tokenResult.token);
 
     // 5. Publish tracks.
     await _localParticipant?.setMicrophoneEnabled(true);
@@ -215,6 +201,48 @@ class LiveKitCallService {
     }
 
     _emitParticipants();
+  }
+
+  /// Connect using a **pre-minted, role-scoped** token (e.g. from
+  /// [SpacesService]) instead of minting a generic [mintToken] one.
+  ///
+  /// [wsUrl] - the LiveKit WebSocket URL returned alongside the token.
+  /// [token] - the role-scoped JWT (host / speaker / listener).
+  ///
+  /// Does NOT publish any tracks - the caller decides (via [setMicEnabled])
+  /// based on the granted role / publish grants. Returns once connected.
+  Future<void> connectWithToken({
+    required String wsUrl,
+    required String token,
+  }) async {
+    if (_room != null) await dispose();
+    await _connectRoom(wsUrl: wsUrl, token: token);
+    _emitParticipants();
+  }
+
+  /// Shared connect body used by [joinRoom] and [connectWithToken]: builds the
+  /// [Room] with the standard publish options, wires listeners, connects, and
+  /// captures the local participant. (DRY - single source of room wiring.)
+  Future<void> _connectRoom({
+    required String wsUrl,
+    required String token,
+  }) async {
+    _room = Room(
+      roomOptions: RoomOptions(
+        adaptiveStream: true,
+        dynacast: true,
+        defaultAudioPublishOptions: const AudioPublishOptions(
+          name: "mic",
+          stream: "mic_audio",
+        ),
+        defaultVideoPublishOptions: const VideoPublishOptions(
+          simulcast: true,
+        ),
+      ),
+    );
+    _bindRoomListeners();
+    await _room!.connect(wsUrl, token);
+    _localParticipant = _room!.localParticipant;
   }
 
   /// Disconnect from the room and clean up resources.
@@ -301,6 +329,7 @@ class LiveKitCallService {
       isLocal: true,
       isMuted: !p.isMicrophoneEnabled(),
       isCameraEnabled: p.isCameraEnabled(),
+      isSpeaking: p.isSpeaking,
       metadata: p.metadata,
     );
   }
@@ -311,6 +340,7 @@ class LiveKitCallService {
       isLocal: false,
       isMuted: !p.isMicrophoneEnabled(),
       isCameraEnabled: p.isCameraEnabled(),
+      isSpeaking: p.isSpeaking,
       metadata: p.metadata,
     );
   }
