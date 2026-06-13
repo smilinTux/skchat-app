@@ -15,6 +15,7 @@ import '../../features/profile/qr_login_screen.dart';
 import '../../features/calls/outgoing_call_screen.dart';
 import '../../features/calls/incoming_call_screen.dart';
 import '../../features/calls/in_call_screen.dart';
+import '../../features/calls/livekit_call_screen.dart';
 
 /// Named route paths.
 class AppRoutes {
@@ -58,6 +59,10 @@ class AppRoutes {
   static String outgoingCallPath(String peerId) => '/call/outgoing/$peerId';
   static String incomingCallPath(String peerId) => '/call/incoming/$peerId';
   static String inCallPath(String peerId) => '/call/active/$peerId';
+
+  /// LiveKit SFU call screen: /call/livekit
+  static const livekitCall = '/call/livekit';
+
 }
 
 /// GoRouter provider — uses shell routes for the bottom nav structure.
@@ -168,6 +173,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return MaterialPage(
             fullscreenDialog: true,
             child: InCallScreen(peerId: peerId),
+          );
+        },
+      ),
+      // -- LiveKit SFU call screen
+      GoRoute(
+        path: AppRoutes.livekitCall,
+        pageBuilder: (context, state) {
+          final args = state.extra as LiveKitCallArgs;
+          return MaterialPage(
+            fullscreenDialog: true,
+            child: LiveKitCallScreen(args: args),
           );
         },
       ),

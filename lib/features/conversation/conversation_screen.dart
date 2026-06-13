@@ -6,6 +6,7 @@ import '../../core/theme/theme.dart';
 import '../../models/chat_message.dart';
 import '../../models/call_state.dart';
 import '../calls/call_provider.dart';
+import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomm_sync.dart';
@@ -189,6 +190,23 @@ class ConversationScreen extends ConsumerWidget {
               context.push(AppRoutes.outgoingCallPath(peerId));
             },
           ),
+        ),
+        // LiveKit SFU group/agent call button.
+        IconButton(
+          icon: const Icon(Icons.meeting_room_outlined),
+          tooltip: 'Agent room (LiveKit)',
+          onPressed: () {
+            final ids = [peerId, 'local']..sort();
+            final roomName = 'sk-room-${ids.join("-")}';
+            context.push(
+              AppRoutes.livekitCall,
+              extra: LiveKitCallArgs(
+                roomName: roomName,
+                identity: 'local',
+                displayName: peerId,
+              ),
+            );
+          },
         ),
         IconButton(
           icon: const Icon(Icons.more_vert_rounded),
