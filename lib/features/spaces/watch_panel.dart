@@ -146,7 +146,7 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
                   controller: _urlCtl,
                   style: const TextStyle(color: SovereignColors.textPrimary),
                   decoration: const InputDecoration(
-                    hintText: "Video URL (mp4/webm)…",
+                    hintText: "YouTube / Rumble / mp4 URL…",
                     hintStyle: TextStyle(color: SovereignColors.textTertiary),
                   ),
                   onSubmitted: (_) => _load(),
