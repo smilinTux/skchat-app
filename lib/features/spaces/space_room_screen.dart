@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/spaces_service.dart";
+import "space_chat_panel.dart";
 import "space_models.dart";
 
 // ── Soul color ──────────────────────────────────────────────────────────────
@@ -202,6 +203,27 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
+      floatingActionButton: st.isConnected
+          ? FloatingActionButton(
+              mini: true,
+              backgroundColor: SovereignColors.surfaceRaised,
+              onPressed: () => showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => Padding(
+                  padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).viewInsets.bottom),
+                  child: SpaceChatPanel(
+                    spaceId: join.spaceId,
+                    identity: join.identity,
+                  ),
+                ),
+              ),
+              child: const Icon(Icons.chat_bubble_outline_rounded,
+                  color: SovereignColors.textPrimary),
+            )
+          : null,
       body: st.error != null
           ? _buildError(st.error!)
           : SafeArea(
