@@ -35,6 +35,12 @@ class AppShell extends ConsumerWidget {
       path: AppRoutes.activity,
     ),
     _TabItem(
+      label: 'Spaces',
+      icon: Icons.podcasts_outlined,
+      activeIcon: Icons.podcasts_rounded,
+      path: AppRoutes.spaces,
+    ),
+    _TabItem(
       label: 'Me',
       icon: Icons.person_outline_rounded,
       activeIcon: Icons.person_rounded,
@@ -46,7 +52,8 @@ class AppShell extends ConsumerWidget {
     final location = GoRouterState.of(context).matchedLocation;
     if (location.startsWith(AppRoutes.groups)) return 1;
     if (location.startsWith(AppRoutes.activity)) return 2;
-    if (location.startsWith(AppRoutes.profile)) return 3;
+    if (location.startsWith(AppRoutes.spaces)) return 3;
+    if (location.startsWith(AppRoutes.profile)) return 4;
     return 0; // chats
   }
 

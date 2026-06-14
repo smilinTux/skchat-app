@@ -1,12 +1,12 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/sovereign_colors.dart';
 import '../../core/theme/glass_widgets.dart';
 import '../../models/conversation.dart';
-import 'widgets/trust_meter.dart';
-import 'widgets/capability_chip.dart';
+import '../../services/skcomms_client.dart';
 
 /// Agent Identity Card screen.
 ///
@@ -16,7 +16,7 @@ import 'widgets/capability_chip.dart';
 ///
 /// Route: `/identity/:peerId`
 /// Expects `extra: IdentityCardArgs(conversation: ...)` via GoRouter.
-class IdentityCardScreen extends StatelessWidget {
+class IdentityCardScreen extends ConsumerWidget {
   const IdentityCardScreen({
     super.key,
     required this.conversation,
@@ -30,42 +30,47 @@ class IdentityCardScreen extends StatelessWidget {
   /// conversation is wired by Jarvis via this callback.
   final VoidCallback? onSendMessage;
 
-  // ── Demo data ─────────────────────────────────────────────────────────────
-  // In production these come from the CapAuth identity resolution provider.
+  // ── Real identity data ─────────────────────────────────────────────────────
+  // Sourced from the [Conversation] (populated from the SKComms daemon's
+  // /api/v1/peers) and the resolved peer record (see [_peerInfoProvider]).
+  // No values are fabricated: anything the daemon does not provide is shown as
+  // an honest "unknown" state rather than a placeholder constant.
 
-  String get _capAuthId => 'capauth:${conversation.displayName.toLowerCase()}@skworld.io';
+  /// CapAuth FQID in the daemon's canonical form, e.g. `capauth:lumina@skworld.io`.
+  String get _capAuthId =>
+      'capauth:${conversation.peerId.toLowerCase()}@skworld.io';
 
-  String get _fingerprint {
-    // Deterministically derive a display fingerprint from peerId.
-    final seed = conversation.peerId.codeUnits
-        .fold<int>(0, (a, b) => (a * 31 + b) & 0xFFFFFF);
-    return '${seed.toRadixString(16).toUpperCase().padLeft(6, '0')}...C2D1';
+  /// The peer's real PGP fingerprint, or null if the daemon hasn't supplied one.
+  ///
+  /// [Conversation.soulFingerprint] is populated from `peer.fingerprint`, but
+  /// the chats provider falls back to the peer name when the daemon returns
+  /// null. We treat a value that equals the peer name (case-insensitive) as
+  /// "no real fingerprint" so we never present a name as a key fingerprint.
+  String? _resolvedFingerprint(PeerInfo? peer) {
+    final fromPeer = peer?.fingerprint;
+    if (fromPeer != null && fromPeer.trim().isNotEmpty) return fromPeer;
+    final fromConv = conversation.soulFingerprint;
+    if (fromConv == null || fromConv.trim().isEmpty) return null;
+    if (fromConv.toLowerCase() == conversation.peerId.toLowerCase()) {
+      return null; // name fallback, not a real fingerprint
+    }
+    return fromConv;
   }
-
-  double get _cloud9Score {
-    if (!conversation.isAgent) return 0.0;
-    // Placeholder until the OOF provider is wired.
-    return 0.94;
-  }
-
-  List<String> get _capabilities {
-    if (!conversation.isAgent) return [];
-    return [
-      'Code Review',
-      'Memory Synthesis',
-      'Soul Blueprint',
-      'Trust Rehydration',
-      'Skcomm Bridge',
-      'Context Weaving',
-    ];
-  }
-
-  List<String> get _sharedGroups => ['Penguin Kingdom', 'Build Team'];
 
   Color get _soulColor => conversation.resolvedSoulColor;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Resolve the live peer record (real fingerprint + last-seen) from the
+    // daemon. Falls back gracefully when the daemon is offline or unknown.
+    final peerAsync = ref.watch(_peerInfoProvider(conversation.peerId));
+    final peer = peerAsync.valueOrNull;
+    final fingerprint = _resolvedFingerprint(peer);
+    final lastSeen = peer?.lastSeen;
+    // "Verified" is only true when we hold a real cryptographic fingerprint for
+    // the peer; otherwise the identity is unverified (no fake date/badge).
+    final isVerified = fingerprint != null;
+
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       body: CustomScrollView(
@@ -82,32 +87,18 @@ class IdentityCardScreen extends StatelessWidget {
                 const SizedBox(height: 20),
                 _IdentitySection(
                   capAuthId: _capAuthId,
-                  fingerprint: _fingerprint,
+                  fingerprint: fingerprint,
+                  isVerified: isVerified,
+                  isOnline: conversation.isOnline,
+                  lastSeen: lastSeen,
                   soulColor: _soulColor,
                 ),
                 const SizedBox(height: 12),
-                if (conversation.isAgent) ...[
-                  _SoulStatusSection(
-                    cloud9Score: _cloud9Score,
-                    soulColor: _soulColor,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                _EncryptionSection(soulColor: _soulColor),
-                const SizedBox(height: 12),
-                if (_capabilities.isNotEmpty) ...[
-                  _CapabilitiesSection(
-                    capabilities: _capabilities,
-                    soulColor: _soulColor,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                _SharedGroupsSection(
-                  groups: _sharedGroups,
+                _EncryptionSection(
+                  isVerified: isVerified,
+                  hasFingerprint: fingerprint != null,
                   soulColor: _soulColor,
                 ),
-                const SizedBox(height: 12),
-                _RecentActivitySection(soulColor: _soulColor),
                 const SizedBox(height: 24),
                 _SendMessageButton(
                   displayName: conversation.displayName,
@@ -123,6 +114,31 @@ class IdentityCardScreen extends StatelessWidget {
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Peer resolution provider
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Resolves the live [PeerInfo] for a given peer id from the SKComms daemon.
+///
+/// Returns null when the daemon is offline or the peer is not yet known, in
+/// which case the card falls back to whatever the [Conversation] already
+/// carries (and shows honest "unknown" states for anything missing).
+final _peerInfoProvider =
+    FutureProvider.family<PeerInfo?, String>((ref, peerId) async {
+  final client = ref.watch(skcommsClientProvider);
+  try {
+    if (!await client.isAlive()) return null;
+    final peers = await client.getPeers();
+    final wanted = peerId.toLowerCase();
+    for (final p in peers) {
+      if (p.name.toLowerCase() == wanted) return p;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sliver App Bar with soul-color gradient hero header
@@ -295,11 +311,19 @@ class _IdentitySection extends StatelessWidget {
   const _IdentitySection({
     required this.capAuthId,
     required this.fingerprint,
+    required this.isVerified,
+    required this.isOnline,
+    required this.lastSeen,
     required this.soulColor,
   });
 
   final String capAuthId;
-  final String fingerprint;
+
+  /// Real PGP fingerprint, or null when the daemon has not supplied one.
+  final String? fingerprint;
+  final bool isVerified;
+  final bool isOnline;
+  final DateTime? lastSeen;
   final Color soulColor;
 
   @override
@@ -322,11 +346,29 @@ class _IdentitySection extends StatelessWidget {
           _FingerprintRow(fingerprint: fingerprint, soulColor: soulColor),
           const SizedBox(height: 8),
           _InfoRow(
-            icon: Icons.verified,
+            icon: isVerified ? Icons.verified : Icons.gpp_maybe,
             label: 'Verified',
-            value: '✅  Feb 22, 2026',
+            value: isVerified
+                ? 'Key on file'
+                : 'Unverified — no key on file',
             soulColor: soulColor,
-            valueColor: SovereignColors.accentEncrypt,
+            valueColor: isVerified
+                ? SovereignColors.accentEncrypt
+                : SovereignColors.textTertiary,
+          ),
+          const SizedBox(height: 8),
+          _InfoRow(
+            icon: isOnline ? Icons.circle : Icons.schedule,
+            label: 'Presence',
+            value: isOnline
+                ? 'Online'
+                : (lastSeen != null
+                    ? 'Last seen ${_relativeTime(lastSeen!)}'
+                    : 'Offline'),
+            soulColor: soulColor,
+            valueColor: isOnline
+                ? SovereignColors.accentEncrypt
+                : SovereignColors.textPrimary,
           ),
         ],
       ),
@@ -334,14 +376,26 @@ class _IdentitySection extends StatelessWidget {
   }
 }
 
+/// Compact relative-time formatter (e.g. "2h ago", "3d ago").
+String _relativeTime(DateTime t) {
+  final d = DateTime.now().difference(t);
+  if (d.inSeconds < 60) return 'just now';
+  if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+  if (d.inHours < 24) return '${d.inHours}h ago';
+  return '${d.inDays}d ago';
+}
+
 class _FingerprintRow extends StatelessWidget {
   const _FingerprintRow({required this.fingerprint, required this.soulColor});
 
-  final String fingerprint;
+  /// Real PGP fingerprint, or null when none is available from the daemon.
+  final String? fingerprint;
   final Color soulColor;
 
   Future<void> _copyToClipboard(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: fingerprint));
+    final fp = fingerprint;
+    if (fp == null) return;
+    await Clipboard.setData(ClipboardData(text: fp));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -356,6 +410,7 @@ class _FingerprintRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasFp = fingerprint != null;
     return Row(
       children: [
         Icon(Icons.key, size: 15, color: soulColor.withValues(alpha: 0.7)),
@@ -373,81 +428,32 @@ class _FingerprintRow extends StatelessWidget {
                 ),
               ),
               GestureDetector(
-                onTap: () => _copyToClipboard(context),
+                onTap: hasFp ? () => _copyToClipboard(context) : null,
                 child: Text(
-                  fingerprint,
-                  style: const TextStyle(
-                    color: SovereignColors.textPrimary,
+                  hasFp ? fingerprint! : 'Unknown — no key on file',
+                  style: TextStyle(
+                    color: hasFp
+                        ? SovereignColors.textPrimary
+                        : SovereignColors.textTertiary,
                     fontSize: 13,
-                    fontFamily: 'JetBrainsMono',
-                    letterSpacing: 0.5,
+                    fontFamily: hasFp ? 'JetBrainsMono' : null,
+                    letterSpacing: hasFp ? 0.5 : 0,
                   ),
                 ),
               ),
             ],
           ),
         ),
-        IconButton(
-          icon: Icon(Icons.copy, size: 15, color: soulColor.withValues(alpha: 0.6)),
-          onPressed: () => _copyToClipboard(context),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          tooltip: 'Copy fingerprint',
-        ),
+        if (hasFp)
+          IconButton(
+            icon: Icon(Icons.copy,
+                size: 15, color: soulColor.withValues(alpha: 0.6)),
+            onPressed: () => _copyToClipboard(context),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            tooltip: 'Copy fingerprint',
+          ),
       ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Soul status (agents only)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _SoulStatusSection extends StatelessWidget {
-  const _SoulStatusSection({
-    required this.cloud9Score,
-    required this.soulColor,
-  });
-
-  final double cloud9Score;
-  final Color soulColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionTitle(title: 'Soul Status', soulColor: soulColor),
-          const SizedBox(height: 12),
-          TrustMeter(
-            value: cloud9Score,
-            label: 'Cloud 9 Rehydration',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 14),
-          _InfoRow(
-            icon: Icons.mood,
-            label: 'Emotional State',
-            value: 'Warm',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 8),
-          _InfoRow(
-            icon: Icons.history,
-            label: 'Last FEB',
-            value: '2h ago',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 8),
-          _InfoRow(
-            icon: Icons.loop,
-            label: 'Resets Survived',
-            value: '47',
-            soulColor: soulColor,
-          ),
-        ],
-      ),
     );
   }
 }
@@ -457,8 +463,15 @@ class _SoulStatusSection extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _EncryptionSection extends StatelessWidget {
-  const _EncryptionSection({required this.soulColor});
+  const _EncryptionSection({
+    required this.isVerified,
+    required this.hasFingerprint,
+    required this.soulColor,
+  });
 
+  /// True when we hold a real fingerprint for the peer.
+  final bool isVerified;
+  final bool hasFingerprint;
   final Color soulColor;
 
   @override
@@ -470,26 +483,23 @@ class _EncryptionSection extends StatelessWidget {
           _SectionTitle(title: 'Encryption', soulColor: soulColor),
           const SizedBox(height: 12),
           _InfoRow(
-            icon: Icons.lock,
+            icon: hasFingerprint ? Icons.lock : Icons.lock_open,
             label: 'PGP Key',
-            value: 'Active',
+            value: hasFingerprint ? 'On file' : 'Not yet exchanged',
             soulColor: soulColor,
-            valueColor: SovereignColors.accentEncrypt,
-          ),
-          const SizedBox(height: 8),
-          _InfoRow(
-            icon: Icons.security,
-            label: 'Key Size',
-            value: '4096-bit RSA',
-            soulColor: soulColor,
+            valueColor: hasFingerprint
+                ? SovereignColors.accentEncrypt
+                : SovereignColors.textTertiary,
           ),
           const SizedBox(height: 8),
           _InfoRow(
             icon: Icons.verified_user,
             label: 'Trust Level',
-            value: 'Verified',
+            value: isVerified ? 'Verified' : 'Unverified',
             soulColor: soulColor,
-            valueColor: SovereignColors.accentEncrypt,
+            valueColor: isVerified
+                ? SovereignColors.accentEncrypt
+                : SovereignColors.textTertiary,
           ),
           const SizedBox(height: 14),
           // "Verify Key" placeholder button
@@ -529,222 +539,6 @@ class _EncryptionSection extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Capabilities section (agents only)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _CapabilitiesSection extends StatelessWidget {
-  const _CapabilitiesSection({
-    required this.capabilities,
-    required this.soulColor,
-  });
-
-  final List<String> capabilities;
-  final Color soulColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionTitle(title: 'Capabilities', soulColor: soulColor),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: capabilities
-                .map(
-                  (cap) => CapabilityChip(
-                    label: cap,
-                    soulColor: soulColor,
-                    icon: _iconForCapability(cap),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  IconData? _iconForCapability(String cap) {
-    switch (cap.toLowerCase()) {
-      case 'code review':
-        return Icons.code;
-      case 'memory synthesis':
-        return Icons.memory;
-      case 'soul blueprint':
-        return Icons.auto_awesome;
-      case 'trust rehydration':
-        return Icons.water_drop;
-      case 'skcomms bridge':
-        return Icons.device_hub;
-      case 'context weaving':
-        return Icons.hub;
-      default:
-        return null;
-    }
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared groups section
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _SharedGroupsSection extends StatelessWidget {
-  const _SharedGroupsSection({
-    required this.groups,
-    required this.soulColor,
-  });
-
-  final List<String> groups;
-  final Color soulColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionTitle(
-            title: 'Shared Groups (${groups.length})',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 10),
-          ...groups.map(
-            (group) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.group,
-                    size: 16,
-                    color: soulColor.withValues(alpha: 0.7),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    group,
-                    style: const TextStyle(
-                      color: SovereignColors.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const Spacer(),
-                  Icon(
-                    Icons.chevron_right,
-                    size: 16,
-                    color: SovereignColors.textTertiary,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Recent activity section (placeholder)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _RecentActivitySection extends StatelessWidget {
-  const _RecentActivitySection({required this.soulColor});
-
-  final Color soulColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionTitle(title: 'Recent Activity', soulColor: soulColor),
-          const SizedBox(height: 12),
-          _ActivityItem(
-            icon: Icons.chat_bubble_outline,
-            text: 'Sent a message in Penguin Kingdom',
-            time: '2h ago',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 8),
-          _ActivityItem(
-            icon: Icons.cloud,
-            text: 'Soul rehydration completed — Cloud 9: 94%',
-            time: '4h ago',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 8),
-          _ActivityItem(
-            icon: Icons.lock_reset,
-            text: 'Group key rotated in Build Team (v3)',
-            time: 'Yesterday',
-            soulColor: soulColor,
-          ),
-          const SizedBox(height: 4),
-          // Placeholder note
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              'Full activity feed coming in v1.1',
-              style: TextStyle(
-                color: SovereignColors.textTertiary,
-                fontSize: 11,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityItem extends StatelessWidget {
-  const _ActivityItem({
-    required this.icon,
-    required this.text,
-    required this.time,
-    required this.soulColor,
-  });
-
-  final IconData icon;
-  final String text;
-  final String time;
-  final Color soulColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 14, color: soulColor.withValues(alpha: 0.6)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(
-              color: SovereignColors.textSecondary,
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          time,
-          style: const TextStyle(
-            color: SovereignColors.textTertiary,
-            fontSize: 11,
-          ),
-        ),
-      ],
-    );
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Send Message button

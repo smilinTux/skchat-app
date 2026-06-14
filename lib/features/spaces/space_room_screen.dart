@@ -11,6 +11,7 @@ import "../../services/spaces_service.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
+import "terminal_panel.dart";
 import "doc_panel.dart";
 import "whiteboard_panel.dart";
 import "space_models.dart";
@@ -256,6 +257,7 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
             _laneTile(sheetCtx, context, Icons.draw_outlined, "Whiteboard", WhiteboardPanel(spaceId: join.spaceId, identity: join.identity)),
             _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
             _laneTile(sheetCtx, context, Icons.screen_share_outlined, "Screen share", ScreenSharePanel(spaceId: join.spaceId, identity: join.identity)),
+            _laneTile(sheetCtx, context, Icons.terminal_rounded, "Terminal", TerminalPanel(spaceId: join.spaceId, identity: join.identity)),
           ],
         ),
       ),

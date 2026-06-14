@@ -230,13 +230,6 @@ class ProfileScreen extends ConsumerWidget {
               child: Column(
                 children: [
                   ListTile(
-                    leading: const Icon(Icons.podcasts_rounded),
-                    title: const Text('Spaces'),
-                    subtitle: const Text('Live sovereign audio rooms'),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => context.push(AppRoutes.spaces),
-                  ),
-                  ListTile(
                     leading: const Icon(Icons.dashboard_outlined),
                     title: const Text('Coordination Board'),
                     trailing: const Icon(Icons.chevron_right_rounded),
