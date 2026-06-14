@@ -10,6 +10,9 @@ import "../../services/livekit_call_service.dart";
 import "../../services/spaces_service.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
+import "screen_share_panel.dart";
+import "doc_panel.dart";
+import "whiteboard_panel.dart";
 import "space_models.dart";
 
 // ── Soul color ──────────────────────────────────────────────────────────────
@@ -205,35 +208,12 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
       floatingActionButton: st.isConnected
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FloatingActionButton(
-                  heroTag: "watch-fab",
-                  mini: true,
-                  backgroundColor: SovereignColors.surfaceRaised,
-                  onPressed: () => _openLane(
-                    context,
-                    WatchPanel(
-                        spaceId: join.spaceId, identity: join.identity),
-                  ),
-                  child: const Icon(Icons.smart_display_outlined,
-                      color: SovereignColors.textPrimary),
-                ),
-                const SizedBox(height: 10),
-                FloatingActionButton(
-                  heroTag: "chat-fab",
-                  mini: true,
-                  backgroundColor: SovereignColors.surfaceRaised,
-                  onPressed: () => _openLane(
-                    context,
-                    SpaceChatPanel(
-                        spaceId: join.spaceId, identity: join.identity),
-                  ),
-                  child: const Icon(Icons.chat_bubble_outline_rounded,
-                      color: SovereignColors.textPrimary),
-                ),
-              ],
+          ? FloatingActionButton(
+              heroTag: "lanes-fab",
+              backgroundColor: SovereignColors.surfaceRaised,
+              onPressed: () => _openLanes(context, join),
+              child: const Icon(Icons.dashboard_customize_outlined,
+                  color: SovereignColors.textPrimary),
             )
           : null,
       body: st.error != null
@@ -260,6 +240,38 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                 ],
               ),
             ),
+    );
+  }
+
+  void _openLanes(BuildContext context, SpaceJoin join) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: SovereignColors.surfaceCard,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _laneTile(sheetCtx, context, Icons.chat_bubble_outline_rounded, "Chat", SpaceChatPanel(spaceId: join.spaceId, identity: join.identity)),
+            _laneTile(sheetCtx, context, Icons.smart_display_outlined, "Watch together", WatchPanel(spaceId: join.spaceId, identity: join.identity)),
+            _laneTile(sheetCtx, context, Icons.draw_outlined, "Whiteboard", WhiteboardPanel(spaceId: join.spaceId, identity: join.identity)),
+            _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
+            _laneTile(sheetCtx, context, Icons.screen_share_outlined, "Screen share", ScreenSharePanel(spaceId: join.spaceId, identity: join.identity)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _laneTile(BuildContext sheetCtx, BuildContext context, IconData icon,
+      String label, Widget panel) {
+    return ListTile(
+      leading: Icon(icon, color: SovereignColors.textSecondary),
+      title: Text(label,
+          style: const TextStyle(color: SovereignColors.textPrimary)),
+      onTap: () {
+        Navigator.of(sheetCtx).pop();
+        _openLane(context, panel);
+      },
     );
   }
 

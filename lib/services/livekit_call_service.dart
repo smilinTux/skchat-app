@@ -299,6 +299,18 @@ class LiveKitCallService {
     _emitParticipants();
   }
 
+  /// Start / stop sharing the local screen.
+  ///
+  /// Publishes (or unpublishes) a screen-share video track on the local
+  /// participant. On platforms that require a capture prompt (desktop/web),
+  /// the LiveKit client surfaces it; on mobile a foreground-service /
+  /// broadcast-extension flow applies. Guarded for a null local participant
+  /// (no-op until [joinRoom] / [connectWithToken] completes).
+  Future<void> setScreenShareEnabled(bool enabled) async {
+    await _localParticipant?.setScreenShareEnabled(enabled);
+    _emitParticipants();
+  }
+
   // ── Data channel ──────────────────────────────────────────────────────────
 
   /// Publish a data message to the room (all participants unless restricted).
