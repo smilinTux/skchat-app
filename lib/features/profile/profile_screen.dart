@@ -236,6 +236,12 @@ class ProfileScreen extends ConsumerWidget {
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: () => context.push(AppRoutes.spaces),
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.dashboard_outlined),
+                    title: const Text('Coordination Board'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => context.push(AppRoutes.coord),
+                  ),
                   const Divider(height: 1, indent: 56),
                   ListTile(
                     leading: const Icon(Icons.qr_code_scanner_rounded),
