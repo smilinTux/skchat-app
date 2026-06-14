@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import '../chats/peer_picker_provider.dart';
 import 'groups_provider.dart';
 
@@ -14,7 +14,7 @@ import 'groups_provider.dart';
 /// Steps:
 ///   1. Enter name + description.
 ///   2. Pick initial members from known peers (optional).
-///   3. Submit → calls POST /api/v1/groups via [SKCommClient].
+///   3. Submit → calls POST /api/v1/groups via [SKCommsClient].
 ///   4. On success: shows AES-256-GCM key distribution info.
 class CreateGroupScreen extends ConsumerStatefulWidget {
   const CreateGroupScreen({super.key});
@@ -399,7 +399,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
 
     setState(() => _isSubmitting = true);
 
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final notifier = ref.read(groupsProvider.notifier);
 
     try {

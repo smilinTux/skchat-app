@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import '../chats/chats_provider.dart';
 import 'groups_provider.dart';
 
@@ -67,10 +67,10 @@ enum ParticipantType { human, agent, service }
 const _knownAgents = {'lumina', 'jarvis', 'opus', 'ava', 'ara'};
 
 /// Provider for the members of a specific group.
-/// Fetches from the SKComm daemon's group members endpoint.
+/// Fetches from the SKComms daemon's group members endpoint.
 final groupMembersProvider =
     FutureProvider.family<List<GroupMemberInfo>, String>((ref, groupId) async {
-  final client = ref.read(skcommClientProvider);
+  final client = ref.read(skcommsClientProvider);
   final raw = await client.getGroupMembers(groupId);
 
   return raw.map((json) {
@@ -500,7 +500,7 @@ class GroupInfoScreen extends ConsumerWidget {
     WidgetRef ref,
     Conversation peer,
   ) async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final notifier = ref.read(groupsProvider.notifier);
 
     try {
@@ -563,7 +563,7 @@ class GroupInfoScreen extends ConsumerWidget {
     WidgetRef ref,
     GroupMemberInfo member,
   ) async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final notifier = ref.read(groupsProvider.notifier);
 
     try {
@@ -595,7 +595,7 @@ class GroupInfoScreen extends ConsumerWidget {
     WidgetRef ref,
     String newName,
   ) async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final notifier = ref.read(groupsProvider.notifier);
 
     try {
@@ -640,7 +640,7 @@ class GroupInfoScreen extends ConsumerWidget {
                 onChanged: (value) async {
                   Navigator.of(dialogContext).pop();
                   final roleName = value!.name; // 'admin', 'member', 'observer'
-                  final client = ref.read(skcommClientProvider);
+                  final client = ref.read(skcommsClientProvider);
                   try {
                     await client.addGroupMember(
                       groupId,
@@ -689,7 +689,7 @@ class GroupInfoScreen extends ConsumerWidget {
             ),
             onPressed: () async {
               Navigator.of(dialogContext).pop();
-              final client = ref.read(skcommClientProvider);
+              final client = ref.read(skcommsClientProvider);
               try {
                 await client.leaveGroup(groupId);
               } on Object {

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:skchat/services/skcomm_sync.dart';
+import 'package:skchat/services/skcomms_sync.dart';
 
 void main() {
   group('DaemonStatus', () {
@@ -89,9 +89,9 @@ void main() {
     });
   });
 
-  group('SKCommSyncNotifier provider', () {
+  group('SKCommsSyncNotifier provider', () {
     test('provider is accessible', () {
-      expect(skcommSyncProvider, isNotNull);
+      expect(skcommsSyncProvider, isNotNull);
     });
   });
 }

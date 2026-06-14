@@ -62,7 +62,7 @@ flutter run
      - Generic: Three-dot pulse
 
 ### ✅ HTTP Client
-- `SKCommClient` for localhost:9384
+- `SKCommsClient` for localhost:9384
 - 11 endpoints implemented (send, inbox, conversations, presence, status, groups, agents)
 - Dio-based with error handling
 - Riverpod provider ready
@@ -88,7 +88,7 @@ skchat/flutter_app/
 │   │   │   ├── soul_color.dart            # Fingerprint → HSL color
 │   │   │   └── glass_decorations.dart     # Reusable glass widgets
 │   │   └── transport/
-│   │       └── skcomm_client.dart         # HTTP client for daemon
+│   │       └── skcomms_client.dart         # HTTP client for daemon
 │   ├── features/
 │   │   ├── chat_list/
 │   │   │   ├── chat_list_screen.dart
@@ -228,7 +228,7 @@ All UI components are functional. The app gracefully degrades without the daemon
 
 ---
 
-## Integration with SKComm Daemon
+## Integration with SKComms Daemon
 
 ### API Endpoints Used
 
@@ -285,7 +285,7 @@ All UI components are functional. The app gracefully degrades without the daemon
 - ✅ `lib/core/theme/sovereign_glass.dart`
 - ✅ `lib/core/theme/soul_color.dart`
 - ✅ `lib/core/theme/glass_decorations.dart`
-- ✅ `lib/core/transport/skcomm_client.dart`
+- ✅ `lib/core/transport/skcomms_client.dart`
 - ✅ `lib/features/chat_list/chat_list_screen.dart`
 - ✅ `lib/features/chat_list/widgets/conversation_tile.dart`
 - ✅ `lib/features/chat_list/widgets/soul_avatar.dart`
@@ -389,14 +389,14 @@ All UI components are functional. The app gracefully degrades without the daemon
 │                 │                        │
 │  ┌──────────────▼─────────────────────┐  │
 │  │  Transport Layer                   │  │
-│  │  - SKCommClient (Dio)              │  │
+│  │  - SKCommsClient (Dio)              │  │
 │  │  - localhost:9384                  │  │
 │  └──────────────┬─────────────────────┘  │
 └─────────────────┼──────────────────────────┘
                   │ HTTP REST
                   ↓
      ┌────────────────────────────┐
-     │  SKComm Daemon (Python)    │
+     │  SKComms Daemon (Python)    │
      │  - skchat/cli daemon       │
      │  - port 9384               │
      └────────────┬───────────────┘
@@ -445,7 +445,7 @@ All UI components are functional. The app gracefully degrades without the daemon
 For questions about:
 - **UI/Theme**: See `lib/core/theme/` files
 - **Screens**: See `lib/features/` directories
-- **API**: See `lib/core/transport/skcomm_client.dart`
+- **API**: See `lib/core/transport/skcomms_client.dart`
 - **Models**: See `lib/models/` with Freezed annotations
 
 **Next collaborators should coordinate with transport-builder** on daemon API schema.

@@ -6,7 +6,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import 'chats_provider.dart';
 
 // ── Own-identity provider ──────────────────────────────────────────────────
@@ -18,7 +18,7 @@ class _PeerIdentity {
   final String fingerprint;
 
   String get qrData => jsonEncode({
-        'type': 'skcomm-peer',
+        'type': 'skcomms-peer',
         'name': name,
         'fingerprint': fingerprint,
       });
@@ -32,7 +32,7 @@ class _PeerIdentity {
 /// Fetches the local agent's identity from the daemon status endpoint.
 final _selfIdentityProvider =
     FutureProvider.autoDispose<_PeerIdentity>((ref) async {
-  final client = ref.read(skcommClientProvider);
+  final client = ref.read(skcommsClientProvider);
   try {
     final status = await client.getStatus();
     return _PeerIdentity(
@@ -285,7 +285,7 @@ class _QrPeerSheetState extends ConsumerState<QrPeerSheet>
       try {
         final data = jsonDecode(raw);
         if (data is! Map<String, dynamic>) continue;
-        if (data['type'] != 'skcomm-peer') {
+        if (data['type'] != 'skcomms-peer') {
           setState(() => _scanError = 'Not a SKChat QR code.');
           continue;
         }

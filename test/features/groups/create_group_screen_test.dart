@@ -6,9 +6,9 @@ import 'package:skchat/data/conversation_repository.dart';
 import 'package:skchat/features/groups/create_group_screen.dart';
 import 'package:skchat/features/groups/groups_provider.dart';
 import 'package:skchat/models/conversation.dart';
-import 'package:skchat/services/skcomm_client.dart';
+import 'package:skchat/services/skcomms_client.dart';
 
-class MockSKCommClient extends Mock implements SKCommClient {}
+class MockSKCommsClient extends Mock implements SKCommsClient {}
 
 class MockConversationRepository extends Mock
     implements ConversationRepository {}
@@ -21,12 +21,12 @@ final _dummyConversation = Conversation(
 );
 
 Widget _wrap({
-  required MockSKCommClient client,
+  required MockSKCommsClient client,
   required MockConversationRepository repo,
 }) {
   return ProviderScope(
     overrides: [
-      skcommClientProvider.overrideWithValue(client),
+      skcommsClientProvider.overrideWithValue(client),
       conversationRepositoryProvider.overrideWithValue(repo),
     ],
     child: const MaterialApp(
@@ -36,7 +36,7 @@ Widget _wrap({
 }
 
 void main() {
-  late MockSKCommClient mockClient;
+  late MockSKCommsClient mockClient;
   late MockConversationRepository mockRepo;
 
   setUpAll(() {
@@ -44,7 +44,7 @@ void main() {
   });
 
   setUp(() {
-    mockClient = MockSKCommClient();
+    mockClient = MockSKCommsClient();
     mockRepo = MockConversationRepository();
   });
 

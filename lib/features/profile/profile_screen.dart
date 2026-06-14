@@ -6,11 +6,11 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
 import '../../services/daemon_config.dart';
-import '../../services/skcomm_client.dart';
-import '../../services/skcomm_sync.dart';
+import '../../services/skcomms_client.dart';
+import '../../services/skcomms_sync.dart';
 
 // ── Local identity provider ────────────────────────────────────────────────
-// Identity is fetched from the SKComm daemon at /api/v1/identity.
+// Identity is fetched from the SKComms daemon at /api/v1/identity.
 // Exposed as a Notifier so it can be updated at runtime.
 
 class LocalIdentity {
@@ -56,9 +56,9 @@ class LocalIdentityNotifier extends Notifier<LocalIdentity> {
     );
   }
 
-  /// Fetch identity from the SKComm daemon's /api/v1/identity endpoint.
+  /// Fetch identity from the SKComms daemon's /api/v1/identity endpoint.
   Future<void> _fetchFromDaemon() async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     try {
       final alive = await client.isAlive();
       if (!alive) return;
@@ -91,7 +91,7 @@ final localIdentityProvider =
 
 final transportHealthProvider =
     Provider<List<({String name, bool active})>>((ref) {
-  final daemon = ref.watch(skcommSyncProvider);
+  final daemon = ref.watch(skcommsSyncProvider);
   final info = daemon.transportInfo;
   if (info == null) return [];
 
@@ -129,7 +129,7 @@ class ProfileScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final identity = ref.watch(localIdentityProvider);
-    final daemon = ref.watch(skcommSyncProvider);
+    final daemon = ref.watch(skcommsSyncProvider);
     final daemonUrl = ref.watch(daemonUrlProvider);
     final transports = ref.watch(transportHealthProvider);
     final themeMode = ref.watch(themeProvider);
@@ -247,7 +247,7 @@ class ProfileScreen extends ConsumerWidget {
                   const Divider(height: 1, indent: 56),
                   ListTile(
                     leading: const Icon(Icons.storage_outlined),
-                    title: const Text('SKComm Daemon'),
+                    title: const Text('SKComms Daemon'),
                     subtitle: Text(
                       daemonUrl,
                       style: tt.labelSmall?.copyWith(
@@ -308,7 +308,7 @@ class ProfileScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'SKComm Daemon URL',
+              'SKComms Daemon URL',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -582,7 +582,7 @@ class _DaemonStatusCard extends StatelessWidget {
                 Icon(statusIcon, size: 10, color: statusColor),
                 const SizedBox(width: 8),
                 Text(
-                  'SKComm Daemon · $statusLabel',
+                  'SKComms Daemon · $statusLabel',
                   style: tt.titleSmall?.copyWith(
                     color: statusColor,
                     fontWeight: FontWeight.w600,

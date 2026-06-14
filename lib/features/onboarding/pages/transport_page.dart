@@ -4,7 +4,7 @@ import '../../../core/theme/sovereign_colors.dart';
 import '../../../core/theme/glass_widgets.dart';
 import '../onboarding_provider.dart';
 
-/// Onboarding step 3 — detect SKComm daemon and Syncthing availability.
+/// Onboarding step 3 — detect SKComms daemon and Syncthing availability.
 class TransportPage extends ConsumerStatefulWidget {
   const TransportPage({super.key, this.onNext});
 
@@ -62,11 +62,11 @@ class _TransportPageState extends ConsumerState<TransportPage> {
             const SizedBox(height: 32),
             _TransportRow(
               icon: Icons.hub,
-              label: 'SKComm Daemon',
+              label: 'SKComms Daemon',
               description: 'Sovereign peer-to-peer message bus',
               detected: state.daemonDetected,
               loading: state.isDetecting,
-              setupHint: 'Run: systemctl --user start skcomm',
+              setupHint: 'Run: systemctl --user start skcomms',
             ),
             const SizedBox(height: 16),
             _TransportRow(

@@ -6,10 +6,10 @@ import 'package:skchat/data/conversation_repository.dart';
 import 'package:skchat/data/message_repository.dart';
 import 'package:skchat/main.dart';
 import 'package:skchat/models/conversation.dart';
-import 'package:skchat/services/skcomm_client.dart';
-import 'package:skchat/services/skcomm_sync.dart';
+import 'package:skchat/services/skcomms_client.dart';
+import 'package:skchat/services/skcomms_sync.dart';
 
-class MockSKCommClient extends Mock implements SKCommClient {}
+class MockSKCommsClient extends Mock implements SKCommsClient {}
 
 class MockConversationRepository extends Mock
     implements ConversationRepository {}
@@ -18,7 +18,7 @@ class MockMessageRepository extends Mock implements MessageRepository {}
 
 void main() {
   testWidgets('SKChatApp smoke test', (WidgetTester tester) async {
-    final mockClient = MockSKCommClient();
+    final mockClient = MockSKCommsClient();
     final mockConvoRepo = MockConversationRepository();
     final mockMsgRepo = MockMessageRepository();
 
@@ -29,8 +29,8 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          skcommClientProvider.overrideWithValue(mockClient),
-          skcommSyncProvider.overrideWith(() => _NoOpSyncNotifier()),
+          skcommsClientProvider.overrideWithValue(mockClient),
+          skcommsSyncProvider.overrideWith(() => _NoOpSyncNotifier()),
           conversationRepositoryProvider.overrideWithValue(mockConvoRepo),
           messageRepositoryProvider.overrideWithValue(mockMsgRepo),
         ],
@@ -44,7 +44,7 @@ void main() {
 }
 
 /// A no-op sync notifier that skips timer creation for tests.
-class _NoOpSyncNotifier extends SKCommSyncNotifier {
+class _NoOpSyncNotifier extends SKCommsSyncNotifier {
   @override
   DaemonState build() => const DaemonState(status: DaemonStatus.offline);
 }

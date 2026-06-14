@@ -6,10 +6,10 @@ import '../../core/router/app_router.dart';
 import '../../features/calls/call_provider.dart';
 import '../../features/calls/widgets/pip_overlay.dart';
 import '../../models/call_state.dart';
-import '../../services/skcomm_sync.dart';
+import '../../services/skcomms_sync.dart';
 
 /// AppShell wraps all main tab screens with the Sovereign Glass bottom nav bar.
-/// Shows a subtle offline banner when the SKComm daemon is unreachable.
+/// Shows a subtle offline banner when the SKComms daemon is unreachable.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.child});
 
@@ -53,7 +53,7 @@ class AppShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentIndex = _indexFor(context, ref);
-    final daemonState = ref.watch(skcommSyncProvider);
+    final daemonState = ref.watch(skcommsSyncProvider);
     final isOffline = daemonState.status == DaemonStatus.offline;
 
     // Navigate to incoming call screen when a call arrives from any tab.
@@ -91,7 +91,7 @@ class AppShell extends ConsumerWidget {
                       ),
                       SizedBox(width: 6),
                       Text(
-                        'SKComm daemon offline — messages will queue',
+                        'SKComms daemon offline — messages will queue',
                         style: TextStyle(
                           fontSize: 12,
                           color: SovereignColors.accentWarning,

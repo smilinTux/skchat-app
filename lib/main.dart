@@ -6,7 +6,7 @@ import 'core/theme/theme.dart';
 import 'core/router/app_router.dart';
 import 'core/providers/theme_provider.dart';
 import 'data/hive_adapters.dart';
-import 'services/skcomm_sync.dart';
+import 'services/skcomms_sync.dart';
 import 'services/identity_service.dart';
 
 Future<void> main() async {
@@ -43,7 +43,7 @@ class SKChatApp extends ConsumerWidget {
     final router = ref.watch(appRouterProvider);
 
     // Eagerly start the sync service so polling begins immediately.
-    ref.watch(skcommSyncProvider);
+    ref.watch(skcommsSyncProvider);
 
     // Eagerly load the local PGP identity from secure storage.
     ref.watch(identityKeyPairProvider);

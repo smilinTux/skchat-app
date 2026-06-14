@@ -28,7 +28,7 @@
 - Message delivery status (sending, sent, delivered, read, failed)
 
 ✅ **HTTP Bridge**
-- `SKCommClient` for talking to SKComm daemon on `localhost:9384`
+- `SKCommsClient` for talking to SKComms daemon on `localhost:9384`
 - Endpoints: send, poll inbox, conversations, presence, transport status, groups, agents
 - Dio-based with error handling and Riverpod provider
 
@@ -61,7 +61,7 @@
    flutter pub run build_runner build --delete-conflicting-outputs
    ```
 
-4. **Start SKComm Daemon** (prerequisite)
+4. **Start SKComms Daemon** (prerequisite)
    ```bash
    cd skchat
    python -m skchat.cli daemon --port 9384
@@ -86,7 +86,7 @@ Create Riverpod providers for:
 ### Local Persistence
 
 - Initialize Hive boxes for messages, conversations, drafts
-- Sync with SKComm daemon on app start
+- Sync with SKComms daemon on app start
 - Cache messages locally for offline viewing
 
 ### Background Sync
@@ -114,7 +114,7 @@ skchat/flutter_app/
 │   │   │   ├── soul_color.dart
 │   │   │   └── glass_decorations.dart
 │   │   └── transport/
-│   │       └── skcomm_client.dart
+│   │       └── skcomms_client.dart
 │   ├── features/
 │   │   ├── chat_list/
 │   │   │   ├── chat_list_screen.dart
@@ -147,8 +147,8 @@ See `skchat/flutter/PRD.md` for full design spec:
 ## Architecture Notes
 
 - **No Firebase**: Local notifications via `flutter_local_notifications`
-- **No Cloud**: All data syncs via SKComm daemon and Syncthing
-- **Localhost Only**: SKComm daemon must run on same device
+- **No Cloud**: All data syncs via SKComms daemon and Syncthing
+- **Localhost Only**: SKComms daemon must run on same device
 - **Freezed Models**: Immutable data classes with JSON serialization
 - **Riverpod**: State management (providers not yet created)
 - **GoRouter**: Declarative routing (routes defined, navigation wiring pending)
@@ -162,7 +162,7 @@ Even without the daemon running, you can see the UI:
 4. The theme and animations are fully functional
 
 To test with real data:
-1. Start the SKComm daemon
+1. Start the SKComms daemon
 2. Wire up the Riverpod providers
 3. Replace mock data with daemon calls
 

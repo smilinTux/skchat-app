@@ -2,25 +2,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/chat_message.dart';
 import '../../services/identity_service.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import 'chat_crypto.dart';
 import 'message_envelope.dart';
 
 /// Coordinates the full P2P send/receive pipeline between the Flutter UI
-/// and the SKComm daemon.
+/// and the SKComms daemon.
 ///
 /// **Send flow**
 /// ```
 /// ChatMessage
 ///   → ChatCrypto.signAndWrap  (RSA-signed MessageEnvelope)
 ///   → MessageEnvelope.toWireFormat  (JSON string)
-///   → SKCommClient.sendMessage  (POST /api/v1/send)
-///   → SKComm daemon → P2P transport → recipient
+///   → SKCommsClient.sendMessage  (POST /api/v1/send)
+///   → SKComms daemon → P2P transport → recipient
 /// ```
 ///
 /// **Receive flow**
 /// ```
-/// SKComm daemon (GET /api/v1/inbox)
+/// SKComms daemon (GET /api/v1/inbox)
 ///   → InboxMessage
 ///   → MessageEnvelope.tryParse  (JSON parse; graceful fallback to raw text)
 ///   → ChatCrypto.unwrap  (extract plaintext + metadata)
@@ -28,17 +28,17 @@ import 'message_envelope.dart';
 /// ```
 class ChatTransportBridge {
   const ChatTransportBridge({
-    required SKCommClient client,
+    required SKCommsClient client,
     required IdentityService identity,
   })  : _client = client,
         _identity = identity;
 
-  final SKCommClient _client;
+  final SKCommsClient _client;
   final IdentityService _identity;
 
   // ── Send ──────────────────────────────────────────────────────────────────
 
-  /// Send [message] to its [ChatMessage.peerId] via the SKComm daemon.
+  /// Send [message] to its [ChatMessage.peerId] via the SKComms daemon.
   ///
   /// 1. Loads the local PGP keypair from secure storage.
   /// 2. Signs the content and wraps it in a [MessageEnvelope].
@@ -121,7 +121,7 @@ class ChatTransportBridge {
 
 final chatTransportBridgeProvider = Provider<ChatTransportBridge>((ref) {
   return ChatTransportBridge(
-    client: ref.watch(skcommClientProvider),
+    client: ref.watch(skcommsClientProvider),
     identity: ref.watch(identityServiceProvider),
   );
 });

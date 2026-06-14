@@ -1,11 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-/// Compile-time default for the SKComm daemon base URL.
+/// Compile-time default for the SKComms daemon base URL.
 ///
 /// Override at build time with:
 ///   flutter build web --release \
-///     --dart-define=SKCOMM_URL=https://daemon-host.tail-net.ts.net
+///     --dart-define=SKCOMMS_URL=https://daemon-host.tail-net.ts.net
 ///
 /// For a NATIVE app on a machine that runs the daemon locally, the default
 /// `http://localhost:9384` is correct.  For a WEB build served to a browser
@@ -13,13 +13,13 @@ import 'package:hive_flutter/hive_flutter.dart';
 /// the user's own device — which has no daemon — so the URL MUST point at a
 /// network-reachable daemon (a tailnet host) with CORS enabled.
 const kDefaultDaemonUrl = String.fromEnvironment(
-  'SKCOMM_URL',
+  'SKCOMMS_URL',
   defaultValue: 'http://localhost:9384',
 );
 
 /// Hive box + key used to persist a user-supplied daemon URL override.
 const _kSettingsBox = 'settings';
-const _kDaemonUrlKey = 'skcomm_daemon_url';
+const _kDaemonUrlKey = 'skcomms_daemon_url';
 
 /// Normalize a user-entered daemon URL.
 ///
@@ -50,9 +50,9 @@ String daemonWsUrl(String httpUrl) {
   return u;
 }
 
-/// Reactive holder for the SKComm daemon base URL.
+/// Reactive holder for the SKComms daemon base URL.
 ///
-/// All daemon-facing clients (SKCommClient, CapAuthService, WebRTC signaling)
+/// All daemon-facing clients (SKCommsClient, CapAuthService, WebRTC signaling)
 /// read this so a single user setting repoints the entire app.  The value is
 /// persisted in Hive and survives app restarts / web reloads.
 class DaemonConfigNotifier extends Notifier<String> {
@@ -95,7 +95,7 @@ class DaemonConfigNotifier extends Notifier<String> {
   }
 }
 
-/// The current HTTP base URL of the SKComm daemon (e.g. `http://localhost:9384`
+/// The current HTTP base URL of the SKComms daemon (e.g. `http://localhost:9384`
 /// or a tailnet URL).  Watch this to rebuild dependents when it changes.
 final daemonUrlProvider =
     NotifierProvider<DaemonConfigNotifier, String>(DaemonConfigNotifier.new);

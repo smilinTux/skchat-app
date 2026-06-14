@@ -12,7 +12,7 @@ skchat-app is a **thin sovereign client**: a Riverpod-driven Flutter UI over a s
 set of HTTP/WebSocket clients. It holds no server logic. Three backends do the work,
 and the app is a window onto them:
 
-- **SKComm daemon** (`:9384`, REST + WS) — message send/receive, groups, file
+- **SKComms daemon** (`:9384`, REST + WS) — message send/receive, groups, file
   transfer, and WebRTC signaling.
 - **skcapstone daemon** (`:7777`) — the agent roster, consciousness state, presence.
 - **skcapstone dashboard** (`:7778`) — the coordination task board.
@@ -35,7 +35,7 @@ flowchart TD
     end
 
     subgraph SVC["services — HTTP/WS clients"]
-      SKCOMM["SKCommClient<br/>:9384"]
+      SKCOMMS["SKCommsClient<br/>:9384"]
       SKCAP["SKCapstoneClient<br/>:7777 + :7778"]
       WRTC["WebRTCCallService<br/>(WS signaling)"]
       CAP["CapAuthService"]
@@ -49,7 +49,7 @@ flowchart TD
     UI --> CORE
     CORE --> SVC
     UI --> SVC
-    BRIDGE --> SKCOMM
+    BRIDGE --> SKCOMMS
     BRIDGE --> CRYPTO
     CRYPTO --> ENV
     CALLS --> WRTC
@@ -69,15 +69,15 @@ incoming / active).
 
 The full pipeline lives in `lib/core/transport/`. `ChatTransportBridge` coordinates
 it; `ChatCrypto` does message-level signing on top of `PgpBridge`; `MessageEnvelope`
-is the wire format the SKComm daemon forwards opaquely.
+is the wire format the SKComms daemon forwards opaquely.
 
 ```mermaid
 sequenceDiagram
     participant UI as Conversation UI
     participant B as ChatTransportBridge
     participant C as ChatCrypto / PgpBridge
-    participant S as SKCommClient
-    participant D as SKComm daemon (:9384)
+    participant S as SKCommsClient
+    participant D as SKComms daemon (:9384)
     participant P as Peer (human or agent)
 
     Note over UI,B: SEND
@@ -105,7 +105,7 @@ sequenceDiagram
 
 Notes grounded in the source:
 
-- **Two crypto layers.** The SKComm daemon does *transport-layer* PGP encryption
+- **Two crypto layers.** The SKComms daemon does *transport-layer* PGP encryption
   (peer key exchange). The app adds an independent *message-level* signature so a
   recipient can verify the sender from the Flutter keypair regardless of transport.
 - **Best-effort signing.** If the local keypair isn't loaded (e.g. mid-onboarding),
@@ -121,12 +121,12 @@ Notes grounded in the source:
 ## 3. Voice/video calls (WebRTC)
 
 `WebRTCCallService` manages a single peer connection. SDP offers/answers and ICE
-candidates are exchanged over the SKComm signaling WebSocket; media then flows P2P.
+candidates are exchanged over the SKComms signaling WebSocket; media then flows P2P.
 
 ```mermaid
 sequenceDiagram
     participant A as Caller (skchat-app)
-    participant WS as SKComm signaling WS (ws://…:9384)
+    participant WS as SKComms signaling WS (ws://…:9384)
     participant B as Callee (skchat-app)
 
     A->>A: initLocalMedia(audio[, video])
@@ -174,7 +174,7 @@ reflect the live state of the agent you're talking to.
 | **Crypto** | `lib/core/crypto/pgp_bridge.dart` | RSA-2048 keygen / sign / verify, fingerprints |
 | **Routing** | `lib/core/router/app_router.dart` | go_router shell + routes |
 | **Theme** | `lib/core/theme/*` | sovereign glassmorphic theme, colors, typography |
-| **Daemon clients** | `lib/services/skcomm_client.dart`, `skcapstone_client.dart`, `skcomm_sync.dart` | REST/WS to SKComm + skcapstone |
+| **Daemon clients** | `lib/services/skcomms_client.dart`, `skcapstone_client.dart`, `skcomms_sync.dart` | REST/WS to SKComms + skcapstone |
 | **Calls** | `lib/services/webrtc_service.dart`, `lib/features/calls/*` | WebRTC peer connection + call UI |
 | **Identity** | `lib/services/capauth_service.dart`, `identity_service.dart`, `biometric_service.dart`, `lib/features/identity/*`, `lib/features/auth/*` | CapAuth sessions, QR login, biometric gate |
 | **Features** | `lib/features/{chats,conversation,groups,consciousness,coord,onboarding,profile,activity}/*` | UI modules + their Riverpod providers |
@@ -192,7 +192,7 @@ flowchart TD
 
     subgraph COMMS["Comms"]
       APP["**skchat-app** (this repo)<br/>Flutter client surface for skchat"]
-      SKCHAT["skchat / skcomm daemon<br/>P2P transport · signaling · groups · files"]
+      SKCHAT["skchat / skcomms daemon<br/>P2P transport · signaling · groups · files"]
       SKVOICE["skvoice"]
     end
 
@@ -207,7 +207,7 @@ flowchart TD
       WEBRTC["WebRTC P2P media (+ your coturn)"]
     end
 
-    SKOS["**skos** — resolves the skchat port to the skcomm adapter for your profile"]
+    SKOS["**skos** — resolves the skchat port to the skcomms adapter for your profile"]
     SILICON["Silicon — your hardware"]
 
     APP <--> SKCHAT
@@ -222,7 +222,7 @@ flowchart TD
 ```
 
 skchat-app is the *client* end of the `skchat` capability. The backend daemon is the
-port; **skos** resolves that port to the SKComm adapter for the active profile
+port; **skos** resolves that port to the SKComms adapter for the active profile
 (personal → team → enterprise). The app's only contract is the three daemon URLs —
 swap where they point and the same binary follows your infrastructure from a laptop
 to a cluster.

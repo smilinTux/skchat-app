@@ -8,7 +8,7 @@ import '../models/conversation.dart';
 import '../features/chats/chats_provider.dart';
 import '../features/conversation/conversation_provider.dart';
 import 'daemon_service.dart';
-import 'skcomm_client.dart';
+import 'skcomms_client.dart';
 
 /// Daemon connection status.
 enum DaemonStatus { connecting, online, offline, error }
@@ -41,9 +41,9 @@ class DaemonState {
   }
 }
 
-/// Manages polling the SKComm daemon and syncing messages into Riverpod state.
+/// Manages polling the SKComms daemon and syncing messages into Riverpod state.
 /// Polls every [pollInterval] (default 5s for foreground, 30s for background).
-class SKCommSyncNotifier extends Notifier<DaemonState> {
+class SKCommsSyncNotifier extends Notifier<DaemonState> {
   static const _pollInterval = Duration(seconds: 5);
   static const _daemonCheckInterval = Duration(seconds: 15);
   // CLI polling is slightly slower to reduce subprocess overhead.
@@ -80,7 +80,7 @@ class SKCommSyncNotifier extends Notifier<DaemonState> {
 
   /// Check daemon health and update connection status.
   Future<void> _checkDaemon() async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     try {
       final alive = await client.isAlive();
       if (alive) {
@@ -106,7 +106,7 @@ class SKCommSyncNotifier extends Notifier<DaemonState> {
   Future<void> _pollInbox() async {
     if (state.status == DaemonStatus.offline) return;
 
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     try {
       final messages = await client.getInbox();
       for (final msg in messages) {
@@ -163,7 +163,7 @@ class SKCommSyncNotifier extends Notifier<DaemonState> {
 
   /// Send a message via the skchat CLI (primary), falling back to HTTP.
   ///
-  /// The CLI path stores the message locally AND delivers via SKComm transport.
+  /// The CLI path stores the message locally AND delivers via SKComms transport.
   /// Returns the envelope ID (from HTTP) or a CLI-generated token on success,
   /// null on complete failure.
   Future<String?> sendMessage({
@@ -183,8 +183,8 @@ class SKCommSyncNotifier extends Notifier<DaemonState> {
       return 'cli_${DateTime.now().millisecondsSinceEpoch}';
     }
 
-    // Fallback: SKComm HTTP (transport only, no local store).
-    final client = ref.read(skcommClientProvider);
+    // Fallback: SKComms HTTP (transport only, no local store).
+    final client = ref.read(skcommsClientProvider);
     try {
       final result = await client.sendMessage(
         recipient: peerId,
@@ -200,7 +200,7 @@ class SKCommSyncNotifier extends Notifier<DaemonState> {
 
   /// Broadcast presence online.
   Future<void> broadcastOnline() async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     try {
       await client.updatePresence(status: 'online');
     } catch (_) {}
@@ -337,5 +337,5 @@ class SKCommSyncNotifier extends Notifier<DaemonState> {
   }
 }
 
-final skcommSyncProvider =
-    NotifierProvider<SKCommSyncNotifier, DaemonState>(SKCommSyncNotifier.new);
+final skcommsSyncProvider =
+    NotifierProvider<SKCommsSyncNotifier, DaemonState>(SKCommsSyncNotifier.new);

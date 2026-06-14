@@ -91,18 +91,18 @@ class CapAuthQrPayload {
 /// HTTP client for the CapAuth PGP challenge-response login protocol.
 ///
 /// Login flow:
-///   1. Fetch our PGP fingerprint from the local SKComm daemon.
+///   1. Fetch our PGP fingerprint from the local SKComms daemon.
 ///   2. Ask the daemon to sign the nonce (private key stays in daemon).
 ///   3. POST {fingerprint, nonce, signature} to the CapAuth server.
 ///   4. Cache and return the returned session token.
 class CapAuthService {
-  CapAuthService({required this.skcommBaseUrl});
+  CapAuthService({required this.skcommsBaseUrl});
 
-  final String skcommBaseUrl;
+  final String skcommsBaseUrl;
 
-  late final Dio _skcomm = Dio(
+  late final Dio _skcomms = Dio(
     BaseOptions(
-      baseUrl: skcommBaseUrl,
+      baseUrl: skcommsBaseUrl,
       connectTimeout: const Duration(seconds: 5),
       receiveTimeout: const Duration(seconds: 10),
       headers: {'Content-Type': 'application/json'},
@@ -113,14 +113,14 @@ class CapAuthService {
 
   Future<CapAuthSession> login(CapAuthQrPayload payload) async {
     // 1. Get local fingerprint.
-    final identityResp = await _skcomm.get<Map<String, dynamic>>(
+    final identityResp = await _skcomms.get<Map<String, dynamic>>(
       '/api/v1/identity',
     );
     final fingerprint =
         (identityResp.data ?? {})['fingerprint'] as String? ?? '';
 
     // 2. Sign the nonce via the daemon.
-    final signResp = await _skcomm.post<Map<String, dynamic>>(
+    final signResp = await _skcomms.post<Map<String, dynamic>>(
       '/api/v1/sign',
       data: {'nonce': payload.nonce},
     );
@@ -211,5 +211,5 @@ class CapAuthService {
 
 final capAuthServiceProvider = Provider<CapAuthService>((ref) {
   final baseUrl = ref.watch(daemonUrlProvider);
-  return CapAuthService(skcommBaseUrl: baseUrl);
+  return CapAuthService(skcommsBaseUrl: baseUrl);
 });

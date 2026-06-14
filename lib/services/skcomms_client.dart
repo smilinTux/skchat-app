@@ -3,20 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'daemon_config.dart';
 
-/// Low-level HTTP client wrapping the SKComm daemon REST API.
+/// Low-level HTTP client wrapping the SKComms daemon REST API.
 ///
 /// The base URL is resolved (in priority order) from:
 ///   1. the [baseUrl] constructor argument (used by the provider, which
 ///      reads the runtime-configurable [daemonUrlProvider]);
-///   2. the `SKCOMM_URL` compile-time dart-define;
+///   2. the `SKCOMMS_URL` compile-time dart-define;
 ///   3. the `http://localhost:9384` fallback.
 ///
 /// On native (daemon on the same device) the default works.  On a WEB build
 /// served to a remote browser, the URL must point at a network-reachable
 /// daemon (e.g. a tailnet host) — set it via the profile/settings screen or
-/// `--dart-define=SKCOMM_URL=...` at build time.
-class SKCommClient {
-  SKCommClient({String? baseUrl})
+/// `--dart-define=SKCOMMS_URL=...` at build time.
+class SKCommsClient {
+  SKCommsClient({String? baseUrl})
     : _dio = Dio(
         BaseOptions(
           baseUrl: baseUrl ?? kDefaultDaemonUrl,
@@ -401,13 +401,13 @@ class IdentityInfo {
 
 // ── Riverpod provider ──────────────────────────────────────────────────────
 
-/// SKCommClient bound to the runtime-configurable daemon URL.
+/// SKCommsClient bound to the runtime-configurable daemon URL.
 ///
 /// Watching [daemonUrlProvider] means changing the daemon URL in the settings
 /// screen rebuilds this client so all subsequent calls hit the new host.
-final skcommClientProvider = Provider<SKCommClient>((ref) {
+final skcommsClientProvider = Provider<SKCommsClient>((ref) {
   final baseUrl = ref.watch(daemonUrlProvider);
-  return SKCommClient(baseUrl: baseUrl);
+  return SKCommsClient(baseUrl: baseUrl);
 });
 
 

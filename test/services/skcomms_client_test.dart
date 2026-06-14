@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:skchat/services/skcomm_client.dart';
+import 'package:skchat/services/skcomms_client.dart';
 
 void main() {
   group('PeerInfo', () {
@@ -145,15 +145,15 @@ void main() {
     });
   });
 
-  group('SKCommClient', () {
+  group('SKCommsClient', () {
     test('creates with default base URL', () {
-      final client = SKCommClient();
+      final client = SKCommsClient();
       // Verifies the client instantiates without error.
       expect(client, isNotNull);
     });
 
     test('creates with custom base URL', () {
-      final client = SKCommClient(baseUrl: 'http://192.168.0.100:9384');
+      final client = SKCommsClient(baseUrl: 'http://192.168.0.100:9384');
       expect(client, isNotNull);
     });
   });

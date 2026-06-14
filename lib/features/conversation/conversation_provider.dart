@@ -3,12 +3,12 @@ import '../../data/message_repository.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import '../chats/chats_provider.dart';
 
 /// Holds the message list for a single conversation (identified by peerId).
 /// Loads persisted messages from Hive first, then tries to fetch from the
-/// SKComm daemon for any new messages not yet persisted.
+/// SKComms daemon for any new messages not yet persisted.
 class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   @override
   List<ChatMessage> build(String peerId) {
@@ -32,7 +32,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   /// Fetch conversation history from the skchat local store via CLI.
   ///
   /// Calls `skchat inbox --json` and filters messages by [peerId].
-  /// Falls back to the SKComm HTTP API for conversation IDs when the CLI
+  /// Falls back to the SKComms HTTP API for conversation IDs when the CLI
   /// is unavailable.  Merges into Hive-persisted state without duplicates.
   Future<void> _fetchFromDaemon(String peerId) async {
     final daemon = ref.read(daemonServiceProvider);
@@ -87,8 +87,8 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       // CLI unavailable — fall through to HTTP fallback.
     }
 
-    // Fallback: SKComm HTTP conversation listing (no per-message history yet).
-    final client = ref.read(skcommClientProvider);
+    // Fallback: SKComms HTTP conversation listing (no per-message history yet).
+    final client = ref.read(skcommsClientProvider);
     try {
       final alive = await client.isAlive();
       if (!alive) return;

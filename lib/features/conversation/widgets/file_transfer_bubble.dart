@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../services/skcomm_client.dart';
+import '../../../services/skcomms_client.dart';
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -13,7 +13,7 @@ import '../../../services/skcomm_client.dart';
 final fileTransferStatusProvider =
     StreamProvider.family.autoDispose<FileTransferStatus?, String>(
   (ref, transferId) async* {
-    final client = ref.watch(skcommClientProvider);
+    final client = ref.watch(skcommsClientProvider);
     while (true) {
       FileTransferStatus? status;
       try {

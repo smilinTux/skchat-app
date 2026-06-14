@@ -129,11 +129,11 @@
 
 ### 5. HTTP Bridge (Task 53931a55)
 
-✅ **SKComm Client** - Dio-based HTTP client
+✅ **SKComms Client** - Dio-based HTTP client
 - Base URL: `http://localhost:9384`
 - Timeouts: 5s connect, 10s receive
-- Error handling with `SKCommException`
-- Riverpod provider: `skcommClientProvider`
+- Error handling with `SKCommsException`
+- Riverpod provider: `skcommsClientProvider`
 
 **Endpoints**:
 - `POST /api/v1/send` - Send message
@@ -148,7 +148,7 @@
 - `GET /api/v1/agents` - List known agents
 
 **File**:
-- `lib/core/transport/skcomm_client.dart`
+- `lib/core/transport/skcomms_client.dart`
 
 ---
 
@@ -235,7 +235,7 @@
    flutter doctor
    ```
 
-2. **SKComm Daemon** (running on localhost:9384)
+2. **SKComms Daemon** (running on localhost:9384)
    ```bash
    cd ../../skchat
    python -m skchat.cli daemon --port 9384
@@ -352,7 +352,7 @@ Once the daemon API spec is finalized, we need clarity on:
     localhost:9384
              ↓
 ┌─────────────────────────────────┐
-│  SKComm Daemon (Python)         │
+│  SKComms Daemon (Python)         │
 │  - Message routing               │
 │  - Encryption (PGP)             │
 │  - Presence management           │
@@ -380,7 +380,7 @@ skchat/flutter_app/
 │   │   │   ├── soul_color.dart            # Fingerprint → HSL
 │   │   │   └── glass_decorations.dart     # Reusable components
 │   │   └── transport/
-│   │       └── skcomm_client.dart         # HTTP client
+│   │       └── skcomms_client.dart         # HTTP client
 │   ├── features/
 │   │   ├── chat_list/
 │   │   │   ├── chat_list_screen.dart
@@ -488,7 +488,7 @@ Total Lines: ~3000
 
 ✅ **Task 53931a55: HTTP bridge**
 - Dio client ✓
-- SKComm daemon endpoints ✓
+- SKComms daemon endpoints ✓
 - localhost:9384 integration ✓
 
 ---

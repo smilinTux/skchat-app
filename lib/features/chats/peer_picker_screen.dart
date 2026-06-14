@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import 'chats_provider.dart';
 import 'peer_picker_provider.dart';
 import 'qr_peer_sheet.dart';
@@ -25,7 +25,7 @@ Color? _agentSoulColor(String name) {
   }
 }
 
-/// Peer picker screen — discovers peers via SKComm and lets the user
+/// Peer picker screen — discovers peers via SKComms and lets the user
 /// start a new 1:1 encrypted conversation.
 ///
 /// Layout:
@@ -201,7 +201,7 @@ class _PeerPickerScreenState extends ConsumerState<PeerPickerScreen> {
               ),
               const SizedBox(height: 12),
               Text(
-                'SKComm daemon unreachable',
+                'SKComms daemon unreachable',
                 style: tt.titleSmall?.copyWith(
                   color: SovereignColors.textSecondary,
                 ),
@@ -292,7 +292,7 @@ class _PeerPickerScreenState extends ConsumerState<PeerPickerScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Peers appear when connected via SKComm.',
+            'Peers appear when connected via SKComms.',
             style: tt.bodyMedium?.copyWith(
               color: SovereignColors.textSecondary,
             ),

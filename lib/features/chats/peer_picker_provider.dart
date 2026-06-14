@@ -1,16 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 
-/// Loads available peers from the SKComm daemon for the peer picker.
+/// Loads available peers from the SKComms daemon for the peer picker.
 /// Returns [PeerInfo] objects sorted alphabetically with online peers first.
 class PeerPickerNotifier extends AsyncNotifier<List<PeerInfo>> {
   @override
   Future<List<PeerInfo>> build() => _fetchPeers();
 
   Future<List<PeerInfo>> _fetchPeers() async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final alive = await client.isAlive();
-    if (!alive) throw Exception('SKComm daemon is offline');
+    if (!alive) throw Exception('SKComms daemon is offline');
 
     final peers = await client.getPeers();
 

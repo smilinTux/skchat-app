@@ -1,10 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/conversation_repository.dart';
 import '../../models/conversation.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 
 /// Holds the list of group conversations, sorted by recency.
-/// Loads from Hive first, then tries to refresh from the SKComm daemon.
+/// Loads from Hive first, then tries to refresh from the SKComms daemon.
 class GroupsNotifier extends Notifier<List<Conversation>> {
   @override
   List<Conversation> build() {
@@ -25,7 +25,7 @@ class GroupsNotifier extends Notifier<List<Conversation>> {
   }
 
   Future<void> _loadFromDaemon() async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final repo = ref.read(conversationRepositoryProvider);
     try {
       final alive = await client.isAlive();

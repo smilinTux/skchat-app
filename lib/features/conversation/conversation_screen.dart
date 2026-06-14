@@ -9,7 +9,7 @@ import '../calls/call_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../identity/identity_card_screen.dart';
-import '../../services/skcomm_sync.dart';
+import '../../services/skcomms_sync.dart';
 import 'conversation_provider.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/typing_indicator.dart';
@@ -82,7 +82,7 @@ class ConversationScreen extends ConsumerWidget {
                 ),
               );
               // Fire-and-forget to daemon; delivery status updated on next poll.
-              ref.read(skcommSyncProvider.notifier).sendMessage(
+              ref.read(skcommsSyncProvider.notifier).sendMessage(
                 peerId: peerId,
                 content: text,
               );

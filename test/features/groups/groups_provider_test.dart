@@ -4,9 +4,9 @@ import 'package:mocktail/mocktail.dart';
 import 'package:skchat/data/conversation_repository.dart';
 import 'package:skchat/features/groups/groups_provider.dart';
 import 'package:skchat/models/conversation.dart';
-import 'package:skchat/services/skcomm_client.dart';
+import 'package:skchat/services/skcomms_client.dart';
 
-class MockSKCommClient extends Mock implements SKCommClient {}
+class MockSKCommsClient extends Mock implements SKCommsClient {}
 
 class MockConversationRepository extends Mock
     implements ConversationRepository {}
@@ -19,7 +19,7 @@ final _dummyConversation = Conversation(
 );
 
 void main() {
-  late MockSKCommClient mockClient;
+  late MockSKCommsClient mockClient;
   late MockConversationRepository mockRepo;
 
   setUpAll(() {
@@ -27,14 +27,14 @@ void main() {
   });
 
   setUp(() {
-    mockClient = MockSKCommClient();
+    mockClient = MockSKCommsClient();
     mockRepo = MockConversationRepository();
   });
 
   ProviderContainer createContainer() {
     return ProviderContainer(
       overrides: [
-        skcommClientProvider.overrideWithValue(mockClient),
+        skcommsClientProvider.overrideWithValue(mockClient),
         conversationRepositoryProvider.overrideWithValue(mockRepo),
       ],
     );

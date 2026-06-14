@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/conversation_repository.dart';
 import '../../models/conversation.dart';
 import '../../core/theme/sovereign_colors.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 
 /// Well-known agent names that get special soul colors and agent badges.
 const _knownAgents = {'lumina', 'jarvis', 'opus', 'ava', 'ara'};
@@ -22,7 +22,7 @@ Color? _agentSoulColor(String name) {
 }
 
 /// Holds the list of conversations, sorted by recency.
-/// Loads from Hive first, then tries to refresh from the SKComm daemon.
+/// Loads from Hive first, then tries to refresh from the SKComms daemon.
 class ChatsNotifier extends Notifier<List<Conversation>> {
   @override
   List<Conversation> build() {
@@ -44,7 +44,7 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
   }
 
   Future<void> _loadFromDaemon() async {
-    final client = ref.read(skcommClientProvider);
+    final client = ref.read(skcommsClientProvider);
     final repo = ref.read(conversationRepositoryProvider);
     try {
       final alive = await client.isAlive();

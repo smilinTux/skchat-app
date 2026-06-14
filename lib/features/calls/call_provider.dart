@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../models/call_state.dart';
 import '../../services/daemon_config.dart';
-import '../../services/skcomm_client.dart';
+import '../../services/skcomms_client.dart';
 import '../../services/webrtc_service.dart';
 
 /// Riverpod notifier managing the full lifecycle of a voice/video call.
@@ -40,9 +40,9 @@ class CallNotifier extends Notifier<CallState?> {
     );
 
     try {
-      final client = ref.read(skcommClientProvider);
+      final client = ref.read(skcommsClientProvider);
 
-      // Notify peer via SKComm message with sentinel prefix.
+      // Notify peer via SKComms message with sentinel prefix.
       await client.sendMessage(
         recipient: peerId,
         message: '__CALL_REQUEST__:${type.name}',
@@ -96,7 +96,7 @@ class CallNotifier extends Notifier<CallState?> {
     state = current.copyWith(status: CallStatus.connecting);
 
     try {
-      final iceServers = await ref.read(skcommClientProvider).getIceConfig();
+      final iceServers = await ref.read(skcommsClientProvider).getIceConfig();
 
       _webrtc = WebRTCCallService(signalingBaseUrl: ref.read(daemonWsUrlProvider));
       await _webrtc!.initLocalMedia(withVideo: current.type == CallType.video);

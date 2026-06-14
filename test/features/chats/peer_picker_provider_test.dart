@@ -2,21 +2,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:skchat/features/chats/peer_picker_provider.dart';
-import 'package:skchat/services/skcomm_client.dart';
+import 'package:skchat/services/skcomms_client.dart';
 
-class MockSKCommClient extends Mock implements SKCommClient {}
+class MockSKCommsClient extends Mock implements SKCommsClient {}
 
 void main() {
-  late MockSKCommClient mockClient;
+  late MockSKCommsClient mockClient;
 
   setUp(() {
-    mockClient = MockSKCommClient();
+    mockClient = MockSKCommsClient();
   });
 
   ProviderContainer createContainer() {
     return ProviderContainer(
       overrides: [
-        skcommClientProvider.overrideWithValue(mockClient),
+        skcommsClientProvider.overrideWithValue(mockClient),
       ],
     );
   }

@@ -578,7 +578,7 @@ class _CapabilitiesSection extends StatelessWidget {
         return Icons.auto_awesome;
       case 'trust rehydration':
         return Icons.water_drop;
-      case 'skcomm bridge':
+      case 'skcomms bridge':
         return Icons.device_hub;
       case 'context weaving':
         return Icons.hub;

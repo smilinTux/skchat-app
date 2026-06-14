@@ -7,19 +7,19 @@ import 'package:skchat/features/chats/chats_provider.dart';
 import 'package:skchat/features/conversation/conversation_provider.dart';
 import 'package:skchat/models/chat_message.dart';
 import 'package:skchat/models/conversation.dart';
-import 'package:skchat/services/skcomm_client.dart';
+import 'package:skchat/services/skcomms_client.dart';
 
 class MockMessageRepository extends Mock implements MessageRepository {}
 
 class MockConversationRepository extends Mock
     implements ConversationRepository {}
 
-class MockSKCommClient extends Mock implements SKCommClient {}
+class MockSKCommsClient extends Mock implements SKCommsClient {}
 
 void main() {
   late MockMessageRepository mockMsgRepo;
   late MockConversationRepository mockConvoRepo;
-  late MockSKCommClient mockClient;
+  late MockSKCommsClient mockClient;
 
   setUpAll(() {
     registerFallbackValue(ChatMessage(
@@ -40,7 +40,7 @@ void main() {
   setUp(() {
     mockMsgRepo = MockMessageRepository();
     mockConvoRepo = MockConversationRepository();
-    mockClient = MockSKCommClient();
+    mockClient = MockSKCommsClient();
   });
 
   ProviderContainer createContainer() {
@@ -48,7 +48,7 @@ void main() {
       overrides: [
         messageRepositoryProvider.overrideWithValue(mockMsgRepo),
         conversationRepositoryProvider.overrideWithValue(mockConvoRepo),
-        skcommClientProvider.overrideWithValue(mockClient),
+        skcommsClientProvider.overrideWithValue(mockClient),
       ],
     );
   }

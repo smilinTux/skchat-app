@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/theme.dart';
-import '../../services/skcomm_sync.dart';
+import '../../services/skcomms_sync.dart';
 import '../chats/chats_provider.dart';
 
 // ── Activity item model ────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ class ActivityFeedNotifier extends Notifier<List<ActivityItem>> {
   List<ActivityItem> build() {
     // Derive activity items from conversations (recent messages).
     final chats = ref.watch(chatsProvider);
-    final daemon = ref.watch(skcommSyncProvider);
+    final daemon = ref.watch(skcommsSyncProvider);
 
     final items = <ActivityItem>[];
 
@@ -66,7 +66,7 @@ class ActivityFeedNotifier extends Notifier<List<ActivityItem>> {
       items.add(ActivityItem(
         id: 'daemon-online',
         type: ActivityType.system,
-        title: 'SKComm Online',
+        title: 'SKComms Online',
         body: 'Transport layer active · Encrypted',
         timestamp: daemon.lastPollAt ?? DateTime.now(),
         isRead: true,
@@ -75,7 +75,7 @@ class ActivityFeedNotifier extends Notifier<List<ActivityItem>> {
       items.add(ActivityItem(
         id: 'daemon-offline',
         type: ActivityType.system,
-        title: 'SKComm Offline',
+        title: 'SKComms Offline',
         body: daemon.errorMessage ?? 'Daemon unreachable on localhost:9384',
         timestamp: DateTime.now(),
         isRead: false,
