@@ -16,19 +16,23 @@ import 'widgets/message_bubble.dart';
 import 'widgets/typing_indicator.dart';
 import 'widgets/input_bar.dart';
 
-/// Final render-time dedup safety net: never show the same message twice,
-/// regardless of how it entered state. Keyed by id and by
-/// content+direction+exact-timestamp, so genuinely distinct replies (different
-/// timestamps) are preserved while same-message dups (same timestamp) collapse.
+/// Final render-time dedup safety net: never show the same message twice.
+///
+/// Collapses an exact id repeat, and same content+direction within a 5-minute
+/// window — which catches the optimistic-send copy (client id/timestamp) and
+/// the daemon re-fetch copy (server id/timestamp) of the *same* outbound
+/// message, while still preserving genuinely distinct replies (different text,
+/// or the same text far enough apart in time).
 List<ChatMessage> _dedupForDisplay(List<ChatMessage> msgs) {
-  final seen = <String>{};
+  final ids = <String>{};
   final out = <ChatMessage>[];
   for (final m in msgs) {
-    final k1 = m.id;
-    final k2 = '${m.isOutbound}|${m.content}|${m.timestamp.toIso8601String()}';
-    if (seen.contains(k1) || seen.contains(k2)) continue;
-    seen.add(k1);
-    seen.add(k2);
+    if (!ids.add(m.id)) continue;
+    final dup = out.any((o) =>
+        o.content == m.content &&
+        o.isOutbound == m.isOutbound &&
+        (o.timestamp.difference(m.timestamp).inSeconds).abs() < 300);
+    if (dup) continue;
     out.add(m);
   }
   return out;
