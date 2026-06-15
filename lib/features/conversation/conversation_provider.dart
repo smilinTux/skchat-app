@@ -49,6 +49,11 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         final peerShort = normalizePeerKey(peerId);
 
         final existing = state.map((m) => m.id).toSet();
+        // Content signatures (content|direction) already shown, to drop the
+        // bridge's occasional double-delivery (same text, different ids).
+        final seenSig = <String>{
+          for (final m in state) '${m.isOutbound}|${m.content}',
+        };
         final fresh = <ChatMessage>[];
 
         for (final m in cliMessages) {
@@ -63,6 +68,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
               isOutbound ? normalizePeerKey(m.recipient) : senderShort;
           // Only include messages that belong to this conversation.
           if (msgPeerId != peerShort) continue;
+
+          final sig = '$isOutbound|${m.content}';
+          if (!seenSig.add(sig)) continue; // duplicate content+direction
 
           fresh.add(ChatMessage(
             id: m.id,
@@ -101,6 +109,17 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   }
 
   Future<void> addMessage(ChatMessage message) async {
+    // Dedup: skip if we already have this message (same id), or a near-identical
+    // one (same content + direction within a few seconds). Covers both the
+    // Hive+daemon merge re-adding a message and the bridge delivering a reply
+    // more than once.
+    final isDup = state.any((m) =>
+        m.id == message.id ||
+        (m.content == message.content &&
+            m.isOutbound == message.isOutbound &&
+            (m.timestamp.difference(message.timestamp).inSeconds).abs() < 10));
+    if (isDup) return;
+
     state = [...state, message];
 
     // Persist to Hive.

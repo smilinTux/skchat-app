@@ -252,6 +252,14 @@ class _MessageListState extends State<_MessageList> {
   final _scrollController = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    // Jump to the latest message on open (the conversation provider keeps state
+    // across opens, so messages are often already present on first build).
+    _scrollToBottom(animate: false);
+  }
+
+  @override
   void didUpdateWidget(_MessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.messages.length != oldWidget.messages.length) {
@@ -259,14 +267,18 @@ class _MessageListState extends State<_MessageList> {
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animate) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          target,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic,
         );
+      } else {
+        _scrollController.jumpTo(target);
       }
     });
   }
