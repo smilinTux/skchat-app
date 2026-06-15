@@ -24,16 +24,18 @@ import 'widgets/input_bar.dart';
 /// message, while still preserving genuinely distinct replies (different text,
 /// or the same text far enough apart in time).
 List<ChatMessage> _dedupForDisplay(List<ChatMessage> msgs) {
+  // Dedup by exact content (direction-agnostic). A time window is unreliable
+  // here: the optimistic-send copy is stamped in local time while the
+  // daemon-refetch copy is stamped in UTC, so the "same" message can be hours
+  // apart. Identical content within one conversation is treated as the same
+  // message; the outbound copy wins so the operator's message stays on the
+  // right side. (Trade-off: two genuinely identical sends collapse to one —
+  // acceptable for an AI chat.)
   final out = <ChatMessage>[];
   for (final m in msgs) {
-    final idx = out.indexWhere((o) =>
-        o.id == m.id ||
-        (o.content == m.content &&
-            (o.timestamp.difference(m.timestamp).inSeconds).abs() < 300));
+    final content = m.content.trim();
+    final idx = out.indexWhere((o) => o.id == m.id || o.content.trim() == content);
     if (idx >= 0) {
-      // Same message (incl. the optimistic-send vs daemon-refetch pair, and the
-      // legacy outbound-vs-echo-rendered-inbound pair). Keep the outbound copy
-      // so the operator's own message stays on the right side.
       if (m.isOutbound && !out[idx].isOutbound) out[idx] = m;
       continue;
     }
