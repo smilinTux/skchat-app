@@ -135,6 +135,24 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
     }
   }
 
+  /// Clear the unread count on every conversation and persist.  Backs the
+  /// activity feed's "Mark all read" so the derived notifications stay read
+  /// across rebuilds/polls (instead of reappearing).
+  Future<void> markAllRead() async {
+    final repo = ref.read(conversationRepositoryProvider);
+    final updated = <Conversation>[];
+    for (final c in state) {
+      if (c.unreadCount != 0) {
+        final cleared = c.copyWith(unreadCount: 0);
+        updated.add(cleared);
+        await repo.save(cleared);
+      } else {
+        updated.add(c);
+      }
+    }
+    state = updated;
+  }
+
   Future<void> addConversation(Conversation conversation) async {
     if (state.any((c) => c.peerId == conversation.peerId)) return;
     state = [conversation, ...state];

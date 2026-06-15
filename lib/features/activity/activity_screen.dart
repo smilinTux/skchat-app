@@ -114,7 +114,11 @@ class ActivityFeedNotifier extends Notifier<List<ActivityItem>> {
   }
 
   void markAllRead() {
+    // Optimistic local update…
     state = [for (final item in state) item.copyWith(isRead: true)];
+    // …and clear the underlying conversation unread counts so the derived feed
+    // stays read across rebuilds (otherwise notifications reappear on next poll).
+    ref.read(chatsProvider.notifier).markAllRead();
   }
 }
 
