@@ -53,6 +53,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
         for (final m in cliMessages) {
           if (existing.contains(m.id)) continue;
+          // Skip non-displayable traffic (control envelopes, prompt-echoes,
+          // delivery-receipt UUIDs) so the thread stays clean.
+          if (displayTextFor(m.content) == null) continue;
           final senderShort = normalizePeerKey(m.sender);
           final isOutbound =
               localShort != null && senderShort == localShort;

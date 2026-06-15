@@ -11,6 +11,17 @@ import "dart:convert";
 /// shown as ordinary chat text.
 const String _kChatContextPrefix = "Chat context (recent):";
 
+/// A bare UUID token (delivery receipt / message-id envelope) — never chat text.
+final RegExp _kUuidOnly = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+);
+
+/// JSON control-envelope discriminators (typing / presence / acks) that must
+/// never render as chat text.
+const Set<String> _kControlTypes = {
+  "typing", "presence", "ack", "receipt", "delivery", "heartbeat", "read",
+};
+
 /// Returns the text that should be displayed for a raw message body, or
 /// `null` when the message is **non-displayable** (empty, whitespace-only, a
 /// serialized transport envelope, or an injected "Chat context" system
@@ -31,20 +42,32 @@ String? displayTextFor(String? raw) {
   // System "context" injection — never user-visible chat text.
   if (trimmed.startsWith(_kChatContextPrefix)) return null;
 
-  // Detect a serialized envelope: a JSON object that carries routing fields.
-  // Cheap pre-check before attempting a full parse.
-  final looksLikeEnvelope = trimmed.startsWith("{") &&
-      trimmed.contains("\"sender\"") &&
-      trimmed.contains("\"recipient\"");
-  if (looksLikeEnvelope) {
+  // Bare delivery-receipt / message-id token.
+  if (_kUuidOnly.hasMatch(trimmed)) return null;
+
+  // Consciousness/bridge prompt-echo leakage (passthrough-era artifacts), e.g.
+  // "New message from The Strategic Architect: hi [Respond as Lumina ...]".
+  if (trimmed.contains("[Respond as ")) return null;
+
+  // Any JSON object: unwrap transport envelopes, drop control messages.
+  if (trimmed.startsWith("{")) {
     try {
       final decoded = jsonDecode(trimmed);
-      if (decoded is Map && decoded.containsKey("sender") &&
-          decoded.containsKey("recipient")) {
-        final inner = decoded["content"];
-        // Recursively resolve the inner content (it may itself be empty or a
-        // nested context message).
-        return displayTextFor(inner is String ? inner : null);
+      if (decoded is Map) {
+        // Control envelopes — typing / presence / acks / heartbeats.
+        final disc =
+            (decoded["type"] ?? decoded["state"] ?? "").toString().toLowerCase();
+        if (decoded.containsKey("state") ||
+            decoded.containsKey("identity_uri") ||
+            _kControlTypes.contains(disc)) {
+          return null;
+        }
+        // Transport envelope carrying inner content -> unwrap recursively.
+        if (decoded.containsKey("sender") && decoded.containsKey("recipient")) {
+          final inner = decoded["content"];
+          return displayTextFor(inner is String ? inner : null);
+        }
+        // Any other JSON object (not control, not an envelope) -> show as-is.
       }
     } catch (_) {
       // Not valid JSON after all — fall through and show the trimmed text.

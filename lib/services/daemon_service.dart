@@ -78,7 +78,9 @@ class DaemonService {
   DaemonService({
     String? healthBaseUrl,
     String? workingDir,
+    String? identity,
   })  : _healthBaseUrl = healthBaseUrl ?? 'http://127.0.0.1:9385',
+        _identity = identity ?? _resolveIdentity(),
         _workingDir = workingDir ??
             (kIsWeb
                 ? ''
@@ -92,14 +94,29 @@ class DaemonService {
         );
 
   final String _healthBaseUrl;
+  final String _identity;
   final String _workingDir;
   final Dio _dio;
+
+  /// Resolve the operator identity for CLI calls and outbound detection.
+  /// Precedence: build-time `LOCAL_IDENTITY` → `SKCHAT_IDENTITY` env (native)
+  /// → `chef@skworld.io`.  Crucially NOT the `.active` agent default, which
+  /// would attribute the operator's messages to whatever agent is active
+  /// (e.g. "architect").
+  static String _resolveIdentity() {
+    const compileTime = String.fromEnvironment('LOCAL_IDENTITY');
+    if (compileTime.isNotEmpty) return compileTime;
+    if (!kIsWeb) {
+      final env = Platform.environment['SKCHAT_IDENTITY'];
+      if (env != null && env.isNotEmpty) return env;
+    }
+    return 'chef@skworld.io';
+  }
 
   /// The local skchat identity URI from the environment, e.g.
   /// `capauth:opus@skworld.io`.  Used to classify messages as outbound.
   /// Always null on the web (no process environment).
-  String? get localIdentity =>
-      kIsWeb ? null : Platform.environment['SKCHAT_IDENTITY'];
+  String? get localIdentity => _identity;
 
   /// Extract the short peer name from a CapAuth URI.
   /// `capauth:lumina@skworld.io` → `lumina`
@@ -148,6 +165,7 @@ class DaemonService {
         'skchat',
         ['inbox', '--json', '--limit', '$limit'],
         workingDirectory: _workingDir,
+        environment: {'SKCHAT_IDENTITY': _identity},
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
       );
@@ -208,6 +226,7 @@ class DaemonService {
         'skchat',
         ['send', recipient, content],
         workingDirectory: _workingDir,
+        environment: {'SKCHAT_IDENTITY': _identity},
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
       );

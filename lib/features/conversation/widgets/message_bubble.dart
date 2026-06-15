@@ -254,19 +254,10 @@ class _BubbleContent extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
     final display = displayTextFor(message.content);
 
-    // Non-displayable (empty / system / raw envelope): render a compact muted
-    // placeholder instead of a large blank bubble.
+    // Non-displayable (empty / system / raw envelope / control / prompt-echo):
+    // hide entirely so it doesn't clutter the thread.
     if (display == null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        child: Text(
-          '[system message]',
-          style: tt.labelSmall?.copyWith(
-            fontStyle: FontStyle.italic,
-            color: SovereignColors.textSecondary,
-          ),
-        ),
-      );
+      return const SizedBox.shrink();
     }
 
     return Container(

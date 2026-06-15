@@ -214,6 +214,9 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       return;
     }
 
+    // Drop non-displayable traffic (control envelopes, prompt-echoes, etc.).
+    if (displayTextFor(msg.content) == null) return;
+
     // Normalize the sender into a single stable conversation key so the same
     // peer addressed as `Lumina` / `lumina` / `capauth:lumina@skworld.io`
     // collapses to one conversation.
@@ -280,6 +283,9 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   }) {
     // Skip call sentinels (handled by HTTP path).
     if (content.startsWith('__CALL_REQUEST__:')) return;
+
+    // Drop non-displayable traffic (control envelopes, prompt-echoes, etc.).
+    if (displayTextFor(content) == null) return;
 
     final chatMsg = ChatMessage(
       id: id,
