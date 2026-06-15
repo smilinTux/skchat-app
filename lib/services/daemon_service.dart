@@ -209,25 +209,35 @@ class DaemonService {
     String peerId, {
     int limit = 100,
   }) async {
-    // Pull a generous slice so agent ACK/control traffic doesn't crowd out the
-    // real conversation before we filter + take the newest.
-    final all = await getInbox(limit: limit * 6);
-    final short = peerShortName(peerId).toLowerCase();
-    final me = peerShortName(_identity).toLowerCase();
-    // Scope strictly to the THIS conversation pair (me ↔ peer): excludes e.g.
-    // lumina→opus delivery ACKs that merely mention the peer.
-    final pair = all.where((m) {
-      final s = peerShortName(m.sender).toLowerCase();
-      final r = peerShortName(m.recipient).toLowerCase();
-      final bothInPair = (s == short || s == me) && (r == short || r == me);
-      final touchesPeer = s == short || r == short;
-      return bothInPair && touchesPeer;
-    }).toList();
-    // Keep chronological order and return the NEWEST `limit` (the inbox may be
-    // oldest-first, which would otherwise truncate the recent messages).
-    pair.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    if (pair.length > limit) return pair.sublist(pair.length - limit);
-    return pair;
+    if (kIsWeb) return [];
+    // Use `skchat history <peer>` (BOTH directions) — not `inbox`, which only
+    // returns messages RECEIVED by the identity (so the operator's own sent
+    // messages would be missing → they'd render only as optimistic copies and
+    // everything else as inbound). Run as the operator identity so history
+    // resolves the correct "me ↔ peer" conversation.
+    try {
+      final result = await Process.run(
+        skchatBin,
+        ['history', peerShortName(peerId), '--json', '--limit', '$limit'],
+        workingDirectory: _workingDir,
+        environment: {'SKCHAT_IDENTITY': _identity},
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (result.exitCode != 0) return [];
+      final out = (result.stdout as String).trim();
+      if (out.isEmpty) return [];
+      final decoded = jsonDecode(out);
+      if (decoded is! List) return [];
+      final msgs = decoded
+          .whereType<Map<String, dynamic>>()
+          .map(SkchatCliMessage.fromJson)
+          .toList();
+      msgs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      return msgs;
+    } catch (_) {
+      return [];
+    }
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
