@@ -10,9 +10,11 @@ import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomms_sync.dart';
-import '../../models/chat_message.dart';
 import 'conversation_provider.dart';
 import 'widgets/model_picker_button.dart';
+import 'widgets/message_bubble.dart';
+import 'widgets/typing_indicator.dart';
+import 'widgets/input_bar.dart';
 
 /// Final render-time dedup safety net: never show the same message twice,
 /// regardless of how it entered state. Keyed by id and by
@@ -31,9 +33,6 @@ List<ChatMessage> _dedupForDisplay(List<ChatMessage> msgs) {
   }
   return out;
 }
-import 'widgets/message_bubble.dart';
-import 'widgets/typing_indicator.dart';
-import 'widgets/input_bar.dart';
 
 /// Conversation screen — shows message bubbles for a 1:1 or group chat.
 /// AppBar shows soul-color avatar, name, presence, and encryption indicator.
