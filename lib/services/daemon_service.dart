@@ -98,6 +98,20 @@ class DaemonService {
   final String _workingDir;
   final Dio _dio;
 
+  /// Absolute path to the `skchat` CLI. The app may be launched without
+  /// `~/.skenv/bin` on PATH (e.g. from a desktop launcher), which would make a
+  /// bare `Process.run('skchat', …)` fail silently — sends never go out and the
+  /// agent never replies. Prefer the known install path, fall back to PATH.
+  static final String skchatBin = (() {
+    if (kIsWeb) return 'skchat';
+    final home = Platform.environment['HOME'];
+    if (home != null && home.isNotEmpty) {
+      final candidate = '$home/.skenv/bin/skchat';
+      if (File(candidate).existsSync()) return candidate;
+    }
+    return 'skchat';
+  })();
+
   /// Resolve the operator identity for CLI calls and outbound detection.
   /// Precedence: build-time `LOCAL_IDENTITY` → `SKCHAT_IDENTITY` env (native)
   /// → `chef@skworld.io`.  Crucially NOT the `.active` agent default, which
@@ -162,7 +176,7 @@ class DaemonService {
     if (kIsWeb) return [];
     try {
       final result = await Process.run(
-        'skchat',
+        skchatBin,
         ['inbox', '--json', '--limit', '$limit'],
         workingDirectory: _workingDir,
         environment: {'SKCHAT_IDENTITY': _identity},
@@ -223,7 +237,7 @@ class DaemonService {
     }
     try {
       final result = await Process.run(
-        'skchat',
+        skchatBin,
         ['send', recipient, content],
         workingDirectory: _workingDir,
         environment: {'SKCHAT_IDENTITY': _identity},
