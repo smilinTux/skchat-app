@@ -209,13 +209,25 @@ class DaemonService {
     String peerId, {
     int limit = 100,
   }) async {
-    final all = await getInbox(limit: limit * 3);
+    // Pull a generous slice so agent ACK/control traffic doesn't crowd out the
+    // real conversation before we filter + take the newest.
+    final all = await getInbox(limit: limit * 6);
     final short = peerShortName(peerId).toLowerCase();
-    return all.where((m) {
-      final senderShort = peerShortName(m.sender).toLowerCase();
-      final recipientShort = peerShortName(m.recipient).toLowerCase();
-      return senderShort == short || recipientShort == short;
-    }).take(limit).toList();
+    final me = peerShortName(_identity).toLowerCase();
+    // Scope strictly to the THIS conversation pair (me ↔ peer): excludes e.g.
+    // lumina→opus delivery ACKs that merely mention the peer.
+    final pair = all.where((m) {
+      final s = peerShortName(m.sender).toLowerCase();
+      final r = peerShortName(m.recipient).toLowerCase();
+      final bothInPair = (s == short || s == me) && (r == short || r == me);
+      final touchesPeer = s == short || r == short;
+      return bothInPair && touchesPeer;
+    }).toList();
+    // Keep chronological order and return the NEWEST `limit` (the inbox may be
+    // oldest-first, which would otherwise truncate the recent messages).
+    pair.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    if (pair.length > limit) return pair.sublist(pair.length - limit);
+    return pair;
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
