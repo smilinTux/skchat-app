@@ -15,34 +15,7 @@ import 'widgets/model_picker_button.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/typing_indicator.dart';
 import 'widgets/input_bar.dart';
-
-/// Final render-time dedup safety net: never show the same message twice.
-///
-/// Collapses an exact id repeat, and same content+direction within a 5-minute
-/// window — which catches the optimistic-send copy (client id/timestamp) and
-/// the daemon re-fetch copy (server id/timestamp) of the *same* outbound
-/// message, while still preserving genuinely distinct replies (different text,
-/// or the same text far enough apart in time).
-List<ChatMessage> _dedupForDisplay(List<ChatMessage> msgs) {
-  // Dedup by exact content (direction-agnostic). A time window is unreliable
-  // here: the optimistic-send copy is stamped in local time while the
-  // daemon-refetch copy is stamped in UTC, so the "same" message can be hours
-  // apart. Identical content within one conversation is treated as the same
-  // message; the outbound copy wins so the operator's message stays on the
-  // right side. (Trade-off: two genuinely identical sends collapse to one —
-  // acceptable for an AI chat.)
-  final out = <ChatMessage>[];
-  for (final m in msgs) {
-    final content = m.content.trim();
-    final idx = out.indexWhere((o) => o.id == m.id || o.content.trim() == content);
-    if (idx >= 0) {
-      if (m.isOutbound && !out[idx].isOutbound) out[idx] = m;
-      continue;
-    }
-    out.add(m);
-  }
-  return out;
-}
+import 'message_dedup.dart';
 
 /// Conversation screen — shows message bubbles for a 1:1 or group chat.
 /// AppBar shows soul-color avatar, name, presence, and encryption indicator.
@@ -61,7 +34,7 @@ class ConversationScreen extends ConsumerWidget {
       (c) => c.peerId == peerId,
       orElse: () => conversations.first,
     );
-    final messages = _dedupForDisplay(ref.watch(conversationProvider(peerId)));
+    final messages = dedupForDisplay(ref.watch(conversationProvider(peerId)));
     final soul = conversation.resolvedSoulColor;
 
     return Scaffold(

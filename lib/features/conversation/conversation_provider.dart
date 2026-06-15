@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/message_repository.dart';
 import '../../models/chat_message.dart';
@@ -11,9 +13,20 @@ import '../chats/chats_provider.dart';
 /// Loads persisted messages from Hive first, then tries to fetch from the
 /// SKComms daemon for any new messages not yet persisted.
 class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
+  Timer? _pollTimer;
+
   @override
   List<ChatMessage> build(String peerId) {
     _loadPersistedThenDaemon(peerId);
+    // This provider is the SINGLE source of conversation messages: it polls the
+    // full thread (`skchat history`, both directions) on a timer. skcomms_sync
+    // no longer dispatches chat messages here (that caused multi-path dups /
+    // wrong-side rendering). New agent replies appear via this poll.
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 4),
+      (_) => _fetchFromDaemon(peerId),
+    );
+    ref.onDispose(() => _pollTimer?.cancel());
     return [];
   }
 

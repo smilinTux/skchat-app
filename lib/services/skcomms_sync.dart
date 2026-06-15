@@ -65,12 +65,14 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
 
   void _startPolling() {
     _checkDaemon();
+    // NOTE: chat-message ingestion is owned solely by conversation_provider
+    // (which polls `skchat history`, both directions). We no longer poll the
+    // inbox/CLI here for messages — that created multiple ingestion paths under
+    // different ids and rendered the operator's own message as a green inbound
+    // duplicate. _pollInbox is kept only for the call-request sentinel.
     _pollInbox();
-    _pollSkchatCli();
-
     _pollTimer = Timer.periodic(_pollInterval, (_) => _pollInbox());
     _daemonTimer = Timer.periodic(_daemonCheckInterval, (_) => _checkDaemon());
-    _cliPollTimer = Timer.periodic(_cliPollInterval, (_) => _pollSkchatCli());
   }
 
   void _stopPolling() {
