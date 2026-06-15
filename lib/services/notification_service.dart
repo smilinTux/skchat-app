@@ -14,6 +14,15 @@ class NotificationService {
 
   static final NotificationService instance = NotificationService._();
 
+  /// When true, OS-level notification popups are NOT written out to the host.
+  ///
+  /// Defaults to true on desktop "host" platforms (Linux/macOS/Windows) so the
+  /// machine running the app never gets freedesktop/dbus/Notification-Center
+  /// popups; mobile devices (Android/iOS) still notify normally. Mutable so a
+  /// user preference or a test can override it.
+  static bool suppressHostNotifications =
+      Platform.isLinux || Platform.isMacOS || Platform.isWindows;
+
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
@@ -69,6 +78,9 @@ class NotificationService {
     required String content,
     required String peerId,
   }) async {
+    // Never write popups out to a desktop host (see [suppressHostNotifications]).
+    if (suppressHostNotifications) return;
+
     await _ensureInitialized();
 
     final id = _allocateId();
@@ -94,6 +106,9 @@ class NotificationService {
     required String documentTitle,
     required String senderName,
   }) async {
+    // Never write popups out to a desktop host (see [suppressHostNotifications]).
+    if (suppressHostNotifications) return;
+
     await _ensureInitialized();
 
     final id = _allocateId();

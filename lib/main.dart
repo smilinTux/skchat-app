@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,16 @@ import 'services/identity_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Keep the host console quiet outside debug builds: no debugPrint spew and no
+  // framework error dumps written out to the host's stdout/stderr. Debug builds
+  // (`flutter run`/`--debug`) stay fully verbose so failures are still visible.
+  if (!kDebugMode) {
+    debugPrint = (String? message, {int? wrapWidth}) {};
+    FlutterError.onError = (FlutterErrorDetails details) {
+      // Swallow — a sovereign release build must not write to the host console.
+    };
+  }
 
   // Initialize Hive for local persistence.
   await Hive.initFlutter();
