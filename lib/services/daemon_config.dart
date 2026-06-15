@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -20,6 +21,22 @@ const kDefaultDaemonUrl = String.fromEnvironment(
 /// Hive box + key used to persist a user-supplied daemon URL override.
 const _kSettingsBox = 'settings';
 const _kDaemonUrlKey = 'skcomms_daemon_url';
+
+/// Initial daemon URL before any persisted override is loaded.
+///
+/// Precedence: explicit build-time `SKCOMMS_URL` → on web, the SAME host the
+/// app was served from (so LAN IP / tailnet IP / MagicDNS all work without
+/// reconfiguration) → compile-time default (`localhost`) for native.
+String initialDaemonUrl() {
+  if (const bool.hasEnvironment('SKCOMMS_URL')) return kDefaultDaemonUrl;
+  if (kIsWeb) {
+    final host = Uri.base.host;
+    if (host.isNotEmpty && host != 'localhost' && host != '127.0.0.1') {
+      return 'http://$host:9384';
+    }
+  }
+  return kDefaultDaemonUrl;
+}
 
 /// Normalize a user-entered daemon URL.
 ///
@@ -58,10 +75,10 @@ String daemonWsUrl(String httpUrl) {
 class DaemonConfigNotifier extends Notifier<String> {
   @override
   String build() {
-    // Synchronously seed from the compile-time default; asynchronously load any
-    // persisted override.  Hive may not be open yet on first frame.
+    // Synchronously seed from the host-relative/compile-time default;
+    // asynchronously load any persisted override.  Hive may not be open yet.
     _loadPersisted();
-    return kDefaultDaemonUrl;
+    return initialDaemonUrl();
   }
 
   Future<void> _loadPersisted() async {
