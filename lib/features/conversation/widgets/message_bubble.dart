@@ -271,28 +271,14 @@ class _BubbleContent extends StatelessWidget {
           bottomLeft: Radius.circular(isOut ? 16 : 4),
           bottomRight: Radius.circular(isOut ? 4 : 16),
         ),
-        border: Border(
-          left: isOut
-              ? BorderSide.none
-              : BorderSide(color: soulColor, width: 3),
-          top: BorderSide(
-            color: isOut
-                ? userSoulColor.withValues(alpha: 0.3)
-                : SovereignColors.surfaceGlassBorder,
-            width: 1,
-          ),
-          right: BorderSide(
-            color: isOut
-                ? userSoulColor.withValues(alpha: 0.3)
-                : SovereignColors.surfaceGlassBorder,
-            width: 1,
-          ),
-          bottom: BorderSide(
-            color: isOut
-                ? userSoulColor.withValues(alpha: 0.3)
-                : SovereignColors.surfaceGlassBorder,
-            width: 1,
-          ),
+        // NOTE: a non-uniform Border (e.g. a thicker left accent) combined with
+        // borderRadius throws a rendering exception that aborts painting the
+        // whole bubble — its text included. Keep the border uniform.
+        border: Border.all(
+          color: isOut
+              ? userSoulColor.withValues(alpha: 0.3)
+              : soulColor.withValues(alpha: 0.45),
+          width: 1,
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
