@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/theme.dart';
 import '../../../models/conversation.dart';
+import '../../../core/chat_text.dart';
 
 /// Glass card tile representing a single conversation in the chat list.
 /// Shows soul-color avatar, name, last message, timestamp, encryption badge,
@@ -91,7 +92,8 @@ class ConversationTile extends StatelessWidget {
                           child: Text(
                             conversation.isTyping
                                 ? _typingText(conversation)
-                                : conversation.lastMessage,
+                                : (displayTextFor(conversation.lastMessage) ??
+                                    '[system message]'),
                             style: tt.bodySmall?.copyWith(
                               color: conversation.isTyping
                                   ? soul.withValues(alpha: 0.8)
@@ -120,7 +122,8 @@ class ConversationTile extends StatelessWidget {
                               const SizedBox(width: 4),
                               Expanded(
                                 child: Text(
-                                  conversation.lastMessage,
+                                  displayTextFor(conversation.lastMessage) ??
+                                      '[system message]',
                                   style: tt.bodySmall?.copyWith(
                                     color: SovereignColors.textSecondary,
                                   ),

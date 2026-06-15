@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/theme.dart';
+import '../../../core/chat_text.dart';
 import '../../../models/chat_message.dart';
 import 'reaction_picker.dart';
 
@@ -251,6 +252,22 @@ class _BubbleContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final isOut = message.isOutbound;
     final tt = Theme.of(context).textTheme;
+    final display = displayTextFor(message.content);
+
+    // Non-displayable (empty / system / raw envelope): render a compact muted
+    // placeholder instead of a large blank bubble.
+    if (display == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: Text(
+          '[system message]',
+          style: tt.labelSmall?.copyWith(
+            fontStyle: FontStyle.italic,
+            color: SovereignColors.textSecondary,
+          ),
+        ),
+      );
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -294,7 +311,7 @@ class _BubbleContent extends StatelessWidget {
           // Message text
           Align(
             alignment: Alignment.centerLeft,
-            child: Text(message.content, style: tt.bodyMedium),
+            child: Text(display, style: tt.bodyMedium),
           ),
           const SizedBox(height: 4),
 

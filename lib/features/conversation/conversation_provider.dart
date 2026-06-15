@@ -4,6 +4,7 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
+import '../../core/chat_text.dart';
 import '../chats/chats_provider.dart';
 
 /// Holds the message list for a single conversation (identified by peerId).
@@ -43,23 +44,20 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       final cliMessages = await daemon.getConversation(peerId, limit: 100);
       if (cliMessages.isNotEmpty) {
         final localId = daemon.localIdentity;
-        final localShort = localId != null
-            ? DaemonService.peerShortName(localId).toLowerCase()
-            : null;
-        final peerShort = DaemonService.peerShortName(peerId).toLowerCase();
+        final localShort =
+            localId != null ? normalizePeerKey(localId) : null;
+        final peerShort = normalizePeerKey(peerId);
 
         final existing = state.map((m) => m.id).toSet();
         final fresh = <ChatMessage>[];
 
         for (final m in cliMessages) {
           if (existing.contains(m.id)) continue;
-          final senderShort =
-              DaemonService.peerShortName(m.sender).toLowerCase();
+          final senderShort = normalizePeerKey(m.sender);
           final isOutbound =
               localShort != null && senderShort == localShort;
-          final msgPeerId = isOutbound
-              ? DaemonService.peerShortName(m.recipient).toLowerCase()
-              : senderShort;
+          final msgPeerId =
+              isOutbound ? normalizePeerKey(m.recipient) : senderShort;
           // Only include messages that belong to this conversation.
           if (msgPeerId != peerShort) continue;
 

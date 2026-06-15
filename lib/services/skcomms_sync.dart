@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/sovereign_colors.dart';
 import '../features/calls/call_provider.dart';
 import '../models/call_state.dart';
+import '../core/chat_text.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../features/chats/chats_provider.dart';
@@ -133,16 +134,14 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       final messages = await daemon.getInbox(limit: 100);
       final localId = daemon.localIdentity;
       final localShort =
-          localId != null ? DaemonService.peerShortName(localId).toLowerCase() : null;
+          localId != null ? normalizePeerKey(localId) : null;
 
       for (final msg in messages) {
         if (_seenEnvelopeIds.contains(msg.id)) continue;
         _seenEnvelopeIds.add(msg.id);
 
-        final senderShort =
-            DaemonService.peerShortName(msg.sender).toLowerCase();
-        final recipientShort =
-            DaemonService.peerShortName(msg.recipient).toLowerCase();
+        final senderShort = normalizePeerKey(msg.sender);
+        final recipientShort = normalizePeerKey(msg.recipient);
         final isOutbound = localShort != null && senderShort == localShort;
 
         // peerId is the *other* party in the conversation.
@@ -215,9 +214,15 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       return;
     }
 
+    // Normalize the sender into a single stable conversation key so the same
+    // peer addressed as `Lumina` / `lumina` / `capauth:lumina@skworld.io`
+    // collapses to one conversation.
+    final peerKey = normalizePeerKey(msg.sender);
+    final displayName = DaemonService.peerShortName(msg.sender);
+
     final chatMsg = ChatMessage(
       id: msg.envelopeId,
-      peerId: msg.sender,
+      peerId: peerKey,
       content: msg.content,
       timestamp: msg.createdAt,
       isOutbound: false,
@@ -227,21 +232,21 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     );
 
     // Add to the conversation message list.
-    ref.read(conversationProvider(msg.sender).notifier).addMessage(chatMsg);
+    ref.read(conversationProvider(peerKey).notifier).addMessage(chatMsg);
 
     // Update or create the conversation in the chat list.
     final chats = ref.read(chatsProvider);
-    final exists = chats.any((c) => c.peerId == msg.sender);
+    final exists = chats.any((c) => c.peerId == peerKey);
     if (exists) {
       ref.read(chatsProvider.notifier).updateConversation(
         chats
-            .firstWhere((c) => c.peerId == msg.sender)
+            .firstWhere((c) => c.peerId == peerKey)
             .copyWith(
               lastMessage: msg.content,
               lastMessageTime: msg.createdAt,
               lastDeliveryStatus: 'delivered',
               unreadCount: chats
-                      .firstWhere((c) => c.peerId == msg.sender)
+                      .firstWhere((c) => c.peerId == peerKey)
                       .unreadCount +
                   1,
             ),
@@ -250,11 +255,11 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       // New peer — insert into chat list with derived soul color.
       ref.read(chatsProvider.notifier).addConversation(
         Conversation(
-          peerId: msg.sender,
-          displayName: msg.sender,
+          peerId: peerKey,
+          displayName: displayName,
           lastMessage: msg.content,
           lastMessageTime: msg.createdAt,
-          soulFingerprint: msg.sender,
+          soulFingerprint: peerKey,
           lastDeliveryStatus: 'delivered',
           unreadCount: 1,
         ),

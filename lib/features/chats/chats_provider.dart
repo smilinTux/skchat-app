@@ -4,6 +4,7 @@ import '../../data/conversation_repository.dart';
 import '../../models/conversation.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/skcomms_client.dart';
+import '../../core/chat_text.dart';
 
 /// Well-known agent names that get special soul colors and agent badges.
 const _knownAgents = {'lumina', 'jarvis', 'opus', 'ava', 'ara'};
@@ -57,7 +58,7 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
       final conversations = <Conversation>[];
 
       for (final peer in peers) {
-        final name = peer.name.toLowerCase();
+        final name = normalizePeerKey(peer.name);
         if (seen.contains(name)) continue;
         seen.add(name);
 
