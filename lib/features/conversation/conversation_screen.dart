@@ -24,15 +24,19 @@ import 'widgets/input_bar.dart';
 /// message, while still preserving genuinely distinct replies (different text,
 /// or the same text far enough apart in time).
 List<ChatMessage> _dedupForDisplay(List<ChatMessage> msgs) {
-  final ids = <String>{};
   final out = <ChatMessage>[];
   for (final m in msgs) {
-    if (!ids.add(m.id)) continue;
-    final dup = out.any((o) =>
-        o.content == m.content &&
-        o.isOutbound == m.isOutbound &&
-        (o.timestamp.difference(m.timestamp).inSeconds).abs() < 300);
-    if (dup) continue;
+    final idx = out.indexWhere((o) =>
+        o.id == m.id ||
+        (o.content == m.content &&
+            (o.timestamp.difference(m.timestamp).inSeconds).abs() < 300));
+    if (idx >= 0) {
+      // Same message (incl. the optimistic-send vs daemon-refetch pair, and the
+      // legacy outbound-vs-echo-rendered-inbound pair). Keep the outbound copy
+      // so the operator's own message stays on the right side.
+      if (m.isOutbound && !out[idx].isOutbound) out[idx] = m;
+      continue;
+    }
     out.add(m);
   }
   return out;
