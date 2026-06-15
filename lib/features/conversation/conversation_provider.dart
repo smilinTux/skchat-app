@@ -17,13 +17,30 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     return [];
   }
 
+  /// Remove duplicates: same id, or same content+direction within 10s.
+  /// (The local Hive cache can accumulate dup saves from the two load paths.)
+  static List<ChatMessage> _dedup(List<ChatMessage> msgs) {
+    final ids = <String>{};
+    final out = <ChatMessage>[];
+    for (final m in msgs) {
+      if (!ids.add(m.id)) continue;
+      final near = out.any((o) =>
+          o.content == m.content &&
+          o.isOutbound == m.isOutbound &&
+          (o.timestamp.difference(m.timestamp).inSeconds).abs() < 10);
+      if (near) continue;
+      out.add(m);
+    }
+    return out;
+  }
+
   Future<void> _loadPersistedThenDaemon(String peerId) async {
     final repo = ref.read(messageRepositoryProvider);
 
-    // Instant load from Hive.
+    // Instant load from Hive (deduped — the cache can hold dup saves).
     final persisted = await repo.getMessages(peerId);
     if (persisted.isNotEmpty) {
-      state = persisted;
+      state = _dedup(persisted);
     }
 
     // Then try the daemon for fresh data.
@@ -83,7 +100,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         }
 
         if (fresh.isNotEmpty) {
-          final merged = [...state, ...fresh];
+          final merged = _dedup([...state, ...fresh]);
           merged.sort((a, b) => a.timestamp.compareTo(b.timestamp));
           state = merged;
           for (final msg in fresh) {
