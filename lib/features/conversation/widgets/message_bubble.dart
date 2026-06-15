@@ -299,10 +299,14 @@ class _BubbleContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Message text
+          // Message text — explicit color so inbound text stays legible on the
+          // near-black glass bubble (ambient color resolves too dark otherwise).
           Align(
             alignment: Alignment.centerLeft,
-            child: Text(display, style: tt.bodyMedium),
+            child: Text(
+              display,
+              style: tt.bodyMedium?.copyWith(color: SovereignColors.textPrimary),
+            ),
           ),
           const SizedBox(height: 4),
 
@@ -312,7 +316,7 @@ class _BubbleContent extends StatelessWidget {
             children: [
               Text(
                 DateFormat('h:mm a').format(message.timestamp),
-                style: tt.labelSmall,
+                style: tt.labelSmall?.copyWith(color: SovereignColors.textTertiary),
               ),
               if (isOut) ...[
                 const SizedBox(width: 4),
