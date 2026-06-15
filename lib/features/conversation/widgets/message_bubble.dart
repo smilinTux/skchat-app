@@ -299,13 +299,19 @@ class _BubbleContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Message text — explicit color so inbound text stays legible on the
-          // near-black glass bubble (ambient color resolves too dark otherwise).
+          // Explicit, theme-independent text style. Using tt.bodyMedium here
+          // resolved to an invisible style in this subtree (the bubble text
+          // disappeared); a self-contained TextStyle with an explicit light
+          // color renders reliably on the near-black glass bubble.
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
               display,
-              style: tt.bodyMedium?.copyWith(color: SovereignColors.textPrimary),
+              style: const TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 15,
+                height: 1.4,
+              ),
             ),
           ),
           const SizedBox(height: 4),
