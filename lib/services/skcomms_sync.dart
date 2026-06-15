@@ -3,11 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/sovereign_colors.dart';
 import '../features/calls/call_provider.dart';
 import '../models/call_state.dart';
-import '../core/chat_text.dart';
-import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../features/chats/chats_provider.dart';
-import '../features/conversation/conversation_provider.dart';
 import 'daemon_service.dart';
 import 'skcomms_client.dart';
 
@@ -47,12 +44,9 @@ class DaemonState {
 class SKCommsSyncNotifier extends Notifier<DaemonState> {
   static const _pollInterval = Duration(seconds: 5);
   static const _daemonCheckInterval = Duration(seconds: 15);
-  // CLI polling is slightly slower to reduce subprocess overhead.
-  static const _cliPollInterval = Duration(seconds: 10);
 
   Timer? _pollTimer;
   Timer? _daemonTimer;
-  Timer? _cliPollTimer;
   final Set<String> _seenEnvelopeIds = {};
 
   @override
@@ -66,10 +60,10 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   void _startPolling() {
     _checkDaemon();
     // NOTE: chat-message ingestion is owned solely by conversation_provider
-    // (which polls `skchat history`, both directions). We no longer poll the
-    // inbox/CLI here for messages — that created multiple ingestion paths under
-    // different ids and rendered the operator's own message as a green inbound
-    // duplicate. _pollInbox is kept only for the call-request sentinel.
+    // (which polls `skchat history`, both directions). We do NOT ingest chat
+    // messages here — a second path created duplicates under different ids and
+    // rendered the operator's own message as a green inbound copy. _pollInbox
+    // now forwards ONLY the call-request sentinel.
     _pollInbox();
     _pollTimer = Timer.periodic(_pollInterval, (_) => _pollInbox());
     _daemonTimer = Timer.periodic(_daemonCheckInterval, (_) => _checkDaemon());
@@ -78,7 +72,6 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   void _stopPolling() {
     _pollTimer?.cancel();
     _daemonTimer?.cancel();
-    _cliPollTimer?.cancel();
   }
 
   /// Check daemon health and update connection status.
@@ -105,7 +98,14 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     }
   }
 
-  /// Poll inbox and dispatch new messages to conversation providers.
+  /// Poll inbox for **call-request sentinels only**.
+  ///
+  /// Chat-message ingestion is owned solely by [ConversationNotifier] (which
+  /// polls `skchat history`, both directions). If we also dispatched inbox
+  /// messages here they would be re-injected as `isOutbound: false` — producing
+  /// a green inbound duplicate of the operator's own message AND a second copy
+  /// of every agent reply. So this path now forwards ONLY `__CALL_REQUEST__`
+  /// envelopes and drops all normal chat traffic.
   Future<void> _pollInbox() async {
     if (state.status == DaemonStatus.offline) return;
 
@@ -113,6 +113,9 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     try {
       final messages = await client.getInbox();
       for (final msg in messages) {
+        // Only call sentinels travel this path; chat messages are owned by
+        // ConversationNotifier and must not be ingested twice.
+        if (!msg.content.startsWith('__CALL_REQUEST__:')) continue;
         if (_seenEnvelopeIds.contains(msg.envelopeId)) continue;
         _seenEnvelopeIds.add(msg.envelopeId);
         _dispatchIncoming(msg);
@@ -123,42 +126,6 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       );
     } catch (e) {
       // Don't flip status to offline on a single poll failure.
-    }
-  }
-
-  /// Poll the skchat local history store via CLI and dispatch any new messages.
-  ///
-  /// Runs `skchat inbox --json --limit 100` from $HOME and dispatches messages
-  /// not yet seen by the HTTP poller.  Outbound detection uses $SKCHAT_IDENTITY.
-  Future<void> _pollSkchatCli() async {
-    final daemon = ref.read(daemonServiceProvider);
-    try {
-      final messages = await daemon.getInbox(limit: 100);
-      final localId = daemon.localIdentity;
-      final localShort =
-          localId != null ? normalizePeerKey(localId) : null;
-
-      for (final msg in messages) {
-        if (_seenEnvelopeIds.contains(msg.id)) continue;
-        _seenEnvelopeIds.add(msg.id);
-
-        final senderShort = normalizePeerKey(msg.sender);
-        final recipientShort = normalizePeerKey(msg.recipient);
-        final isOutbound = localShort != null && senderShort == localShort;
-
-        // peerId is the *other* party in the conversation.
-        final peerId = isOutbound ? recipientShort : senderShort;
-
-        _dispatchCliMessage(
-          id: msg.id,
-          peerId: peerId,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          isOutbound: isOutbound,
-        );
-      }
-    } catch (_) {
-      // CLI unavailable — silently ignore.
     }
   }
 
@@ -210,121 +177,11 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   // ── Routing incoming messages into state ──────────────────────────────────
 
   void _dispatchIncoming(InboxMessage msg) {
-    // Intercept call-request sentinel before showing in chat.
+    // This path now carries ONLY call-request sentinels (see _pollInbox).
+    // Chat messages are owned solely by ConversationNotifier's history poll;
+    // dispatching them here would create inbound duplicates.
     if (msg.content.startsWith('__CALL_REQUEST__:')) {
       _handleIncomingCallRequest(msg);
-      return;
-    }
-
-    // Drop non-displayable traffic (control envelopes, prompt-echoes, etc.).
-    if (displayTextFor(msg.content) == null) return;
-
-    // Normalize the sender into a single stable conversation key so the same
-    // peer addressed as `Lumina` / `lumina` / `capauth:lumina@skworld.io`
-    // collapses to one conversation.
-    final peerKey = normalizePeerKey(msg.sender);
-    final displayName = DaemonService.peerShortName(msg.sender);
-
-    final chatMsg = ChatMessage(
-      id: msg.envelopeId,
-      peerId: peerKey,
-      content: msg.content,
-      timestamp: msg.createdAt,
-      isOutbound: false,
-      deliveryStatus: 'delivered',
-      isEncrypted: msg.isEncrypted,
-      replyToId: msg.inReplyTo,
-    );
-
-    // Add to the conversation message list.
-    ref.read(conversationProvider(peerKey).notifier).addMessage(chatMsg);
-
-    // Update or create the conversation in the chat list.
-    final chats = ref.read(chatsProvider);
-    final exists = chats.any((c) => c.peerId == peerKey);
-    if (exists) {
-      ref.read(chatsProvider.notifier).updateConversation(
-        chats
-            .firstWhere((c) => c.peerId == peerKey)
-            .copyWith(
-              lastMessage: msg.content,
-              lastMessageTime: msg.createdAt,
-              lastDeliveryStatus: 'delivered',
-              unreadCount: chats
-                      .firstWhere((c) => c.peerId == peerKey)
-                      .unreadCount +
-                  1,
-            ),
-      );
-    } else {
-      // New peer — insert into chat list with derived soul color.
-      ref.read(chatsProvider.notifier).addConversation(
-        Conversation(
-          peerId: peerKey,
-          displayName: displayName,
-          lastMessage: msg.content,
-          lastMessageTime: msg.createdAt,
-          soulFingerprint: peerKey,
-          lastDeliveryStatus: 'delivered',
-          unreadCount: 1,
-        ),
-      );
-    }
-  }
-
-  /// Dispatch a message sourced from the skchat CLI into Riverpod state.
-  ///
-  /// Unlike [_dispatchIncoming] which always marks isOutbound=false,
-  /// this helper handles both directions based on the CLI isOutbound flag.
-  void _dispatchCliMessage({
-    required String id,
-    required String peerId,
-    required String content,
-    required DateTime timestamp,
-    required bool isOutbound,
-  }) {
-    // Skip call sentinels (handled by HTTP path).
-    if (content.startsWith('__CALL_REQUEST__:')) return;
-
-    // Drop non-displayable traffic (control envelopes, prompt-echoes, etc.).
-    if (displayTextFor(content) == null) return;
-
-    final chatMsg = ChatMessage(
-      id: id,
-      peerId: peerId,
-      content: content,
-      timestamp: timestamp,
-      isOutbound: isOutbound,
-      deliveryStatus: isOutbound ? 'sent' : 'delivered',
-    );
-
-    ref.read(conversationProvider(peerId).notifier).addMessage(chatMsg);
-
-    final chats = ref.read(chatsProvider);
-    final exists = chats.any((c) => c.peerId == peerId);
-    if (exists) {
-      ref.read(chatsProvider.notifier).updateConversation(
-        chats
-            .firstWhere((c) => c.peerId == peerId)
-            .copyWith(
-              lastMessage: content,
-              lastMessageTime: timestamp,
-              lastDeliveryStatus: isOutbound ? 'sent' : 'delivered',
-            ),
-      );
-    } else if (!isOutbound) {
-      // Only auto-create conversation entries for inbound messages.
-      ref.read(chatsProvider.notifier).addConversation(
-        Conversation(
-          peerId: peerId,
-          displayName: peerId,
-          lastMessage: content,
-          lastMessageTime: timestamp,
-          soulFingerprint: peerId,
-          lastDeliveryStatus: 'delivered',
-          unreadCount: 1,
-        ),
-      );
     }
   }
 
