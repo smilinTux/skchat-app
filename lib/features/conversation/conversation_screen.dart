@@ -10,8 +10,27 @@ import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomms_sync.dart';
+import '../../models/chat_message.dart';
 import 'conversation_provider.dart';
 import 'widgets/model_picker_button.dart';
+
+/// Final render-time dedup safety net: never show the same message twice,
+/// regardless of how it entered state. Keyed by id and by
+/// content+direction+exact-timestamp, so genuinely distinct replies (different
+/// timestamps) are preserved while same-message dups (same timestamp) collapse.
+List<ChatMessage> _dedupForDisplay(List<ChatMessage> msgs) {
+  final seen = <String>{};
+  final out = <ChatMessage>[];
+  for (final m in msgs) {
+    final k1 = m.id;
+    final k2 = '${m.isOutbound}|${m.content}|${m.timestamp.toIso8601String()}';
+    if (seen.contains(k1) || seen.contains(k2)) continue;
+    seen.add(k1);
+    seen.add(k2);
+    out.add(m);
+  }
+  return out;
+}
 import 'widgets/message_bubble.dart';
 import 'widgets/typing_indicator.dart';
 import 'widgets/input_bar.dart';
@@ -33,7 +52,7 @@ class ConversationScreen extends ConsumerWidget {
       (c) => c.peerId == peerId,
       orElse: () => conversations.first,
     );
-    final messages = ref.watch(conversationProvider(peerId));
+    final messages = _dedupForDisplay(ref.watch(conversationProvider(peerId)));
     final soul = conversation.resolvedSoulColor;
 
     return Scaffold(
