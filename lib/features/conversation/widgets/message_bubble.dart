@@ -307,7 +307,7 @@ class _BubbleContent extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                DateFormat('h:mm a').format(message.timestamp),
+                DateFormat('h:mm a').format(message.timestamp.toLocal()),
                 style: tt.labelSmall?.copyWith(color: SovereignColors.textTertiary),
               ),
               if (isOut) ...[

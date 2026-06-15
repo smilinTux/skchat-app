@@ -161,13 +161,13 @@ class ConversationTile extends StatelessWidget {
   }
 
   String _formatTime(DateTime time) {
-    final now = DateTime.now();
-    final diff = now.difference(time);
+    final local = time.toLocal();
+    final diff = DateTime.now().difference(time);
     if (diff.inMinutes < 1) return 'now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m';
     if (diff.inHours < 24) return '${diff.inHours}h';
-    if (diff.inDays < 7) return DateFormat('EEE').format(time);
-    return DateFormat('MM/dd').format(time);
+    if (diff.inDays < 7) return DateFormat('EEE').format(local);
+    return DateFormat('MM/dd').format(local);
   }
 }
 
