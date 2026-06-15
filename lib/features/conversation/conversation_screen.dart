@@ -11,6 +11,7 @@ import '../chats/chats_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomms_sync.dart';
 import 'conversation_provider.dart';
+import 'widgets/model_picker_button.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/typing_indicator.dart';
 import 'widgets/input_bar.dart';
@@ -149,6 +150,8 @@ class ConversationScreen extends ConsumerWidget {
       actions: [
         const EncryptBadge(size: 16),
         const SizedBox(width: 4),
+        // Reply-model picker — only for AI agents (Lumina/Opus).
+        if (conversation.isAgent == true) ModelPickerButton(peerId: peerId),
         // Voice call button — initiates call and navigates to outgoing screen.
         Consumer(
           builder: (context, ref, _) => IconButton(
