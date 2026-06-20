@@ -1,0 +1,903 @@
+import "dart:async";
+
+import "package:flutter/material.dart" hide ConnectionState;
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:go_router/go_router.dart";
+import "package:livekit_client/livekit_client.dart";
+
+import "../../core/theme/sovereign_colors.dart";
+import "../../services/conf_service.dart";
+import "../../services/livekit_call_service.dart";
+
+// ── Route args ────────────────────────────────────────────────────────────────
+
+/// Arguments for the conference screen.
+///
+/// Either [room] is already known (join an existing conf) or [createTitle]
+/// is set (create a fresh conf first). [identity] is the caller's fqid/name.
+class ConfArgs {
+  const ConfArgs({
+    required this.identity,
+    this.room,
+    this.name,
+    this.role = "guest",
+    this.createTitle,
+    this.hostFqid,
+  });
+
+  /// Caller identity (fqid / fingerprint).
+  final String identity;
+
+  /// Existing conference room id (null when creating a new one).
+  final String? room;
+
+  /// Display name in the room (defaults to [identity]).
+  final String? name;
+
+  /// Requested role — "host" or "guest".
+  final String role;
+
+  /// When set, create a new conference with this title before joining.
+  final String? createTitle;
+
+  /// Host fqid to register on create (defaults to [identity]).
+  final String? hostFqid;
+
+  bool get wantsHost => role == "host";
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+class ConfState {
+  const ConfState({
+    required this.room,
+    required this.participants,
+    required this.waiting,
+    required this.isConnected,
+    required this.isMicEnabled,
+    required this.isCameraEnabled,
+    required this.isScreenSharing,
+    required this.isHost,
+    this.title = "",
+    this.error,
+  });
+
+  final String room;
+  final List<LiveKitParticipantSnapshot> participants;
+  final List<WaitingGuest> waiting;
+  final bool isConnected;
+  final bool isMicEnabled;
+  final bool isCameraEnabled;
+  final bool isScreenSharing;
+  final bool isHost;
+  final String title;
+  final String? error;
+
+  static const empty = ConfState(
+    room: "",
+    participants: [],
+    waiting: [],
+    isConnected: false,
+    isMicEnabled: false,
+    isCameraEnabled: false,
+    isScreenSharing: false,
+    isHost: false,
+  );
+
+  ConfState copyWith({
+    String? room,
+    List<LiveKitParticipantSnapshot>? participants,
+    List<WaitingGuest>? waiting,
+    bool? isConnected,
+    bool? isMicEnabled,
+    bool? isCameraEnabled,
+    bool? isScreenSharing,
+    bool? isHost,
+    String? title,
+    Object? error = _sentinel,
+  }) {
+    return ConfState(
+      room: room ?? this.room,
+      participants: participants ?? this.participants,
+      waiting: waiting ?? this.waiting,
+      isConnected: isConnected ?? this.isConnected,
+      isMicEnabled: isMicEnabled ?? this.isMicEnabled,
+      isCameraEnabled: isCameraEnabled ?? this.isCameraEnabled,
+      isScreenSharing: isScreenSharing ?? this.isScreenSharing,
+      isHost: isHost ?? this.isHost,
+      title: title ?? this.title,
+      error: identical(error, _sentinel) ? this.error : error as String?,
+    );
+  }
+
+  static const _sentinel = Object();
+}
+
+// ── Notifier ──────────────────────────────────────────────────────────────────
+
+class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
+  StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
+  StreamSubscription<ConnectionState>? _connSub;
+  Timer? _waitingPoll;
+
+  @override
+  ConfState build(ConfArgs arg) {
+    ref.onDispose(_cancel);
+    return ConfState.empty.copyWith(room: arg.room ?? "", isHost: arg.wantsHost);
+  }
+
+  /// Create (if needed), mint a token, and join the LiveKit media room.
+  Future<void> connect() async {
+    final conf = ref.read(confServiceProvider);
+    final lk = ref.read(liveKitCallServiceProvider);
+
+    try {
+      var room = arg.room;
+      // 1. Create the conference if no room id was supplied.
+      if (room == null || room.isEmpty) {
+        final created = await conf.create(
+          hostFqid: arg.hostFqid ?? arg.identity,
+          title: arg.createTitle,
+        );
+        room = created.room;
+        state = state.copyWith(room: room, title: created.title);
+      }
+
+      // 2. Mint a role-scoped token.
+      final tok = await conf.token(
+        room,
+        identity: arg.identity,
+        name: arg.name,
+        role: arg.role,
+      );
+      state = state.copyWith(
+        room: tok.room.isNotEmpty ? tok.room : room,
+        isHost: tok.isHost,
+        title: tok.title.isNotEmpty ? tok.title : state.title,
+      );
+
+      // 3. Wire media streams.
+      _partSub = lk.participants.listen((list) {
+        state = state.copyWith(participants: list);
+      });
+      _connSub = lk.connectionState.listen((cs) {
+        state = state.copyWith(isConnected: cs == ConnectionState.connected);
+      });
+
+      // 4. Join the LiveKit room with the role-scoped token.
+      await lk.connectWithToken(wsUrl: tok.url, token: tok.token);
+      // Host goes live on mic immediately.
+      if (tok.isHost) {
+        await lk.setMicEnabled(true);
+      }
+      state = state.copyWith(
+        participants: lk.currentParticipants,
+        isConnected: true,
+        isMicEnabled: tok.isHost,
+      );
+
+      // 5. Host polls the waiting room.
+      if (tok.isHost) {
+        _startWaitingPoll();
+      }
+    } on Object catch (e) {
+      state = state.copyWith(error: e.toString());
+    }
+  }
+
+  void _startWaitingPoll() {
+    _refreshWaiting();
+    _waitingPoll =
+        Timer.periodic(const Duration(seconds: 4), (_) => _refreshWaiting());
+  }
+
+  Future<void> _refreshWaiting() async {
+    if (!state.isHost || state.room.isEmpty) return;
+    try {
+      final list = await ref.read(confServiceProvider).waitingList(state.room);
+      state = state.copyWith(waiting: list);
+    } on Object {
+      // Best-effort — keep last known waiting list.
+    }
+  }
+
+  Future<void> toggleMic() async {
+    final lk = ref.read(liveKitCallServiceProvider);
+    final next = !state.isMicEnabled;
+    await lk.setMicEnabled(next);
+    state = state.copyWith(isMicEnabled: next);
+  }
+
+  Future<void> toggleCamera() async {
+    final lk = ref.read(liveKitCallServiceProvider);
+    final next = !state.isCameraEnabled;
+    await lk.setCameraEnabled(next);
+    state = state.copyWith(isCameraEnabled: next);
+  }
+
+  Future<void> toggleScreenShare() async {
+    final lk = ref.read(liveKitCallServiceProvider);
+    final next = !state.isScreenSharing;
+    await lk.setScreenShareEnabled(next);
+    state = state.copyWith(isScreenSharing: next);
+  }
+
+  // ── Host controls ───────────────────────────────────────────────────────────
+
+  Future<void> admit(String identity) async {
+    await ref
+        .read(confServiceProvider)
+        .admit(state.room, identity: identity, requester: arg.identity);
+    await _refreshWaiting();
+  }
+
+  Future<void> deny(String identity) async {
+    await ref
+        .read(confServiceProvider)
+        .deny(state.room, identity: identity, requester: arg.identity);
+    await _refreshWaiting();
+  }
+
+  Future<void> inviteAgent(String agent) => ref
+      .read(confServiceProvider)
+      .inviteAgent(state.room, agent: agent, requester: arg.identity);
+
+  Future<void> removeAgent(String agent) => ref
+      .read(confServiceProvider)
+      .removeAgent(state.room, agent: agent, requester: arg.identity);
+
+  Future<void> end() => ref
+      .read(confServiceProvider)
+      .end(state.room, requester: arg.identity);
+
+  Future<void> leave() async {
+    _cancel();
+    await ref.read(liveKitCallServiceProvider).leaveRoom();
+  }
+
+  void _cancel() {
+    _partSub?.cancel();
+    _connSub?.cancel();
+    _waitingPoll?.cancel();
+  }
+}
+
+final confProvider =
+    AutoDisposeNotifierProviderFamily<ConfNotifier, ConfState, ConfArgs>(
+        ConfNotifier.new);
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
+/// Conference screen — video/audio conf over the sovereign /conf REST surface.
+///
+/// Creates or joins a conference, joins media via [LiveKitCallService] using a
+/// role-scoped token from POST /conf/{room}/token, shows participants, and
+/// gives the host admit/deny/end + invite/remove-agent controls and
+/// screenshare.
+class ConfScreen extends ConsumerStatefulWidget {
+  const ConfScreen({super.key, required this.args});
+
+  final ConfArgs args;
+
+  @override
+  ConsumerState<ConfScreen> createState() => _ConfScreenState();
+}
+
+class _ConfScreenState extends ConsumerState<ConfScreen> {
+  bool _connected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _connect());
+  }
+
+  Future<void> _connect() async {
+    if (_connected) return;
+    _connected = true;
+    await ref.read(confProvider(widget.args).notifier).connect();
+  }
+
+  Future<void> _leave() async {
+    await ref.read(confProvider(widget.args).notifier).leave();
+    if (mounted && context.canPop()) context.pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = ref.watch(confProvider(widget.args));
+
+    return Scaffold(
+      backgroundColor: SovereignColors.surfaceCard,
+      body: st.error != null
+          ? _buildError(st.error!)
+          : SafeArea(
+              child: Column(
+                children: [
+                  _Header(state: st, onClose: _leave),
+                  Expanded(
+                    child: st.isConnected
+                        ? _Body(args: widget.args, state: st)
+                        : _buildConnecting(),
+                  ),
+                  _ControlBar(args: widget.args, state: st, onLeave: _leave),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildConnecting() {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 44,
+            height: 44,
+            child: CircularProgressIndicator(
+              color: SovereignColors.soulLumina,
+              strokeWidth: 2.5,
+            ),
+          ),
+          SizedBox(height: 18),
+          Text(
+            "Joining conference...",
+            style: TextStyle(
+              color: SovereignColors.textSecondary,
+              fontSize: 15,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError(String error) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline_rounded,
+                color: SovereignColors.accentDanger, size: 44),
+            const SizedBox(height: 16),
+            const Text(
+              "Couldn't join conference",
+              style: TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 12,
+                fontFamily: "JetBrainsMono",
+              ),
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: () {
+                if (context.canPop()) context.pop();
+              },
+              child: const Text("Close"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+
+class _Header extends StatelessWidget {
+  const _Header({required this.state, required this.onClose});
+
+  final ConfState state;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 16, 8),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: onClose,
+            icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                color: SovereignColors.textPrimary, size: 28),
+            tooltip: "Minimise",
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  state.title.isNotEmpty ? state.title : "Conference",
+                  style: const TextStyle(
+                    color: SovereignColors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  state.isConnected
+                      ? "${state.participants.length} in call"
+                      : "connecting...",
+                  style: const TextStyle(
+                    color: SovereignColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (state.isHost)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: SovereignColors.soulLumina.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                "HOST",
+                style: TextStyle(
+                  color: SovereignColors.soulLumina,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                  fontFamily: "JetBrainsMono",
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Body ──────────────────────────────────────────────────────────────────────
+
+class _Body extends ConsumerWidget {
+  const _Body({required this.args, required this.state});
+
+  final ConfArgs args;
+  final ConfState state;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      children: [
+        // Host-only: waiting room.
+        if (state.isHost && state.waiting.isNotEmpty) ...[
+          _sectionLabel("Waiting room", state.waiting.length),
+          const SizedBox(height: 12),
+          for (final g in state.waiting)
+            _WaitingTile(
+              guest: g,
+              onAdmit: () =>
+                  ref.read(confProvider(args).notifier).admit(g.identity),
+              onDeny: () =>
+                  ref.read(confProvider(args).notifier).deny(g.identity),
+            ),
+          const SizedBox(height: 24),
+        ],
+        _sectionLabel("Participants", state.participants.length),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 20,
+          runSpacing: 20,
+          children: [
+            for (final p in state.participants)
+              _ParticipantTile(
+                snapshot: p,
+                isHost: state.isHost,
+                onAgentRemove: state.isHost && !p.isLocal
+                    ? () => ref
+                        .read(confProvider(args).notifier)
+                        .removeAgent(p.identity)
+                    : null,
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionLabel(String label, int count) {
+    return Row(
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            color: SovereignColors.textTertiary,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          "$count",
+          style: const TextStyle(
+            color: SovereignColors.textTertiary,
+            fontSize: 11,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _WaitingTile extends StatelessWidget {
+  const _WaitingTile({
+    required this.guest,
+    required this.onAdmit,
+    required this.onDeny,
+  });
+
+  final WaitingGuest guest;
+  final VoidCallback onAdmit;
+  final VoidCallback onDeny;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = guest.name.isNotEmpty ? guest.name : guest.identity;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: "Admit",
+            onPressed: onAdmit,
+            icon: const Icon(Icons.check_circle_rounded,
+                color: SovereignColors.accentEncrypt),
+          ),
+          IconButton(
+            tooltip: "Deny",
+            onPressed: onDeny,
+            icon: const Icon(Icons.cancel_rounded,
+                color: SovereignColors.accentDanger),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ParticipantTile extends StatelessWidget {
+  const _ParticipantTile({
+    required this.snapshot,
+    required this.isHost,
+    this.onAgentRemove,
+  });
+
+  final LiveKitParticipantSnapshot snapshot;
+  final bool isHost;
+  final VoidCallback? onAgentRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final soul = SovereignColors.fromFingerprint(snapshot.identity);
+    final initials =
+        snapshot.identity.isNotEmpty ? snapshot.identity[0].toUpperCase() : "?";
+    return Semantics(
+      label: "${snapshot.identity}"
+          "${snapshot.isLocal ? " (you)" : ""}"
+          "${snapshot.isMuted ? ", muted" : ""}",
+      button: onAgentRemove != null,
+      child: GestureDetector(
+        onLongPress: onAgentRemove,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: soul.withValues(alpha: 0.15),
+                border: Border.all(
+                  color: snapshot.isSpeaking ? soul : soul.withValues(alpha: 0.5),
+                  width: snapshot.isSpeaking ? 3 : 1.5,
+                ),
+              ),
+              child: Stack(
+                children: [
+                  Center(
+                    child: Text(
+                      initials,
+                      style: TextStyle(
+                        color: soul,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (snapshot.isMuted)
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: SovereignColors.surfaceCard,
+                        ),
+                        child: const Icon(Icons.mic_off_rounded,
+                            size: 12, color: SovereignColors.accentWarning),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: 76,
+              child: Text(
+                snapshot.isLocal ? "You" : snapshot.identity,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: SovereignColors.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Control bar ───────────────────────────────────────────────────────────────
+
+class _ControlBar extends ConsumerWidget {
+  const _ControlBar({
+    required this.args,
+    required this.state,
+    required this.onLeave,
+  });
+
+  final ConfArgs args;
+  final ConfState state;
+  final VoidCallback onLeave;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(confProvider(args).notifier);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _RoundButton(
+            icon:
+                state.isMicEnabled ? Icons.mic_rounded : Icons.mic_off_rounded,
+            label: state.isMicEnabled ? "Mute" : "Unmute",
+            active: !state.isMicEnabled,
+            activeColor: SovereignColors.accentWarning,
+            onTap: notifier.toggleMic,
+          ),
+          _RoundButton(
+            icon: state.isCameraEnabled
+                ? Icons.videocam_rounded
+                : Icons.videocam_off_rounded,
+            label: "Camera",
+            active: state.isCameraEnabled,
+            activeColor: SovereignColors.accentEncrypt,
+            onTap: notifier.toggleCamera,
+          ),
+          _RoundButton(
+            icon: Icons.screen_share_rounded,
+            label: "Share",
+            active: state.isScreenSharing,
+            activeColor: SovereignColors.soulLumina,
+            onTap: notifier.toggleScreenShare,
+          ),
+          if (state.isHost)
+            _RoundButton(
+              icon: Icons.smart_toy_rounded,
+              label: "Agent",
+              active: false,
+              activeColor: SovereignColors.soulLumina,
+              onTap: () => _inviteAgentSheet(context, notifier),
+            ),
+          if (state.isHost)
+            _RoundButton(
+              icon: Icons.stop_circle_outlined,
+              label: "End",
+              active: true,
+              activeColor: SovereignColors.accentDanger,
+              onTap: () async {
+                await notifier.end();
+                onLeave();
+              },
+            ),
+          _LeaveButton(onTap: onLeave),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _inviteAgentSheet(
+      BuildContext context, ConfNotifier notifier) async {
+    final controller = TextEditingController();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          16,
+          20,
+          MediaQuery.of(sheetCtx).viewInsets.bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Invite an agent",
+              style: TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              style: const TextStyle(color: SovereignColors.textPrimary),
+              decoration: const InputDecoration(
+                hintText: "agent name (e.g. lumina)",
+                hintStyle: TextStyle(color: SovereignColors.textTertiary),
+              ),
+              onSubmitted: (_) => Navigator.of(sheetCtx).pop(),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => Navigator.of(sheetCtx).pop(),
+              child: const Text("Invite"),
+            ),
+          ],
+        ),
+      ),
+    );
+    final agent = controller.text.trim();
+    controller.dispose();
+    if (agent.isNotEmpty) {
+      await notifier.inviteAgent(agent);
+    }
+  }
+}
+
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+    this.activeColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool active;
+  final Color? activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = activeColor ?? SovereignColors.soulLumina;
+    final bg = active ? accent.withValues(alpha: 0.18) : const Color(0xFF1A1D22);
+    final border =
+        active ? accent.withValues(alpha: 0.55) : const Color(0xFF2A2D34);
+
+    return Semantics(
+      button: true,
+      label: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: bg,
+                border: Border.all(color: border, width: 1.5),
+              ),
+              child: Icon(
+                icon,
+                color: active ? accent : SovereignColors.textPrimary,
+                size: 22,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LeaveButton extends StatelessWidget {
+  const _LeaveButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: "Leave conference",
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: SovereignColors.accentDanger,
+              ),
+              child: const Icon(Icons.call_end_rounded,
+                  color: Colors.white, size: 24),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              "Leave",
+              style: TextStyle(
+                color: SovereignColors.accentDanger,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

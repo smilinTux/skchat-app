@@ -19,6 +19,7 @@ import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
 import '../../features/spaces/space_models.dart';
+import '../../features/conf/conf_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
 
 /// Named route paths.
@@ -76,6 +77,10 @@ class AppRoutes {
 
   /// LiveKit SFU call screen: /call/livekit
   static const livekitCall = '/call/livekit';
+
+  /// Conference room (sovereign /conf REST surface): /conf
+  /// Takes a [ConfArgs] via `extra` (create or join + role).
+  static const conf = '/conf';
 
 }
 
@@ -224,6 +229,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return MaterialPage(
             fullscreenDialog: true,
             child: SpaceRoomScreen(join: join),
+          );
+        },
+      ),
+
+      // -- Conference room (sovereign /conf REST surface; ConfArgs via extra)
+      GoRoute(
+        path: AppRoutes.conf,
+        pageBuilder: (context, state) {
+          final args = state.extra as ConfArgs;
+          return MaterialPage(
+            fullscreenDialog: true,
+            child: ConfScreen(args: args),
           );
         },
       ),
