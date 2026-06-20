@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/sovereign_colors.dart';
 import '../features/calls/call_provider.dart';
 import '../models/call_state.dart';
+import '../models/control_signal.dart';
 import '../models/conversation.dart';
 import '../features/chats/chats_provider.dart';
 import 'daemon_service.dart';
@@ -163,6 +164,42 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       return result.delivered ? result.envelopeId : null;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Send an emoji reaction to a peer over the normal transport.
+  ///
+  /// Encoded as a `__REACT__:{json}` control sentinel (see [ReactionSignal]).
+  /// The receiver folds it into the target message's reactions map. Persisted,
+  /// because it rides the same `skchat send` path as ordinary messages.
+  Future<void> sendReaction({
+    required String peerId,
+    required String targetMessageId,
+    required String emoji,
+    String action = 'add',
+  }) async {
+    final body = ReactionSignal(
+      targetId: targetMessageId,
+      emoji: emoji,
+      action: action,
+    ).encode();
+    await sendMessage(peerId: peerId, content: body);
+  }
+
+  /// Send an ephemeral typing signal to a peer (best-effort).
+  ///
+  /// Encoded as a `__TYPING__:{json}` control sentinel (see [TypingSignal]).
+  /// Not persisted as a visible message; the receiver only flips a transient
+  /// "is composing" flag. Failures are swallowed — typing is non-critical.
+  Future<void> sendTyping({
+    required String peerId,
+    bool start = true,
+  }) async {
+    final body = TypingSignal(state: start ? 'start' : 'stop').encode();
+    try {
+      await sendMessage(peerId: peerId, content: body);
+    } catch (_) {
+      // Typing is best-effort; never surface an error.
     }
   }
 

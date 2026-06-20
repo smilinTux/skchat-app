@@ -14,6 +14,12 @@ const String _kChatContextPrefix = "Chat context (recent):";
 /// Prefix marking an attachment-reference message body (see [AttachmentRef]).
 const String _kAttachPrefix = "__ATTACH__:";
 
+/// Prefixes marking control-signal message bodies (see [ReactionSignal] /
+/// [TypingSignal]). These are folded into UI state by the conversation layer
+/// and must never render as ordinary chat text.
+const String _kReactPrefix = "__REACT__:";
+const String _kTypingPrefix = "__TYPING__:";
+
 /// A bare UUID token (delivery receipt / message-id envelope) — never chat text.
 final RegExp _kUuidOnly = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
@@ -44,6 +50,11 @@ String? displayTextFor(String? raw) {
 
   // System "context" injection — never user-visible chat text.
   if (trimmed.startsWith(_kChatContextPrefix)) return null;
+
+  // Reaction / typing control sentinels — handled by the conversation layer,
+  // never shown as a chat bubble or list preview.
+  if (trimmed.startsWith(_kReactPrefix)) return null;
+  if (trimmed.startsWith(_kTypingPrefix)) return null;
 
   // Attachment sentinel (__ATTACH__:{json}). The conversation bubble renders a
   // file card from this; for list previews we surface a short "📎 filename"

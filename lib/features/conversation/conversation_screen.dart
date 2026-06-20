@@ -53,6 +53,9 @@ class ConversationScreen extends ConsumerWidget {
               isTyping: conversation.isTyping,
               peerName: conversation.displayName,
               isAgent: conversation.isAgent,
+              onReact: (messageId, emoji) => ref
+                  .read(conversationProvider(peerId).notifier)
+                  .react(messageId, emoji),
             ),
           ),
 
@@ -93,6 +96,9 @@ class ConversationScreen extends ConsumerWidget {
               );
             },
             onAttach: () => _pickAndSendAttachment(context, ref, peerId),
+            onTyping: (isTyping) => ref
+                .read(skcommsSyncProvider.notifier)
+                .sendTyping(peerId: peerId, start: isTyping),
           ),
         ],
       ),
@@ -324,6 +330,7 @@ class _MessageList extends StatefulWidget {
     required this.isTyping,
     required this.peerName,
     required this.isAgent,
+    required this.onReact,
   });
 
   final List<ChatMessage> messages;
@@ -331,6 +338,10 @@ class _MessageList extends StatefulWidget {
   final bool isTyping;
   final String peerName;
   final bool isAgent;
+
+  /// Called when the user long-presses a bubble and picks an emoji:
+  /// (messageId, emoji).
+  final void Function(String messageId, String emoji) onReact;
 
   @override
   State<_MessageList> createState() => _MessageListState();
@@ -388,6 +399,7 @@ class _MessageListState extends State<_MessageList> {
         return MessageBubble(
           message: message,
           soulColor: widget.soulColor,
+          onReact: (emoji) => widget.onReact(message.id, emoji),
         );
       },
     );
