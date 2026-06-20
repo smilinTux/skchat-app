@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/message_repository.dart';
 import '../../models/chat_message.dart';
+import '../../models/control_signal.dart';
 import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
+import '../../services/skcomms_sync.dart';
 import '../../core/chat_text.dart';
 import '../chats/chats_provider.dart';
 
@@ -14,6 +16,14 @@ import '../chats/chats_provider.dart';
 /// SKComms daemon for any new messages not yet persisted.
 class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   Timer? _pollTimer;
+
+  /// Ids of reaction sentinels already folded into state, so re-polling the
+  /// same history (reactions persist) doesn't double-apply them.
+  final Set<String> _appliedReactionIds = {};
+
+  /// Clears the transient "is composing" flag after an inbound typing-start
+  /// that isn't followed by a stop (sender crashed, message dropped, etc.).
+  Timer? _typingClearTimer;
 
   @override
   List<ChatMessage> build(String peerId) {
@@ -26,7 +36,10 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       const Duration(seconds: 4),
       (_) => _fetchFromDaemon(peerId),
     );
-    ref.onDispose(() => _pollTimer?.cancel());
+    ref.onDispose(() {
+      _pollTimer?.cancel();
+      _typingClearTimer?.cancel();
+    });
     return [];
   }
 
@@ -87,10 +100,6 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         final fresh = <ChatMessage>[];
 
         for (final m in cliMessages) {
-          if (existing.contains(m.id)) continue;
-          // Skip non-displayable traffic (control envelopes, prompt-echoes,
-          // delivery-receipt UUIDs) so the thread stays clean.
-          if (displayTextFor(m.content) == null) continue;
           final senderShort = normalizePeerKey(m.sender);
           final isOutbound =
               localShort != null && senderShort == localShort;
@@ -98,6 +107,30 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
               isOutbound ? normalizePeerKey(m.recipient) : senderShort;
           // Only include messages that belong to this conversation.
           if (msgPeerId != peerShort) continue;
+
+          // Reaction sentinel (__REACT__) — fold into the target message's
+          // reactions map instead of rendering. Skip our own outbound echoes
+          // (we applied them optimistically) and already-applied ones.
+          final react = ReactionSignal.parse(m.content);
+          if (react != null) {
+            if (!isOutbound && _appliedReactionIds.add(m.id)) {
+              _applyReaction(react);
+            }
+            continue;
+          }
+
+          // Typing sentinel (__TYPING__) — ephemeral; flip the peer's
+          // "is composing" flag. Never persisted or shown. Ignore our own.
+          final typing = TypingSignal.parse(m.content);
+          if (typing != null) {
+            if (!isOutbound) _handleIncomingTyping(msgPeerId, typing);
+            continue;
+          }
+
+          if (existing.contains(m.id)) continue;
+          // Skip non-displayable traffic (control envelopes, prompt-echoes,
+          // delivery-receipt UUIDs) so the thread stays clean.
+          if (displayTextFor(m.content) == null) continue;
 
           final sig = '$isOutbound|${m.content}';
           if (!seenSig.add(sig)) continue; // duplicate content+direction
@@ -185,6 +218,66 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
     final repo = ref.read(messageRepositoryProvider);
     await repo.updateDeliveryStatus(this.arg, messageId, status);
+  }
+
+  /// Fold a reaction into the target message's `reactions` map (emoji → count).
+  ///
+  /// Used both for the local optimistic update when the operator reacts and
+  /// for incoming reaction sentinels from a peer. A 'remove' action decrements
+  /// (dropping the entry at zero); 'add' increments. Persists the updated
+  /// message so the reaction survives an app restart.
+  void _applyReaction(ReactionSignal react) {
+    var changed = false;
+    final updated = <ChatMessage>[];
+    for (final m in state) {
+      if (m.id != react.targetId) {
+        updated.add(m);
+        continue;
+      }
+      final next = Map<String, int>.from(m.reactions);
+      if (react.isAdd) {
+        next[react.emoji] = (next[react.emoji] ?? 0) + 1;
+      } else {
+        final c = (next[react.emoji] ?? 0) - 1;
+        if (c > 0) {
+          next[react.emoji] = c;
+        } else {
+          next.remove(react.emoji);
+        }
+      }
+      updated.add(m.copyWith(reactions: next));
+      changed = true;
+    }
+    if (!changed) return;
+    state = updated;
+    // Persist the reacted message so it survives a reload.
+    final repo = ref.read(messageRepositoryProvider);
+    final target = state.firstWhere((m) => m.id == react.targetId);
+    repo.saveMessage(target);
+  }
+
+  /// React to a message in this conversation: apply locally (optimistic) and
+  /// send the `__REACT__` sentinel to the peer over the transport.
+  Future<void> react(String targetMessageId, String emoji) async {
+    _applyReaction(ReactionSignal(targetId: targetMessageId, emoji: emoji));
+    await ref.read(skcommsSyncProvider.notifier).sendReaction(
+          peerId: arg,
+          targetMessageId: targetMessageId,
+          emoji: emoji,
+        );
+  }
+
+  /// Handle an incoming typing sentinel: flip the peer's "is composing" flag.
+  /// On 'start', also arm a safety timer to auto-clear if no 'stop' arrives.
+  void _handleIncomingTyping(String peerId, TypingSignal typing) {
+    final chats = ref.read(chatsProvider.notifier);
+    chats.setTyping(peerId, typing: typing.isStart);
+    _typingClearTimer?.cancel();
+    if (typing.isStart) {
+      _typingClearTimer = Timer(const Duration(seconds: 8), () {
+        ref.read(chatsProvider.notifier).setTyping(peerId, typing: false);
+      });
+    }
   }
 }
 

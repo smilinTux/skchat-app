@@ -11,10 +11,17 @@ class InputBar extends StatefulWidget {
     super.key,
     required this.onSend,
     this.onAttach,
+    this.onTyping,
     this.soulColor = SovereignColors.soulLumina,
   });
 
   final void Function(String text) onSend;
+
+  /// Best-effort typing signal. Called with `true` when the user begins
+  /// composing (throttled so it fires at most once per active stretch) and
+  /// `false` when the field is cleared or a message is sent. Null disables
+  /// typing transport entirely.
+  final void Function(bool isTyping)? onTyping;
 
   /// Called when the user taps the attach button and the upload should run.
   /// The conversation screen owns the actual pick→upload→send flow (it has the
@@ -33,6 +40,10 @@ class _InputBarState extends State<InputBar> {
   bool _hasText = false;
   bool _attaching = false;
 
+  /// True once a typing-start signal has been emitted for the current stretch,
+  /// so we don't spam one per keystroke. Reset on clear/send.
+  bool _typingActive = false;
+
   @override
   void initState() {
     super.initState();
@@ -41,11 +52,21 @@ class _InputBarState extends State<InputBar> {
       if (hasText != _hasText) {
         setState(() => _hasText = hasText);
       }
+      // Best-effort typing signal: start once when text appears, stop when it
+      // empties. Throttled by the _typingActive latch.
+      if (hasText && !_typingActive) {
+        _typingActive = true;
+        widget.onTyping?.call(true);
+      } else if (!hasText && _typingActive) {
+        _typingActive = false;
+        widget.onTyping?.call(false);
+      }
     });
   }
 
   @override
   void dispose() {
+    if (_typingActive) widget.onTyping?.call(false);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -56,6 +77,10 @@ class _InputBarState extends State<InputBar> {
     if (text.isEmpty) return;
     widget.onSend(text);
     _controller.clear();
+    if (_typingActive) {
+      _typingActive = false;
+      widget.onTyping?.call(false);
+    }
     _focusNode.requestFocus();
   }
 
