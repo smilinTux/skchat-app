@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/theme.dart';
 import '../../../core/chat_text.dart';
+import '../../../models/attachment_ref.dart';
 import '../../../models/chat_message.dart';
+import 'file_transfer_bubble.dart';
 import 'reaction_picker.dart';
 
 /// How far (logical px) the user must drag right to trigger the reply action.
@@ -252,6 +254,22 @@ class _BubbleContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final isOut = message.isOutbound;
     final tt = Theme.of(context).textTheme;
+
+    // Attachment messages carry a small __ATTACH__ sentinel body. Render a
+    // file-transfer card (with thumbnail + tap-to-download) instead of text.
+    final attachment = AttachmentRef.parse(message.content);
+    if (attachment != null) {
+      return _AttachmentBubble(
+        attachment: attachment,
+        isOut: isOut,
+        soulColor: soulColor,
+        userSoulColor: userSoulColor,
+        timestamp: message.timestamp,
+        deliveryStatus: message.deliveryStatus,
+        isAgent: message.isAgent,
+      );
+    }
+
     final display = displayTextFor(message.content);
 
     // Non-displayable (empty / system / raw envelope / control / prompt-echo):
@@ -323,6 +341,85 @@ class _BubbleContent extends StatelessWidget {
                   size: 11,
                   color: soulColor.withValues(alpha: 0.6),
                 ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Attachment bubble — renders a FileTransferBubble inside the glass surface.
+
+class _AttachmentBubble extends StatelessWidget {
+  const _AttachmentBubble({
+    required this.attachment,
+    required this.isOut,
+    required this.soulColor,
+    required this.userSoulColor,
+    required this.timestamp,
+    required this.deliveryStatus,
+    required this.isAgent,
+  });
+
+  final AttachmentRef attachment;
+  final bool isOut;
+  final Color soulColor;
+  final Color userSoulColor;
+  final DateTime timestamp;
+  final String deliveryStatus;
+  final bool isAgent;
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final accent = isOut ? userSoulColor : soulColor;
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 280),
+      decoration: BoxDecoration(
+        color: isOut
+            ? userSoulColor.withValues(alpha: 0.18)
+            : SovereignColors.surfaceGlass,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: Radius.circular(isOut ? 16 : 4),
+          bottomRight: Radius.circular(isOut ? 4 : 16),
+        ),
+        border: Border.all(
+          color: accent.withValues(alpha: isOut ? 0.3 : 0.45),
+          width: 1,
+        ),
+      ),
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FileTransferBubble(
+            transferId: attachment.transferId,
+            fileName: attachment.filename,
+            fileSize: attachment.size,
+            soulColor: accent,
+            isImage: attachment.isImage,
+            caption: attachment.caption,
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text(
+                DateFormat('h:mm a').format(timestamp.toLocal()),
+                style:
+                    tt.labelSmall?.copyWith(color: SovereignColors.textTertiary),
+              ),
+              if (isOut) ...[
+                const SizedBox(width: 4),
+                DeliveryStatus(status: deliveryStatus, soulColor: userSoulColor),
               ],
             ],
           ),

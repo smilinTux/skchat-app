@@ -1,10 +1,13 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
+import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
 import '../../models/call_state.dart';
+import '../../services/skcomms_client.dart';
 import '../calls/call_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
@@ -89,9 +92,93 @@ class ConversationScreen extends ConsumerWidget {
                 content: text,
               );
             },
+            onAttach: () => _pickAndSendAttachment(context, ref, peerId),
           ),
         ],
       ),
+    );
+  }
+
+  /// Pick a file, upload it to the daemon, then send an attachment-reference
+  /// message so both sides render a [FileTransferBubble] for the transfer.
+  ///
+  /// Uses byte data (web has no file paths) so the same path works on every
+  /// platform.  Optimistically inserts the bubble on success.
+  Future<void> _pickAndSendAttachment(
+    BuildContext context,
+    WidgetRef ref,
+    String peerId,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    final FilePickerResult? picked;
+    try {
+      picked = await FilePicker.pickFiles(withData: true);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not open file picker: $e')),
+      );
+      return;
+    }
+    if (picked == null || picked.files.isEmpty) return; // user cancelled
+
+    final file = picked.files.first;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not read the selected file.')),
+      );
+      return;
+    }
+
+    final client = ref.read(skcommsClientProvider);
+    final UploadResult upload;
+    try {
+      upload = await client.uploadFile(
+        recipient: peerId,
+        bytes: bytes,
+        filename: file.name,
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Upload failed: $e')),
+      );
+      return;
+    }
+
+    final transferId =
+        upload.transferId.isNotEmpty ? upload.transferId : upload.id;
+    if (transferId.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upload returned no transfer id.')),
+      );
+      return;
+    }
+
+    final ref0 = AttachmentRef(
+      transferId: transferId,
+      filename: upload.filename.isNotEmpty ? upload.filename : file.name,
+      size: file.size,
+    );
+    final body = ref0.encode();
+    final tempId = '${DateTime.now().millisecondsSinceEpoch}';
+
+    // Optimistic insert so the sender sees the attachment bubble immediately.
+    ref.read(conversationProvider(peerId).notifier).addMessage(
+      ChatMessage(
+        id: tempId,
+        peerId: peerId,
+        content: body,
+        timestamp: DateTime.now(),
+        isOutbound: true,
+        deliveryStatus: 'sent',
+      ),
+    );
+
+    // Deliver the attachment-reference message over the normal transport.
+    ref.read(skcommsSyncProvider.notifier).sendMessage(
+      peerId: peerId,
+      content: body,
     );
   }
 
