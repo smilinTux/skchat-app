@@ -21,6 +21,7 @@ import '../../features/spaces/space_room_screen.dart';
 import '../../features/recordings/recordings_screen.dart';
 import '../../features/spaces/space_models.dart';
 import '../../features/conf/conf_screen.dart';
+import '../../features/facetime/facetime_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/join/join_screen.dart';
@@ -91,6 +92,13 @@ class AppRoutes {
   /// Conference room (sovereign /conf REST surface): /conf
   /// Takes a [ConfArgs] via `extra` (create or join + role).
   static const conf = '/conf';
+
+  /// FaceTime (avatar call): /facetime  (optional `?agent=lumina` preselect).
+  static const facetime = '/facetime';
+
+  /// Build a FaceTime route preselecting [agent].
+  static String facetimePath(String agent) =>
+      '/facetime?agent=${Uri.encodeQueryComponent(agent)}';
 
   /// Conference deep-link join (Sovereign vs Guest chooser):
   ///   `/join?room=ROOM&invite=TOKEN`   (guest)
@@ -293,6 +301,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return MaterialPage(
             fullscreenDialog: true,
             child: ConfScreen(args: args),
+          );
+        },
+      ),
+
+      // -- FaceTime (avatar call); optional ?agent= preselect
+      GoRoute(
+        path: AppRoutes.facetime,
+        pageBuilder: (context, state) {
+          final agent = state.uri.queryParameters['agent'];
+          return MaterialPage(
+            fullscreenDialog: true,
+            child: FaceTimeScreen(initialAgent: agent),
           );
         },
       ),
