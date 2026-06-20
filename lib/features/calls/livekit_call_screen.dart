@@ -131,6 +131,52 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
     }
   }
 
+  /// Join using a **pre-minted, role-scoped** token (guest/sovereign conf
+  /// join) — connects via [LiveKitCallService.connectWithToken] rather than
+  /// minting a generic token. Publishes the mic once connected.
+  Future<void> joinWithToken({
+    required String roomName,
+    required String identity,
+    required String wsUrl,
+    required String token,
+    bool withVideo = false,
+  }) async {
+    state = LiveKitCallState(
+      roomName: roomName,
+      identity: identity,
+      participants: const [],
+      isMicEnabled: true,
+      isCameraEnabled: withVideo,
+      isConnected: false,
+    );
+
+    ref.onDispose(_cancelSubs);
+    final svc = ref.read(liveKitCallServiceProvider);
+
+    _participantSub = svc.participants.listen((list) {
+      if (state != null) state = state!.copyWith(participants: list);
+    });
+    _connSub = svc.connectionState.listen((cs) {
+      if (state != null) {
+        state = state!.copyWith(isConnected: cs == ConnectionState.connected);
+      }
+    });
+
+    try {
+      await svc.connectWithToken(wsUrl: wsUrl, token: token);
+      await svc.setMicEnabled(true);
+      if (withVideo) await svc.setCameraEnabled(true);
+      if (state != null) {
+        state = state!.copyWith(
+          participants: svc.currentParticipants,
+          isConnected: true,
+        );
+      }
+    } catch (e) {
+      state = state?.copyWith(error: e.toString());
+    }
+  }
+
   Future<void> toggleMic() async {
     if (state == null) return;
     final svc = ref.read(liveKitCallServiceProvider);
@@ -175,6 +221,8 @@ class LiveKitCallArgs {
     required this.identity,
     this.withVideo = false,
     this.displayName,
+    this.preMintedToken,
+    this.livekitUrl,
   });
 
   final String roomName;
@@ -183,6 +231,18 @@ class LiveKitCallArgs {
 
   /// Optional human-readable room/peer title for the app bar.
   final String? displayName;
+
+  /// Pre-minted, role-scoped LiveKit JWT (e.g. from a guest/sovereign conf
+  /// join). When set, the screen connects via
+  /// [LiveKitCallService.connectWithToken] instead of minting a fresh token.
+  final String? preMintedToken;
+
+  /// LiveKit WebSocket URL paired with [preMintedToken].
+  final String? livekitUrl;
+
+  /// True when a pre-minted token + ws url are available (deep-link join path).
+  bool get hasPreMintedToken =>
+      (preMintedToken ?? '').isNotEmpty && (livekitUrl ?? '').isNotEmpty;
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────
@@ -227,10 +287,22 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
   Future<void> _join() async {
     if (_joined) return;
     _joined = true;
+    final args = widget.args;
+    if (args.hasPreMintedToken) {
+      // Deep-link conf join: connect with the role-scoped token directly.
+      await ref.read(liveKitCallProvider.notifier).joinWithToken(
+            roomName: args.roomName,
+            identity: args.identity,
+            wsUrl: args.livekitUrl!,
+            token: args.preMintedToken!,
+            withVideo: args.withVideo,
+          );
+      return;
+    }
     await ref.read(liveKitCallProvider.notifier).join(
-          roomName: widget.args.roomName,
-          identity: widget.args.identity,
-          withVideo: widget.args.withVideo,
+          roomName: args.roomName,
+          identity: args.identity,
+          withVideo: args.withVideo,
         );
   }
 
