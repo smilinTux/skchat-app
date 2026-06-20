@@ -5,6 +5,7 @@ import "../../core/theme/sovereign_colors.dart";
 import "../../services/lane_service.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/spaces_service.dart";
+import "watch_sync.dart";
 import "watch_video_stub.dart" if (dart.library.html) "watch_video_web.dart";
 
 /// Watch-together lane (Tier 4): a shared video synced across the Space over the
@@ -25,7 +26,6 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
   late final LaneService _lane;
   final WatchVideoController _vc = WatchVideoController();
   final TextEditingController _urlCtl = TextEditingController();
-  String? _url;
 
   @override
   void initState() {
@@ -44,27 +44,12 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
   }
 
   /// Apply an inbound watch event WITHOUT re-publishing (avoids sync loops).
+  /// Delegates to the shared, platform-independent [applyWatchEvent] mapper so
+  /// web and native participants interpret lane events identically.
   void _applyRemote(Map<String, dynamic> e) {
-    final action = e["action"];
-    switch (action) {
-      case "load":
-        final url = e["url"] as String?;
-        if (url != null) {
-          _vc.load(url);
-          if (mounted) setState(() => _url = url);
-        }
-        break;
-      case "play":
-        _vc.play();
-        break;
-      case "pause":
-        _vc.pause();
-        break;
-      case "seek":
-        final t = (e["t"] as num?)?.toDouble();
-        if (t != null) _vc.seekTo(t);
-        break;
-    }
+    // The web/native WatchVideo surfaces re-render off the controller itself
+    // (DOM mutation / ChangeNotifier), so the panel needs no state of its own.
+    applyWatchEvent(_vc, e);
   }
 
   Future<void> _publish(Map<String, dynamic> payload) async {
@@ -77,7 +62,6 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
     final url = _urlCtl.text.trim();
     if (url.isEmpty) return;
     _vc.load(url);
-    setState(() => _url = url);
     _publish({"action": "load", "url": url});
   }
 
@@ -100,6 +84,7 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
   @override
   void dispose() {
     _urlCtl.dispose();
+    _vc.dispose();
     super.dispose();
   }
 
