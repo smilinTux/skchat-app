@@ -4,19 +4,16 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
-/// Default base URL for the skchat web-UI LiveKit token mint endpoint.
-/// Override at build time via --dart-define=LIVEKIT_WEBUI_URL=http://host:port
-const _kDefaultWebuiUrl = String.fromEnvironment(
-  'LIVEKIT_WEBUI_URL',
-  defaultValue: 'http://localhost:7779',
-);
+import 'backend_config.dart';
 
-/// Default LiveKit server WebSocket URL.
-/// Override at build time via --dart-define=LIVEKIT_URL=wss://host:8443
-const _kDefaultLiveKitUrl = String.fromEnvironment(
-  'LIVEKIT_URL',
-  defaultValue: 'wss://localhost:8443',
-);
+/// Compile-time default for the skchat web-UI LiveKit token-mint endpoint.
+/// Now only the *seed* for the runtime-settable [backendConfigProvider]; the
+/// live value comes from there so instances can be switched without a rebuild.
+const _kDefaultWebuiUrl = kDefaultLivekitWebuiUrl;
+
+/// Compile-time default LiveKit server WebSocket URL. Seed for
+/// [backendConfigProvider]; live value comes from there.
+const _kDefaultLiveKitUrl = kDefaultLivekitUrl;
 
 // ── Token response ─────────────────────────────────────────────────────────
 
@@ -421,7 +418,14 @@ class LiveKitCallService {
 /// `ProviderScope(overrides: [liveKitCallServiceProvider.overrideWithValue(...)])`.
 final liveKitCallServiceProvider =
     Provider.autoDispose<LiveKitCallService>((ref) {
-  final svc = LiveKitCallService();
+  // Read the live backend config so the token-mint + SFU URLs follow the
+  // selected federation instance. autoDispose recreates the service when the
+  // config changes (a new call session then uses the new host).
+  final cfg = ref.watch(backendConfigProvider);
+  final svc = LiveKitCallService(
+    webuiBaseUrl: cfg.livekitWebuiUrl,
+    livekitUrl: cfg.livekitUrl,
+  );
   ref.onDispose(svc.dispose);
   return svc;
 });

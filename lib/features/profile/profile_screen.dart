@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
+import '../../services/backend_config.dart';
 import '../../services/daemon_config.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/skcomms_sync.dart';
@@ -131,6 +132,7 @@ class ProfileScreen extends ConsumerWidget {
     final identity = ref.watch(localIdentityProvider);
     final daemon = ref.watch(skcommsSyncProvider);
     final daemonUrl = ref.watch(daemonUrlProvider);
+    final backendCfg = ref.watch(backendConfigProvider);
     final transports = ref.watch(transportHealthProvider);
     final themeMode = ref.watch(themeProvider);
     final soulColor = SovereignColors.fromFingerprint(identity.fingerprint);
@@ -242,6 +244,20 @@ class ProfileScreen extends ConsumerWidget {
                     subtitle: const Text('Show or scan a QR code'),
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: () => context.push('/login/qr'),
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
+                    leading: const Icon(Icons.hub_outlined),
+                    title: const Text('Instance'),
+                    subtitle: Text(
+                      _instanceLabel(backendCfg),
+                      style: tt.labelSmall?.copyWith(
+                        color: SovereignColors.textTertiary,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => _showInstancePicker(context, ref, backendCfg),
                   ),
                   const Divider(height: 1, indent: 56),
                   ListTile(
@@ -381,6 +397,181 @@ class ProfileScreen extends ConsumerWidget {
               },
               child: const Text(
                 'Reset to default',
+                style: TextStyle(color: SovereignColors.textTertiary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Short label for the currently-selected backend instance.
+  String _instanceLabel(BackendConfig cfg) {
+    final preset = presetById(cfg.instanceId);
+    if (preset != null) return preset.label;
+    if (cfg.instanceId == 'default') return 'Build default';
+    return 'Custom · ${cfg.skchatWebuiUrl}';
+  }
+
+  /// Instance picker — selecting a preset repoints ALL backends (the SKComms
+  /// daemon URL *and* the Spaces/LiveKit/skcapstone base URLs) live and
+  /// persists them. A custom field repoints them to an arbitrary host.
+  void _showInstancePicker(
+    BuildContext context,
+    WidgetRef ref,
+    BackendConfig cfg,
+  ) {
+    final customController =
+        TextEditingController(text: cfg.skchatWebuiUrl);
+
+    void applyPreset(BackendPreset preset) {
+      // 1. Repoint the SKComms daemon URL.
+      ref.read(daemonUrlProvider.notifier).setUrl(preset.daemonUrl);
+      // 2. Repoint Spaces/LiveKit/skcapstone backends.
+      ref.read(backendConfigProvider.notifier).applyPreset(preset);
+      // 3. Re-fetch identity from the (new) daemon.
+      ref.read(localIdentityProvider.notifier).refresh();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Instance',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Switch which sovereign node this app federates with. A preset '
+              'repoints every backend at once — the SKComms daemon, the SK '
+              'Spaces / LiveKit web-UI, the LiveKit SFU, and skcapstone.',
+              style: TextStyle(
+                fontSize: 12,
+                color: SovereignColors.textTertiary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            for (final preset in kBackendPresets)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  preset.id == cfg.instanceId
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: preset.id == cfg.instanceId
+                      ? SovereignColors.soulLumina
+                      : SovereignColors.textTertiary,
+                ),
+                title: Text(
+                  preset.label,
+                  style: const TextStyle(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  preset.config.skchatWebuiUrl,
+                  style: const TextStyle(
+                    fontFamily: 'JetBrainsMono',
+                    fontSize: 11,
+                    color: SovereignColors.textTertiary,
+                  ),
+                ),
+                onTap: () {
+                  applyPreset(preset);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+            const SizedBox(height: 8),
+            const Text(
+              'Custom host',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: SovereignColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: customController,
+              style: const TextStyle(
+                fontFamily: 'JetBrainsMono',
+                fontSize: 14,
+                color: SovereignColors.textPrimary,
+              ),
+              decoration: InputDecoration(
+                hintText: 'https://host.tailnet.ts.net',
+                hintStyle:
+                    const TextStyle(color: SovereignColors.textTertiary),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: SovereignColors.surfaceGlassBorder,
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: SovereignColors.soulLumina,
+                  ),
+                ),
+                filled: true,
+                fillColor: SovereignColors.surfaceGlass,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () {
+                final host = customController.text.trim();
+                if (host.isNotEmpty) {
+                  // Point the daemon at the same host, then derive the rest.
+                  ref.read(daemonUrlProvider.notifier).setUrl(host);
+                  ref
+                      .read(backendConfigProvider.notifier)
+                      .setCustomHost(host);
+                  ref.read(localIdentityProvider.notifier).refresh();
+                }
+                Navigator.of(ctx).pop();
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: SovereignColors.soulLumina,
+                foregroundColor: Colors.black,
+                minimumSize: const Size(double.infinity, 48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text('Use custom host'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () {
+                // Reset every backend to its compile-time default.
+                ref.read(daemonUrlProvider.notifier).setUrl('');
+                ref.read(backendConfigProvider.notifier).reset();
+                ref.read(localIdentityProvider.notifier).refresh();
+                Navigator.of(ctx).pop();
+              },
+              child: const Text(
+                'Reset to build defaults',
                 style: TextStyle(color: SovereignColors.textTertiary),
               ),
             ),

@@ -2,14 +2,13 @@ import "package:dio/dio.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../features/spaces/space_models.dart";
+import "backend_config.dart";
 
-/// Base URL of the SKChat web-UI that serves the /spaces API + /livekit/token.
-/// Same host as the LiveKit token mint. Override at build time with
-///   --dart-define=SKCHAT_WEBUI_URL=https://host.tail-net.ts.net
-const kDefaultWebuiUrl = String.fromEnvironment(
-  "SKCHAT_WEBUI_URL",
-  defaultValue: "https://noroc2027.tail204f0c.ts.net",
-);
+/// Compile-time default base URL of the SKChat web-UI that serves the /spaces
+/// API + /livekit/token. This is now only the *seed* for the runtime-settable
+/// [backendConfigProvider] (see backend_config.dart); the live value comes from
+/// there so the user can repoint instances without a rebuild.
+const kDefaultWebuiUrl = kDefaultSkchatWebuiUrl;
 
 /// Talks to the sovereign SK Spaces API on the SKChat web-UI.
 class SpacesService {
@@ -90,4 +89,12 @@ class SpacesService {
   }
 }
 
-final spacesServiceProvider = Provider<SpacesService>((ref) => SpacesService());
+/// Spaces service repointed live by the runtime backend config. Watching
+/// [backendConfigProvider] rebuilds the service (and so the base URL) whenever
+/// the user switches federation instances.
+final spacesServiceProvider = Provider<SpacesService>((ref) {
+  final base = ref.watch(
+    backendConfigProvider.select((c) => c.skchatWebuiUrl),
+  );
+  return SpacesService(webuiBaseUrl: base);
+});
