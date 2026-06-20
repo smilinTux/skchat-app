@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
+import '../../services/recordings_service.dart';
 
 // ── Soul-color map for well-known agents ───────────────────────────────────
 
@@ -41,6 +42,7 @@ class LiveKitCallState {
     required this.isMicEnabled,
     required this.isCameraEnabled,
     required this.isConnected,
+    this.isRecording = false,
     this.error,
   });
 
@@ -50,6 +52,9 @@ class LiveKitCallState {
   final bool isMicEnabled;
   final bool isCameraEnabled;
   final bool isConnected;
+
+  /// True while a server-side recording is active for this room.
+  final bool isRecording;
   final String? error;
 
   LiveKitCallState copyWith({
@@ -57,6 +62,7 @@ class LiveKitCallState {
     bool? isMicEnabled,
     bool? isCameraEnabled,
     bool? isConnected,
+    bool? isRecording,
     String? error,
   }) {
     return LiveKitCallState(
@@ -66,6 +72,7 @@ class LiveKitCallState {
       isMicEnabled: isMicEnabled ?? this.isMicEnabled,
       isCameraEnabled: isCameraEnabled ?? this.isCameraEnabled,
       isConnected: isConnected ?? this.isConnected,
+      isRecording: isRecording ?? this.isRecording,
       error: error,
     );
   }
@@ -191,6 +198,29 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
     final next = !state!.isCameraEnabled;
     await svc.setCameraEnabled(next);
     state = state!.copyWith(isCameraEnabled: next);
+  }
+
+  /// Start / stop a server-side recording of this room via the recordings
+  /// service (POST /livekit/record/start|stop). Optimistically flips the local
+  /// recording flag, reverting on a backend error.
+  Future<void> toggleRecording() async {
+    if (state == null) return;
+    final svc = ref.read(recordingsServiceProvider);
+    final next = !state!.isRecording;
+    // Optimistic flip so the REC badge responds immediately.
+    state = state!.copyWith(isRecording: next);
+    try {
+      if (next) {
+        await svc.recordStart(state!.roomName);
+      } else {
+        await svc.recordStop(state!.roomName);
+      }
+    } catch (e) {
+      // Revert and surface the failure.
+      if (state != null) {
+        state = state!.copyWith(isRecording: !next, error: e.toString());
+      }
+    }
   }
 
   Future<void> leave(BuildContext context) async {
@@ -526,6 +556,41 @@ class _TopBar extends StatelessWidget {
               ],
             ),
           ),
+
+          // REC badge — shown while a server-side recording is active.
+          if (callState.isRecording) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: SovereignColors.accentDanger.withValues(alpha: 0.2),
+                border: Border.all(
+                  color: SovereignColors.accentDanger.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(
+                    Icons.fiber_manual_record_rounded,
+                    color: SovereignColors.accentDanger,
+                    size: 10,
+                  ),
+                  SizedBox(width: 4),
+                  Text(
+                    'REC',
+                    style: TextStyle(
+                      color: SovereignColors.accentDanger,
+                      fontSize: 10,
+                      fontFamily: 'JetBrainsMono',
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
 
           // Room-name mono badge.
           Container(
@@ -908,6 +973,17 @@ class _LiveKitControlBar extends ConsumerWidget {
             active: !callState.isCameraEnabled,
             activeColor: SovereignColors.accentWarning,
             onTap: notifier.toggleCamera,
+          ),
+
+          // Record toggle — drives POST /livekit/record/start|stop.
+          _LKControlButton(
+            icon: callState.isRecording
+                ? Icons.stop_circle_rounded
+                : Icons.fiber_manual_record_rounded,
+            label: callState.isRecording ? 'Stop rec' : 'Record',
+            active: callState.isRecording,
+            activeColor: SovereignColors.accentDanger,
+            onTap: notifier.toggleRecording,
           ),
 
           // Leave / end call.
