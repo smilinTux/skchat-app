@@ -18,6 +18,7 @@ import '../../features/calls/in_call_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
+import '../../features/recordings/recordings_screen.dart';
 import '../../features/spaces/space_models.dart';
 import '../../features/conf/conf_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
@@ -35,6 +36,9 @@ class AppRoutes {
 
   /// SK Spaces directory (live audio rooms): /spaces
   static const spaces = '/spaces';
+
+  /// Recordings browser (call/space recordings): /recordings
+  static const recordings = '/recordings';
 
   /// Coordination board: /coord
   static const coord = '/coord';
@@ -174,6 +178,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const CoordBoardScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.recordings,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const RecordingsScreen(),
             ),
           ),
         ],
