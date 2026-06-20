@@ -50,6 +50,19 @@ const kDefaultSkcapstoneDashboardUrl = String.fromEnvironment(
   defaultValue: 'http://localhost:7778',
 );
 
+/// skbloom app-store / cluster-control API base URL (port 8774).
+///
+/// skbloom serves its JSON/SSE control plane (`/api/services`, `/api/propose`,
+/// `/api/up`, `/api/status`, `/api/health`, `/api/restart`, `/api/scale`,
+/// `/api/logs`) from `ThreadingHTTPServer` bound to `127.0.0.1:8774` by default
+/// (see `skbloom/web/server.py:serve`). Because it binds to loopback, reaching
+/// it from the phone normally means an SSH/tailnet port-forward to that host;
+/// the user repoints this at runtime via the Profile screen / [setCustomHost].
+const kDefaultSkbloomUrl = String.fromEnvironment(
+  'SKBLOOM_URL',
+  defaultValue: 'http://localhost:8774',
+);
+
 // ── Hive persistence keys (shared `settings` box) ────────────────────────────
 
 const _kSettingsBox = 'settings';
@@ -58,6 +71,7 @@ const _kLivekitWebuiKey = 'backend_livekit_webui_url';
 const _kLivekitUrlKey = 'backend_livekit_url';
 const _kSkcapstoneKey = 'backend_skcapstone_url';
 const _kSkcapstoneDashKey = 'backend_skcapstone_dashboard_url';
+const _kClusterKey = 'backend_cluster_url';
 const _kInstanceIdKey = 'backend_instance_id';
 
 /// Strip a trailing slash so paths can be appended cleanly.
@@ -80,6 +94,7 @@ class BackendConfig {
     required this.livekitUrl,
     required this.skcapstoneUrl,
     required this.skcapstoneDashboardUrl,
+    this.clusterUrl = kDefaultSkbloomUrl,
     this.instanceId = 'custom',
   });
 
@@ -98,6 +113,9 @@ class BackendConfig {
   /// skcapstone dashboard base.
   final String skcapstoneDashboardUrl;
 
+  /// skbloom cluster-control API base (port 8774).
+  final String clusterUrl;
+
   /// Id of the matching [BackendPreset], or `'custom'`.
   final String instanceId;
 
@@ -108,6 +126,7 @@ class BackendConfig {
     livekitUrl: kDefaultLivekitUrl,
     skcapstoneUrl: kDefaultSkcapstoneUrl,
     skcapstoneDashboardUrl: kDefaultSkcapstoneDashboardUrl,
+    clusterUrl: kDefaultSkbloomUrl,
     instanceId: 'default',
   );
 
@@ -117,6 +136,7 @@ class BackendConfig {
     String? livekitUrl,
     String? skcapstoneUrl,
     String? skcapstoneDashboardUrl,
+    String? clusterUrl,
     String? instanceId,
   }) {
     return BackendConfig(
@@ -126,6 +146,7 @@ class BackendConfig {
       skcapstoneUrl: skcapstoneUrl ?? this.skcapstoneUrl,
       skcapstoneDashboardUrl:
           skcapstoneDashboardUrl ?? this.skcapstoneDashboardUrl,
+      clusterUrl: clusterUrl ?? this.clusterUrl,
       instanceId: instanceId ?? this.instanceId,
     );
   }
@@ -138,6 +159,7 @@ class BackendConfig {
       other.livekitUrl == livekitUrl &&
       other.skcapstoneUrl == skcapstoneUrl &&
       other.skcapstoneDashboardUrl == skcapstoneDashboardUrl &&
+      other.clusterUrl == clusterUrl &&
       other.instanceId == instanceId;
 
   @override
@@ -147,6 +169,7 @@ class BackendConfig {
         livekitUrl,
         skcapstoneUrl,
         skcapstoneDashboardUrl,
+        clusterUrl,
         instanceId,
       );
 }
@@ -193,6 +216,7 @@ const List<BackendPreset> kBackendPresets = [
       livekitUrl: 'wss://noroc2027.tail204f0c.ts.net:8443',
       skcapstoneUrl: 'http://noroc2027.tail204f0c.ts.net:7777',
       skcapstoneDashboardUrl: 'http://noroc2027.tail204f0c.ts.net:7778',
+      clusterUrl: 'http://noroc2027.tail204f0c.ts.net:8774',
     ),
   ),
   BackendPreset(
@@ -211,6 +235,8 @@ const List<BackendPreset> kBackendPresets = [
           'http://cbrd21-laptop12thgenintelcore.tail204f0c.ts.net:7777',
       skcapstoneDashboardUrl:
           'http://cbrd21-laptop12thgenintelcore.tail204f0c.ts.net:7778',
+      clusterUrl:
+          'http://cbrd21-laptop12thgenintelcore.tail204f0c.ts.net:8774',
     ),
   ),
 ];
@@ -247,6 +273,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
         skcapstoneUrl: box.get(_kSkcapstoneKey) ?? state.skcapstoneUrl,
         skcapstoneDashboardUrl:
             box.get(_kSkcapstoneDashKey) ?? state.skcapstoneDashboardUrl,
+        clusterUrl: box.get(_kClusterKey) ?? state.clusterUrl,
       );
       if (loaded != state) state = loaded;
     } catch (_) {
@@ -263,6 +290,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
       await box.put(_kLivekitUrlKey, c.livekitUrl);
       await box.put(_kSkcapstoneKey, c.skcapstoneUrl);
       await box.put(_kSkcapstoneDashKey, c.skcapstoneDashboardUrl);
+      await box.put(_kClusterKey, c.clusterUrl);
     } catch (_) {
       // Best-effort persistence; in-memory state already updated.
     }
@@ -283,6 +311,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
       livekitUrl: _stripTrailingSlash(config.livekitUrl),
       skcapstoneUrl: _stripTrailingSlash(config.skcapstoneUrl),
       skcapstoneDashboardUrl: _stripTrailingSlash(config.skcapstoneDashboardUrl),
+      clusterUrl: _stripTrailingSlash(config.clusterUrl),
     );
     state = normalized;
     await _persist(normalized);
@@ -317,6 +346,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
         livekitUrl: '$wsBase:8443',
         skcapstoneUrl: 'http://$hostNoPort:7777',
         skcapstoneDashboardUrl: 'http://$hostNoPort:7778',
+        clusterUrl: 'http://$hostNoPort:8774',
       ),
     );
   }
@@ -332,6 +362,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
       await box.delete(_kLivekitUrlKey);
       await box.delete(_kSkcapstoneKey);
       await box.delete(_kSkcapstoneDashKey);
+      await box.delete(_kClusterKey);
     } catch (_) {
       // Best-effort.
     }
