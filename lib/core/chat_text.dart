@@ -11,6 +11,9 @@ import "dart:convert";
 /// shown as ordinary chat text.
 const String _kChatContextPrefix = "Chat context (recent):";
 
+/// Prefix marking an attachment-reference message body (see [AttachmentRef]).
+const String _kAttachPrefix = "__ATTACH__:";
+
 /// A bare UUID token (delivery receipt / message-id envelope) — never chat text.
 final RegExp _kUuidOnly = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
@@ -41,6 +44,26 @@ String? displayTextFor(String? raw) {
 
   // System "context" injection — never user-visible chat text.
   if (trimmed.startsWith(_kChatContextPrefix)) return null;
+
+  // Attachment sentinel (__ATTACH__:{json}). The conversation bubble renders a
+  // file card from this; for list previews we surface a short "📎 filename"
+  // line instead of the raw JSON payload.
+  if (trimmed.startsWith(_kAttachPrefix)) {
+    try {
+      final decoded = jsonDecode(trimmed.substring(_kAttachPrefix.length));
+      if (decoded is Map) {
+        final name = (decoded["filename"] as String?)?.trim();
+        final caption = (decoded["caption"] as String?)?.trim();
+        final label = (name != null && name.isNotEmpty) ? name : "attachment";
+        return (caption != null && caption.isNotEmpty)
+            ? "📎 $label — $caption"
+            : "📎 $label";
+      }
+    } catch (_) {
+      // Malformed sentinel — fall through to default handling.
+    }
+    return "📎 attachment";
+  }
 
   // Bare delivery-receipt / message-id token.
   if (_kUuidOnly.hasMatch(trimmed)) return null;

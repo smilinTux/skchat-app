@@ -16,15 +16,22 @@ import 'daemon_config.dart';
 /// daemon (e.g. a tailnet host) — set it via the profile/settings screen or
 /// `--dart-define=SKCOMMS_URL=...` at build time.
 class SKCommsClient {
-  SKCommsClient({String? baseUrl})
-    : _dio = Dio(
-        BaseOptions(
-          baseUrl: baseUrl ?? kDefaultDaemonUrl,
-          connectTimeout: const Duration(seconds: 5),
-          receiveTimeout: const Duration(seconds: 10),
-          headers: {'Content-Type': 'application/json'},
-        ),
-      );
+  /// [dio] may be injected (tests) to supply a canned [HttpClientAdapter];
+  /// its [BaseOptions.baseUrl] is set from [baseUrl] when provided.
+  SKCommsClient({String? baseUrl, Dio? dio})
+    : _dio = dio ??
+          Dio(
+            BaseOptions(
+              baseUrl: baseUrl ?? kDefaultDaemonUrl,
+              connectTimeout: const Duration(seconds: 5),
+              receiveTimeout: const Duration(seconds: 10),
+              headers: {'Content-Type': 'application/json'},
+            ),
+          ) {
+    if (dio != null && baseUrl != null) {
+      _dio.options.baseUrl = baseUrl;
+    }
+  }
 
   final Dio _dio;
 
@@ -257,6 +264,57 @@ class SKCommsClient {
     return FileTransferStatus.fromJson(resp.data ?? {});
   }
 
+  /// POST /upload — upload a file as multipart to [recipient].
+  ///
+  /// The daemon stores the file, starts the transfer, and returns
+  /// `{id, transfer_id, filename}`.  Pass the raw [bytes] plus a [filename]
+  /// (web has no file paths, so we always upload from bytes).  [caption] is an
+  /// optional human note delivered alongside the file.
+  ///
+  /// Returns an [UploadResult]; throws on HTTP error.
+  Future<UploadResult> uploadFile({
+    required String recipient,
+    required List<int> bytes,
+    required String filename,
+    String caption = '',
+  }) async {
+    final form = FormData.fromMap({
+      'recipient': recipient,
+      'caption': caption,
+      'file': MultipartFile.fromBytes(bytes, filename: filename),
+    });
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/upload',
+      data: form,
+      // Multipart sets its own Content-Type (with boundary); override the
+      // client-wide application/json default for this request.
+      options: Options(contentType: 'multipart/form-data'),
+    );
+    return UploadResult.fromJson(resp.data ?? {});
+  }
+
+  /// Absolute URL for downloading a completed transfer's file payload.
+  ///
+  /// `GET /file/{transferId}` — used as an `<img>`/download src.  Built from
+  /// the client's configured [baseUrl] so it honours the runtime daemon URL.
+  String fileUrl(String transferId) =>
+      '${_baseUrl()}/file/${Uri.encodeComponent(transferId)}';
+
+  /// Absolute URL for a transfer's thumbnail preview.
+  ///
+  /// `GET /file/{transferId}/thumb`.
+  String thumbUrl(String transferId) =>
+      '${_baseUrl()}/file/${Uri.encodeComponent(transferId)}/thumb';
+
+  /// The client's base URL with any trailing slash stripped, so the helpers
+  /// above can append `/file/...` paths cleanly.
+  String _baseUrl() {
+    var b = _dio.options.baseUrl;
+    while (b.endsWith('/')) {
+      b = b.substring(0, b.length - 1);
+    }
+    return b;
+  }
 }
 
 // ── Data transfer objects ──────────────────────────────────────────────────
@@ -375,6 +433,30 @@ class CreateGroupResult {
               (e is Map ? e['identity'] as String? : e as String?) ?? '')
           .where((s) => s.isNotEmpty)
           .toList(),
+    );
+  }
+}
+
+/// Result of a successful `POST /upload` — the daemon's handle for the file.
+///
+/// `transferId` is what the file-transfer bubble polls and what
+/// [SKCommsClient.fileUrl] / [SKCommsClient.thumbUrl] reference.
+class UploadResult {
+  const UploadResult({
+    required this.id,
+    required this.transferId,
+    required this.filename,
+  });
+
+  final String id;
+  final String transferId;
+  final String filename;
+
+  factory UploadResult.fromJson(Map<String, dynamic> json) {
+    return UploadResult(
+      id: json['id'] as String? ?? '',
+      transferId: json['transfer_id'] as String? ?? '',
+      filename: json['filename'] as String? ?? '',
     );
   }
 }

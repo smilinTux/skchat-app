@@ -10,10 +10,17 @@ class InputBar extends StatefulWidget {
   const InputBar({
     super.key,
     required this.onSend,
+    this.onAttach,
     this.soulColor = SovereignColors.soulLumina,
   });
 
   final void Function(String text) onSend;
+
+  /// Called when the user taps the attach button and the upload should run.
+  /// The conversation screen owns the actual pick→upload→send flow (it has the
+  /// recipient + riverpod client).  Null leaves the button disabled.
+  final Future<void> Function()? onAttach;
+
   final Color soulColor;
 
   @override
@@ -24,6 +31,7 @@ class _InputBarState extends State<InputBar> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _hasText = false;
+  bool _attaching = false;
 
   @override
   void initState() {
@@ -49,6 +57,17 @@ class _InputBarState extends State<InputBar> {
     widget.onSend(text);
     _controller.clear();
     _focusNode.requestFocus();
+  }
+
+  Future<void> _attach() async {
+    final onAttach = widget.onAttach;
+    if (onAttach == null || _attaching) return;
+    setState(() => _attaching = true);
+    try {
+      await onAttach();
+    } finally {
+      if (mounted) setState(() => _attaching = false);
+    }
   }
 
   /// Enter sends on desktop; Shift+Enter inserts a newline.
@@ -87,9 +106,20 @@ class _InputBarState extends State<InputBar> {
               children: [
                 // Attachment
                 IconButton(
-                  icon: const Icon(Icons.attach_file_rounded),
+                  icon: _attaching
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(widget.soulColor),
+                          ),
+                        )
+                      : const Icon(Icons.attach_file_rounded),
                   color: SovereignColors.textSecondary,
-                  onPressed: () {},
+                  onPressed:
+                      widget.onAttach == null || _attaching ? null : _attach,
                   tooltip: 'Attach file',
                 ),
 
@@ -192,6 +222,10 @@ class _VoiceButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      // TODO(A5-attach): wire push-to-talk voice notes. Needs an audio-record
+      // plugin (e.g. `record`) + an /upload of the captured clip as an
+      // attachment, reusing the same uploadFile() path as files. Left as a
+      // visual placeholder for now (no recorder dependency in pubspec yet).
       onLongPress: () {},
       child: Container(
         width: 44,

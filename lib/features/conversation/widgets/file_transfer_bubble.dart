@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../core/theme/sovereign_colors.dart';
 import '../../../services/skcomms_client.dart';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,8 @@ class FileTransferBubble extends ConsumerWidget {
     required this.fileName,
     required this.fileSize,
     required this.soulColor,
+    this.isImage = false,
+    this.caption = '',
   });
 
   final String transferId;
@@ -53,10 +57,92 @@ class FileTransferBubble extends ConsumerWidget {
 
   final Color soulColor;
 
+  /// When true, render a thumbnail preview (GET /file/{id}/thumb) above the
+  /// progress card.
+  final bool isImage;
+
+  /// Optional caption shown beneath the card.
+  final String caption;
+
+  /// Open the full file (GET /file/{transferId}) in the platform handler.
+  Future<void> _download(WidgetRef ref) async {
+    final url = ref.read(skcommsClientProvider).fileUrl(transferId);
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final statusAsync = ref.watch(fileTransferStatusProvider(transferId));
     final tt = Theme.of(context).textTheme;
+    final thumbUrl = ref.read(skcommsClientProvider).thumbUrl(transferId);
+
+    final statusCard = _statusCard(statusAsync, tt);
+
+    // Plain file (no image, no caption): just the tappable progress card.
+    if (!isImage && caption.isEmpty) {
+      return GestureDetector(
+        onTap: () => _download(ref),
+        child: statusCard,
+      );
+    }
+
+    // Image and/or caption: thumbnail + card + caption, all tap-to-download.
+    return GestureDetector(
+      onTap: () => _download(ref),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isImage) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxHeight: 200,
+                  maxWidth: 240,
+                ),
+                child: Image.network(
+                  thumbUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stack) => Container(
+                    width: 240,
+                    height: 120,
+                    color: soulColor.withValues(alpha: 0.12),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.broken_image_rounded,
+                      color: soulColor.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+          statusCard,
+          if (caption.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              caption,
+              style: const TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 14,
+                height: 1.3,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _statusCard(
+    AsyncValue<FileTransferStatus?> statusAsync,
+    TextTheme tt,
+  ) {
 
     return statusAsync.when(
       loading: () => _buildCard(
