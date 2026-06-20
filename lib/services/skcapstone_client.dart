@@ -2,19 +2,16 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Base URL for the skcapstone daemon (port 7777).
-/// Override at build time via --dart-define=SKCAPSTONE_URL=http://host:port
-const _kSKCapstoneBaseUrl = String.fromEnvironment(
-  'SKCAPSTONE_URL',
-  defaultValue: 'http://localhost:7777',
-);
+import 'backend_config.dart';
 
-/// Base URL for the skcapstone dashboard service (port 7778).
-/// Override via --dart-define=SKCAPSTONE_DASHBOARD_URL=http://host:port
-const _kSKDashboardBaseUrl = String.fromEnvironment(
-  'SKCAPSTONE_DASHBOARD_URL',
-  defaultValue: 'http://localhost:7778',
-);
+/// Compile-time default for the skcapstone daemon (port 7777). Seed for the
+/// runtime-settable [backendConfigProvider]; the live value comes from there so
+/// instances can be switched without a rebuild.
+const _kSKCapstoneBaseUrl = kDefaultSkcapstoneUrl;
+
+/// Compile-time default for the skcapstone dashboard (port 7778). Seed for
+/// [backendConfigProvider]; live value comes from there.
+const _kSKDashboardBaseUrl = kDefaultSkcapstoneDashboardUrl;
 
 /// Low-level HTTP client for the skcapstone daemon REST API.
 class SKCapstoneClient {
@@ -146,9 +143,15 @@ class AgentHeartbeat {
   }
 }
 
-/// Singleton SKCapstoneClient provider.
+/// SKCapstoneClient provider, repointed live by the runtime backend config.
+/// Watching [backendConfigProvider] rebuilds the client (and its base URLs)
+/// whenever the user switches federation instances.
 final skCapstoneClientProvider = Provider<SKCapstoneClient>((ref) {
-  return SKCapstoneClient();
+  final cfg = ref.watch(backendConfigProvider);
+  return SKCapstoneClient(
+    baseUrl: cfg.skcapstoneUrl,
+    dashboardUrl: cfg.skcapstoneDashboardUrl,
+  );
 });
 
 // ── Coordination board models ──────────────────────────────────────────────
