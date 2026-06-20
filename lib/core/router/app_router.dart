@@ -20,6 +20,8 @@ import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
 import '../../features/spaces/space_models.dart';
 import '../../features/coord/coord_board_screen.dart';
+import '../../features/join/join_screen.dart';
+import '../../services/join_service.dart';
 
 /// Named route paths.
 class AppRoutes {
@@ -77,6 +79,19 @@ class AppRoutes {
   /// LiveKit SFU call screen: /call/livekit
   static const livekitCall = '/call/livekit';
 
+  /// Conference deep-link join (Sovereign vs Guest chooser):
+  ///   `/join?room=ROOM&invite=TOKEN`   (guest)
+  ///   `/join?room=ROOM&sovereign=1`    (sovereign)
+  static const join = '/join';
+
+  /// Build a guest join link/route for [room] with an [invite] token.
+  static String guestJoinPath(String room, String invite) =>
+      '/join?room=${Uri.encodeQueryComponent(room)}'
+      '&invite=${Uri.encodeQueryComponent(invite)}';
+
+  /// Build a sovereign join link/route for [room].
+  static String sovereignJoinPath(String room) =>
+      '/join?room=${Uri.encodeQueryComponent(room)}&sovereign=1';
 }
 
 /// GoRouter provider — uses shell routes for the bottom nav structure.
@@ -173,6 +188,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const QrLoginScreen(),
       ),
 
+      // ── Conference deep-link join (Sovereign vs Guest chooser) ──────────
+      GoRoute(
+        path: AppRoutes.join,
+        builder: (context, state) {
+          // Parse the link's query params into a JoinLink. GoRouter exposes
+          // them via state.uri.queryParameters (works for in-app pushes and
+          // OS deep links routed to this path).
+          final link = JoinLink.fromParams(state.uri.queryParameters);
+          if (link == null) {
+            return const _InvalidJoinScreen();
+          }
+          return JoinScreen(link: link);
+        },
+      ),
+
       // ── Call screens ────────────────────────────────────────────────────
       GoRoute(
         path: AppRoutes.outgoingCall,
@@ -235,4 +265,38 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 /// Push navigation (conversations) uses the default spring transition.
 NoTransitionPage<void> _noTransitionPage(GoRouterState state, Widget child) {
   return NoTransitionPage<void>(key: state.pageKey, child: child);
+}
+
+/// Shown when a `/join` link is missing a room or offers no join path.
+class _InvalidJoinScreen extends StatelessWidget {
+  const _InvalidJoinScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Join call')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.link_off, size: 48),
+              const SizedBox(height: 12),
+              Text(
+                'This join link is invalid or incomplete.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () => context.go(AppRoutes.chats),
+                child: const Text('Back to chats'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
