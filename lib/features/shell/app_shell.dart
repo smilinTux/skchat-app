@@ -23,10 +23,10 @@ class AppShell extends ConsumerWidget {
       path: AppRoutes.chats,
     ),
     _TabItem(
-      label: 'Groups',
-      icon: Icons.group_outlined,
-      activeIcon: Icons.group_rounded,
-      path: AppRoutes.groups,
+      label: 'Spaces',
+      icon: Icons.podcasts_outlined,
+      activeIcon: Icons.podcasts_rounded,
+      path: AppRoutes.spaces,
     ),
     _TabItem(
       label: 'Activity',
@@ -34,11 +34,14 @@ class AppShell extends ConsumerWidget {
       activeIcon: Icons.notifications_rounded,
       path: AppRoutes.activity,
     ),
+    // Ops hub — gateway to the operator control surfaces (Cluster, Coord,
+    // Recordings, Conferences, Groups). Keeps the bottom bar at 5 items while
+    // making every operator route reachable in <= 2 taps.
     _TabItem(
-      label: 'Spaces',
-      icon: Icons.podcasts_outlined,
-      activeIcon: Icons.podcasts_rounded,
-      path: AppRoutes.spaces,
+      label: 'Ops',
+      icon: Icons.grid_view_outlined,
+      activeIcon: Icons.grid_view_rounded,
+      path: AppRoutes.hub,
     ),
     _TabItem(
       label: 'Me',
@@ -50,9 +53,17 @@ class AppShell extends ConsumerWidget {
 
   int _indexFor(BuildContext context, WidgetRef _) {
     final location = GoRouterState.of(context).matchedLocation;
-    if (location.startsWith(AppRoutes.groups)) return 1;
+    if (location.startsWith(AppRoutes.spaces)) return 1;
     if (location.startsWith(AppRoutes.activity)) return 2;
-    if (location.startsWith(AppRoutes.spaces)) return 3;
+    // "Ops" stays highlighted while on the hub or any operator surface it
+    // gates (cluster / coord / recordings).
+    if (location.startsWith(AppRoutes.hub) ||
+        location.startsWith(AppRoutes.cluster) ||
+        location.startsWith(AppRoutes.coord) ||
+        location.startsWith(AppRoutes.recordings) ||
+        location.startsWith(AppRoutes.groups)) {
+      return 3;
+    }
     if (location.startsWith(AppRoutes.profile)) return 4;
     return 0; // chats
   }
