@@ -1,19 +1,51 @@
 import "package:flutter/material.dart";
+import "package:video_player/video_player.dart";
 
-/// Non-web fallback for the watch-together video surface. Playback state still
-/// syncs across the room via the lane substrate; embedded rendering is web-only.
+import "watch_sync.dart";
+
+/// Native (mobile / desktop) watch-together video surface.
 ///
-/// The public API mirrors the web controller (`watch_video_web.dart`) so the
-/// conditional import compiles identically on non-web targets.
-class WatchVideoController {
-  String? url;
-  double _pos = 0;
+/// This is the non-web side of the conditional import seam in
+/// `watch_panel.dart` (`watch_video_stub.dart if (dart.library.html)
+/// watch_video_web.dart`). Despite the historical "stub" filename, this is a
+/// REAL player, not a placeholder.
+///
+/// It mirrors the public API of the web controller (`watch_video_web.dart`) so
+/// the conditional import compiles identically on every target, and it is
+/// driven by the SAME "watch" lane events the web client consumes (via
+/// [applyWatchEvent]) — emitting the same events on local control — so
+/// web <-> native participants stay in sync.
+///
+/// Source handling, parity with web:
+///  * **Direct file** (`.mp4`/`.webm`/… or any non-YouTube/Rumble URL) →
+///    real `video_player` playback with full play/pause/seek control.
+///  * **YouTube / Rumble** → in-app embedding of those players natively would
+///    require a webview dependency we deliberately avoid here; we surface the
+///    URL and track a "shadow" position so the sync lane state (seek/play/pause)
+///    still propagates and stays consistent with web participants. This matches
+///    the web client's own best-effort posture for non-controllable iframe
+///    sources (it cannot cross-origin command a Rumble embed either).
+enum _WatchMode { none, file, embedOnly }
 
-  void load(String u) => url = u;
-  void play() {}
-  void pause() {}
-  void seekTo(double t) => _pos = t;
-  double get position => _pos;
+class WatchVideoController extends ChangeNotifier
+    implements WatchPlaybackTarget {
+  VideoPlayerController? _vp;
+  _WatchMode _mode = _WatchMode.none;
+  String? url;
+
+  /// Position used for non-`video_player` sources so [position] stays sensible
+  /// for the sync lane even when we are not actually decoding the media.
+  double _shadowPos = 0;
+
+  /// Whether the controllable player is initialized and ready for commands.
+  bool get isFilePlayerReady =>
+      _mode == _WatchMode.file &&
+      _vp != null &&
+      (_vp?.value.isInitialized ?? false);
+
+  /// The live `video_player` controller, or null when no file is loaded.
+  VideoPlayerController? get fileController =>
+      _mode == _WatchMode.file ? _vp : null;
 
   /// Mirror of the web controller's YouTube id parser (kept for API parity).
   static String? youtubeId(String url) {
@@ -52,23 +84,155 @@ class WatchVideoController {
     if (q >= 0) id = id.substring(0, q);
     return id;
   }
+
+  static bool _isRumble(String url) {
+    try {
+      final host = Uri.parse(url.trim()).host.toLowerCase();
+      return host == "rumble.com" || host.endsWith(".rumble.com");
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ---- Public control surface ----------------------------------------------
+
+  @override
+  void load(String url) {
+    this.url = url;
+    _shadowPos = 0;
+    _disposePlayer();
+
+    // YouTube / Rumble → embed-only surface (no controllable native player).
+    if (youtubeId(url) != null || _isRumble(url)) {
+      _mode = _WatchMode.embedOnly;
+      notifyListeners();
+      return;
+    }
+
+    // Direct file / unknown → real video_player playback.
+    _mode = _WatchMode.file;
+    final vp = VideoPlayerController.networkUrl(Uri.parse(url));
+    _vp = vp;
+    notifyListeners();
+    vp.initialize().then((_) {
+      // Surface may have been replaced (another load) before init finished.
+      if (_vp != vp) return;
+      notifyListeners();
+    }).catchError((_) {
+      // Leave the surface in file mode; the UI shows a not-ready placeholder.
+    });
+  }
+
+  @override
+  void play() {
+    if (isFilePlayerReady) {
+      _vp?.play();
+    }
+    // embed-only: best-effort no-op (see class doc).
+  }
+
+  @override
+  void pause() {
+    if (isFilePlayerReady) {
+      _vp?.pause();
+    }
+  }
+
+  @override
+  void seekTo(double t) {
+    _shadowPos = t;
+    if (isFilePlayerReady) {
+      _vp?.seekTo(Duration(milliseconds: (t * 1000).round()));
+    }
+  }
+
+  double get position {
+    if (isFilePlayerReady) {
+      return (_vp?.value.position.inMilliseconds ?? 0) / 1000.0;
+    }
+    return _shadowPos;
+  }
+
+  void _disposePlayer() {
+    final old = _vp;
+    _vp = null;
+    _mode = _WatchMode.none;
+    old?.dispose();
+  }
+
+  @override
+  void dispose() {
+    _disposePlayer();
+    super.dispose();
+  }
 }
 
-class WatchVideo extends StatelessWidget {
+class WatchVideo extends StatefulWidget {
   const WatchVideo({super.key, required this.controller});
 
   final WatchVideoController controller;
 
   @override
+  State<WatchVideo> createState() => _WatchVideoState();
+}
+
+class _WatchVideoState extends State<WatchVideo> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onChange);
+  }
+
+  @override
+  void didUpdateWidget(WatchVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onChange);
+      widget.controller.addListener(_onChange);
+    }
+  }
+
+  void _onChange() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onChange);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final c = widget.controller;
+
+    if (c.isFilePlayerReady) {
+      final vp = c.fileController!;
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: AspectRatio(
+          aspectRatio:
+              vp.value.aspectRatio == 0 ? 16 / 9 : vp.value.aspectRatio,
+          child: VideoPlayer(vp),
+        ),
+      );
+    }
+
+    final url = c.url;
+    final loadingFile = c.fileController != null; // file mode, not yet ready
     return Container(
       color: Colors.black,
       alignment: Alignment.center,
       padding: const EdgeInsets.all(16),
       child: Text(
-        controller.url == null
+        url == null
             ? "Load a video URL to watch together."
-            : "▶ Now playing (synced across the room):\n${controller.url}\n\nEmbedded playback is on the web client.",
+            : loadingFile
+                ? "Loading…\n$url"
+                : "▶ Now playing (synced across the room):\n$url\n\n"
+                    "Embedded YouTube/Rumble playback is on the web client; "
+                    "play/pause/seek still sync here.",
         textAlign: TextAlign.center,
         style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),

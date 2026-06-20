@@ -4,6 +4,8 @@ import "dart:ui_web" as ui_web;
 
 import "package:flutter/material.dart";
 
+import "watch_sync.dart";
+
 /// Web watch-together video surface.
 ///
 /// Supports three source kinds, auto-detected from the URL passed to [load]:
@@ -27,7 +29,7 @@ import "package:flutter/material.dart";
 /// active surface is always the right player for the current URL.
 enum _WatchMode { none, video, youtube, rumble }
 
-class WatchVideoController {
+class WatchVideoController implements WatchPlaybackTarget {
   /// Container div holding both the <video> and <iframe> children.
   html.DivElement? container;
   html.VideoElement? videoEl;
@@ -121,6 +123,7 @@ class WatchVideoController {
 
   // ---- Public control surface ----------------------------------------------
 
+  @override
   void load(String url) {
     _currentUrl = url;
     _shadowPos = 0;
@@ -150,6 +153,7 @@ class WatchVideoController {
     }
   }
 
+  @override
   void play() {
     switch (_mode) {
       case _WatchMode.video:
@@ -166,6 +170,7 @@ class WatchVideoController {
     }
   }
 
+  @override
   void pause() {
     switch (_mode) {
       case _WatchMode.video:
@@ -182,6 +187,7 @@ class WatchVideoController {
     }
   }
 
+  @override
   void seekTo(double t) {
     _shadowPos = t;
     switch (_mode) {
@@ -207,6 +213,11 @@ class WatchVideoController {
     // iframe sources: we can't read player time cross-origin → shadow value.
     return _shadowPos;
   }
+
+  /// API parity with the native controller (which owns a disposable player).
+  /// The web surface is torn down by the browser with the platform view, so
+  /// this is a no-op.
+  void dispose() {}
 
   // ---- Internals ------------------------------------------------------------
 
