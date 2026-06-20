@@ -21,6 +21,7 @@ import '../../features/spaces/space_room_screen.dart';
 import '../../features/spaces/space_models.dart';
 import '../../features/conf/conf_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
+import '../../features/cluster/cluster_screen.dart';
 import '../../features/join/join_screen.dart';
 import '../../services/join_service.dart';
 
@@ -38,6 +39,9 @@ class AppRoutes {
 
   /// Coordination board: /coord
   static const coord = '/coord';
+
+  /// Cluster control (skbloom): /cluster
+  static const cluster = '/cluster';
 
   /// A single Space room (takes a SpaceJoin via extra): /spaces/:id
   static const spaceRoom = '/spaces/:id';
@@ -174,6 +178,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const CoordBoardScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.cluster,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const ClusterScreen(),
             ),
           ),
         ],
