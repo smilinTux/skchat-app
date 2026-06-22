@@ -392,6 +392,19 @@ class DaemonAccessClient implements AccessClient {
   @override
   Future<List<FsEntry>> listRoots(String node) async {
     final raw = await _callTool(node, 'list_roots', const {});
+    // list_roots returns a list of path STRINGS (not objects like file_list),
+    // so map each path → a dir entry. Fall back to object parsing if a server
+    // ever returns structured roots.
+    if (raw is List) {
+      return raw.map<FsEntry>((e) {
+        if (e is String) {
+          final parts = e.split('/').where((s) => s.isNotEmpty);
+          final name = parts.isEmpty ? e : parts.last;
+          return FsEntry(name: name, path: e, type: FsEntryType.dir);
+        }
+        return FsEntry.fromJson(_asMap(e));
+      }).toList();
+    }
     return _asList(raw).map(FsEntry.fromJson).toList();
   }
 
