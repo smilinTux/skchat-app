@@ -25,6 +25,7 @@ import '../../features/facetime/facetime_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
+import '../../features/skmap/skmap_screen.dart';
 import '../../features/join/join_screen.dart';
 import '../../services/join_service.dart';
 
@@ -51,6 +52,9 @@ class AppRoutes {
 
   /// Cluster control (skbloom): /cluster
   static const cluster = '/cluster';
+
+  /// SkMap tactical map (live unit/CoT positions): /skmap
+  static const skmap = '/skmap';
 
   /// A single Space room (takes a SpaceJoin via extra): /spaces/:id
   static const spaceRoom = '/spaces/:id';
@@ -208,6 +212,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const ClusterScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.skmap,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const SkMapScreen(),
             ),
           ),
           GoRoute(
