@@ -26,6 +26,8 @@ import '../../features/coord/coord_board_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
 import '../../features/skmap/skmap_screen.dart';
+import '../../features/skos/skos_files_screen.dart';
+import '../../features/skos/skos_control_screen.dart';
 import '../../features/join/join_screen.dart';
 import '../../services/join_service.dart';
 
@@ -55,6 +57,12 @@ class AppRoutes {
 
   /// SkMap tactical map (live unit/CoT positions): /skmap
   static const skmap = '/skmap';
+
+  /// skos Files browser + corpus search (P7 access plane): /skos/files
+  static const skosFiles = '/skos/files';
+
+  /// skos control panel (per-node health/node_info): /skos/control
+  static const skosControl = '/skos/control';
 
   /// A single Space room (takes a SpaceJoin via extra): /spaces/:id
   static const spaceRoom = '/spaces/:id';
@@ -219,6 +227,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const SkMapScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.skosFiles,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const SkosFilesScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.skosControl,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const SkosControlScreen(),
             ),
           ),
           GoRoute(

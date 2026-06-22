@@ -39,6 +39,20 @@ class HubScreen extends ConsumerWidget {
         onTap: () => context.go(AppRoutes.skmap),
       ),
       _OpsTile(
+        label: 'skos Files',
+        description: 'Browse + search the sovereign disk (P7 access plane)',
+        icon: Icons.folder_special_outlined,
+        accent: SovereignColors.soulLumina,
+        onTap: () => context.go(AppRoutes.skosFiles),
+      ),
+      _OpsTile(
+        label: 'skos Control',
+        description: 'Per-node health & access-plane status',
+        icon: Icons.dns_outlined,
+        accent: SovereignColors.accentEncrypt,
+        onTap: () => context.go(AppRoutes.skosControl),
+      ),
+      _OpsTile(
         label: 'Coord Board',
         description: 'Agent coordination tasks',
         icon: Icons.dashboard_customize_outlined,
