@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'access_client.dart';
+import 'access_token_signer.dart';
 import 'skos_models.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -27,7 +28,18 @@ import 'skos_models.dart';
 /// });
 /// ```
 final accessClientProvider = Provider<AccessClient>((ref) {
-  final client = MockAccessClient();
+  // LIVE (P9): talk to each node's sk-access `/tool` over the tailnet, with the
+  // per-call capauth token minted by the local SKComms daemon (the daemon holds
+  // the OpenPGP CapAuth key the gate requires — see [AccessTokenSigner]).
+  //
+  // Read-only by default: `canWriteOverride` stays false until a write scope is
+  // granted to this identity server-side (`python -m skcomms.access.grants`).
+  // To demo offline without a daemon, swap this back to `MockAccessClient()`.
+  final signer = ref.watch(accessTokenSignerProvider);
+  final client = DaemonAccessClient(
+    tokenForCall: signer.tokenForCall,
+    canWriteOverride: false,
+  );
   ref.onDispose(client.dispose);
   return client;
 });
