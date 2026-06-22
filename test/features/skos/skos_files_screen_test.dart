@@ -242,4 +242,110 @@ void main() {
     expect(kAccessNodes['.158'], contains('100.108.59.57:9386'));
     expect(kAccessNodes['.41'], contains('100.86.156.5:9386'));
   });
+
+  group('mediaKindFor (extension → viewer surface)', () {
+    test('image extensions', () {
+      for (final p in [
+        '/x/a.png',
+        '/x/a.JPG',
+        '/x/a.jpeg',
+        '/x/a.gif',
+        '/x/a.webp',
+        '/x/a.bmp',
+      ]) {
+        expect(mediaKindFor(p), MediaKind.image, reason: p);
+      }
+    });
+
+    test('video extensions (incl. the AI-LIFE masters)', () {
+      for (final p in [
+        '/x/master.mp4',
+        '/x/clip.MOV',
+        '/x/clip.webm',
+        '/x/clip.m4v',
+        '/x/clip.mkv',
+      ]) {
+        expect(mediaKindFor(p), MediaKind.video, reason: p);
+      }
+    });
+
+    test('audio extensions', () {
+      for (final p in [
+        '/x/a.mp3',
+        '/x/a.wav',
+        '/x/a.m4a',
+        '/x/a.ogg',
+        '/x/a.flac',
+      ]) {
+        expect(mediaKindFor(p), MediaKind.audio, reason: p);
+      }
+    });
+
+    test('pdf', () {
+      expect(mediaKindFor('/x/doc.pdf'), MediaKind.pdf);
+      expect(mediaKindFor('/x/DOC.PDF'), MediaKind.pdf);
+    });
+
+    test('markdown is distinct from plain text', () {
+      expect(mediaKindFor('/x/readme.md'), MediaKind.markdown);
+      expect(mediaKindFor('/x/notes.markdown'), MediaKind.markdown);
+      expect(mediaKindFor('/x/notes.txt'), MediaKind.text);
+    });
+
+    test('code + config + extensionless resolve to text', () {
+      for (final p in [
+        '/x/main.dart',
+        '/x/app.py',
+        '/x/conf.yaml',
+        '/x/data.json',
+        '/x/LICENSE',
+        '/x/Dockerfile',
+      ]) {
+        expect(mediaKindFor(p), MediaKind.text, reason: p);
+      }
+    });
+
+    test('unknown binary falls through to other', () {
+      expect(mediaKindFor('/x/blob.bin'), MediaKind.other);
+      expect(mediaKindFor('/x/archive.zip'), MediaKind.other);
+    });
+  });
+
+  test('mediaStreamUrl builds a same-origin /media/file URL', () {
+    // NOTE: `Uri.base` is a `file:` URL under the Dart VM test runner (no
+    // origin), so we assert the path/node query encoding — the part that does
+    // not depend on origin. In the browser (the only runtime this ships on)
+    // `Uri.base.origin` is the served http(s) origin.
+    final url = mediaStreamUrl('.158', '/home/x/AI LIFE/master.mp4');
+    expect(url, contains('/media/file?'));
+    expect(url, contains('node=.158'));
+    // The path is query-encoded (space + slashes survive a round-trip).
+    final parsed = Uri.parse(url);
+    expect(parsed.queryParameters['path'], '/home/x/AI LIFE/master.mp4');
+    expect(parsed.queryParameters['node'], '.158');
+  });
+
+  testWidgets(
+      'Viewer routes an image file to the streaming image surface '
+      '(no text edit affordance)', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accessClientProvider.overrideWithValue(_FixedClient(writable: true)),
+          openFileProvider
+              .overrideWith((ref) => (node: '.158', path: '/x/pic.png')),
+        ],
+        child: const MaterialApp(home: SkosFileViewer()),
+      ),
+    );
+    await tester.pump(); // initState/build (network image load stays pending)
+
+    // The binary-media path never exposes the text Save/Edit affordance, even
+    // with a write scope granted; the lock (text read-only) is also absent.
+    expect(find.byIcon(Icons.edit_rounded), findsNothing);
+    expect(find.byIcon(Icons.lock_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.save_rounded), findsNothing);
+    // Image kind → InteractiveViewer-wrapped streaming Image surface.
+    expect(find.byType(InteractiveViewer), findsOneWidget);
+  });
 }
