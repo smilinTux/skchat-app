@@ -422,11 +422,21 @@ class _DirListing extends ConsumerWidget {
             return _EntryTile(
               entry: e,
               onTap: () {
+                // file_list entries carry only `name` (no full path), so build
+                // the child path from the current dir + name. Root entries
+                // (from list_roots) already have an absolute path — prefer it.
+                final cur = ref.read(currentPathProvider);
+                final base = (cur == null || cur.isEmpty)
+                    ? ''
+                    : cur.replaceAll(RegExp(r'/+$'), '');
+                final childPath = e.path.isNotEmpty
+                    ? e.path
+                    : (base.isEmpty ? e.name : '$base/${e.name}');
                 if (e.isDir) {
-                  ref.read(currentPathProvider.notifier).state = e.path;
+                  ref.read(currentPathProvider.notifier).state = childPath;
                 } else {
                   ref.read(openFileProvider.notifier).state =
-                      (node: node, path: e.path);
+                      (node: node, path: childPath);
                   _openViewer(context);
                 }
               },
