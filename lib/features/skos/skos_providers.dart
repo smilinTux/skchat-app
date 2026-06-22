@@ -73,7 +73,9 @@ final _dirKeyProvider = Provider<DirKey>((ref) {
 final dirListingProvider = FutureProvider<List<FsEntry>>((ref) async {
   final client = ref.watch(accessClientProvider);
   final key = ref.watch(_dirKeyProvider);
-  if (key.path == null) return client.listRoots(key.node);
+  // Null OR empty path = the node's roots (an empty breadcrumb segment must not
+  // fall through to file_list("") which errors).
+  if (key.path == null || key.path!.isEmpty) return client.listRoots(key.node);
   return client.listDir(key.node, key.path!);
 });
 

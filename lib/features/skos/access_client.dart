@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'skos_models.dart';
 
@@ -351,6 +352,22 @@ class DaemonAccessClient implements AccessClient {
     return base;
   }
 
+  /// The `/tool` endpoint. On web, route through the same-origin webui proxy
+  /// (`/access/tool`) so the app works over ANY origin — localhost, the https
+  /// funnel, a cloudflared tunnel — with no mixed-content and without the
+  /// browser needing to reach a tailnet IP directly. Native talks to the
+  /// node's sk-access endpoint directly.
+  String _toolUrl(String node) {
+    if (kIsWeb) {
+      try {
+        return '${Uri.base.origin}/access/tool';
+      } catch (_) {
+        // file: base (test runner) — fall through to the direct node URL.
+      }
+    }
+    return '${_baseUrl(node)}/tool';
+  }
+
   /// POST `/tool` `{"token", "tool", "arguments"}` to [node]'s sk-access MCP and
   /// return the decoded result payload.
   Future<dynamic> _callTool(
@@ -360,8 +377,9 @@ class DaemonAccessClient implements AccessClient {
   ) async {
     final token = await tokenForCall(node, tool, arguments);
     final resp = await _dio.post<dynamic>(
-      '${_baseUrl(node)}/tool',
+      _toolUrl(node),
       data: {
+        'node': node,
         'token': token,
         'tool': tool,
         'arguments': arguments,
