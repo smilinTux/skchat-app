@@ -68,6 +68,13 @@ dependencies:
   # the web surface uses HTML <video>/iframe embeds in watch_video_web.dart)
   video_player: ^2.9.0
 
+  # SkMap tactical surface — OpenStreetMap tiles, no API key, offline-tile
+  # capable (sovereignty: no Google/key dependency). flutter_map renders the
+  # CoT/geo unit picture (ATAK-style) in the Ops surface.
+  flutter_map: ^8.1.0
+  # Lat/Lon value type used by flutter_map markers + camera.
+  latlong2: ^0.9.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

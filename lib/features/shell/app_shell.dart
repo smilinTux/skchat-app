@@ -59,6 +59,7 @@ class AppShell extends ConsumerWidget {
     // gates (cluster / coord / recordings).
     if (location.startsWith(AppRoutes.hub) ||
         location.startsWith(AppRoutes.cluster) ||
+        location.startsWith(AppRoutes.skmap) ||
         location.startsWith(AppRoutes.coord) ||
         location.startsWith(AppRoutes.recordings) ||
         location.startsWith(AppRoutes.groups)) {

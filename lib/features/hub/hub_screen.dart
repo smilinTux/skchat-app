@@ -32,6 +32,13 @@ class HubScreen extends ConsumerWidget {
         onTap: () => context.go(AppRoutes.cluster),
       ),
       _OpsTile(
+        label: 'SkMap',
+        description: 'Tactical map — live unit positions',
+        icon: Icons.radar_outlined,
+        accent: SovereignColors.soulJarvis,
+        onTap: () => context.go(AppRoutes.skmap),
+      ),
+      _OpsTile(
         label: 'Coord Board',
         description: 'Agent coordination tasks',
         icon: Icons.dashboard_customize_outlined,
