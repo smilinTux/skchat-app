@@ -30,10 +30,12 @@ const _kDaemonUrlKey = 'skcomms_daemon_url';
 String initialDaemonUrl() {
   if (const bool.hasEnvironment('SKCOMMS_URL')) return kDefaultDaemonUrl;
   if (kIsWeb) {
-    final host = Uri.base.host;
-    if (host.isNotEmpty && host != 'localhost' && host != '127.0.0.1') {
-      return 'http://$host:9384';
-    }
+    // Same-origin: call the exact origin the app was served from. The webui
+    // reverse-proxies /api/v1 (+ /daemon, /access) to the daemon, so this
+    // works on localhost, LAN, tailnet, and the https funnel with no
+    // mixed-content and no daemon-port exposure. (Native keeps localhost:9384.)
+    final origin = Uri.base.origin;
+    if (origin.isNotEmpty && origin != 'null') return origin;
   }
   return kDefaultDaemonUrl;
 }
@@ -52,6 +54,15 @@ String normalizeDaemonUrl(String raw) {
   // Strip any trailing slash so we can append `/api/...` paths cleanly.
   while (s.endsWith('/')) {
     s = s.substring(0, s.length - 1);
+  }
+  // Heal a base that already carries the API prefix: clients append
+  // `/api/v1/...`, so a base ending in `/api` would double to `/api/api/v1`
+  // (404). This self-corrects stale persisted values from older builds.
+  if (s.endsWith('/api')) {
+    s = s.substring(0, s.length - 4);
+    while (s.endsWith('/')) {
+      s = s.substring(0, s.length - 1);
+    }
   }
   return s;
 }
