@@ -27,6 +27,8 @@ import 'widgets/conversation_subviews.dart';
 import 'widgets/typing_indicator.dart';
 import 'widgets/input_bar.dart';
 import 'message_dedup.dart';
+import 'location/location_geo.dart';
+import 'location/location_payload.dart';
 
 /// Conversation screen — shows message bubbles for a 1:1 or group chat.
 /// AppBar: soul-color avatar, name, presence, encryption indicator, and a
@@ -154,6 +156,7 @@ class ConversationScreen extends ConsumerWidget {
               }
             },
             onAttach: () => _pickAndSendAttachment(context, ref, peerId),
+            onShareLocation: () => _shareLocation(context, ref, peerId),
             onTyping: (isTyping) => ref
                 .read(skcommsSyncProvider.notifier)
                 .sendTyping(peerId: peerId, start: isTyping),
@@ -166,6 +169,134 @@ class ConversationScreen extends ConsumerWidget {
   String _myIdentity(WidgetRef ref) {
     final id = ref.read(daemonServiceProvider).localIdentity;
     return id != null ? normalizePeerKey(id) : 'me';
+  }
+
+  /// Share the device location as a typed `location` message.
+  ///
+  /// Opt-in + coarse-by-default: tapping "Share location" opens a precise-vs-
+  /// approximate chooser (Approximate is the default + the recommended option).
+  /// ONLY after a choice do we read the browser geolocation (which itself
+  /// prompts for permission). The payload coarsens client-side for an
+  /// approximate share; the server re-coarsens (defence in depth). No tracking —
+  /// a single one-shot pin.
+  Future<void> _shareLocation(
+    BuildContext context,
+    WidgetRef ref,
+    String peerId,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    final precise = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        final tt = Theme.of(sheetCtx).textTheme;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 2),
+                child: Text('Share your location',
+                    style:
+                        tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  'You choose how precise. Approximate (~1 km) is recommended.',
+                  style: TextStyle(
+                      color: SovereignColors.textTertiary, fontSize: 12),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.blur_on,
+                    color: SovereignColors.accentEncrypt),
+                title: const Text('Approximate',
+                    style: TextStyle(color: SovereignColors.textPrimary)),
+                subtitle: const Text('Rounded to ~1 km (default)',
+                    style: TextStyle(
+                        color: SovereignColors.textTertiary, fontSize: 12)),
+                onTap: () => Navigator.of(sheetCtx).pop(false),
+              ),
+              ListTile(
+                leading: const Icon(Icons.my_location,
+                    color: SovereignColors.accentWarning),
+                title: const Text('Precise',
+                    style: TextStyle(color: SovereignColors.textPrimary)),
+                subtitle: const Text('Your exact coordinates',
+                    style: TextStyle(
+                        color: SovereignColors.textTertiary, fontSize: 12)),
+                onTap: () => Navigator.of(sheetCtx).pop(true),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    // Dismissed the chooser → no permission prompt, nothing read. (Opt-in.)
+    if (precise == null) return;
+
+    GeoFix fix;
+    try {
+      fix = await readCurrentLocation();
+    } on GeoError catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(e.denied
+            ? 'Location permission denied — nothing was shared.'
+            : 'Could not get your location: ${e.message}'),
+      ));
+      return;
+    } catch (e) {
+      messenger.showSnackBar(
+          SnackBar(content: Text('Could not get your location: $e')));
+      return;
+    }
+
+    final payload = LocationPayload.fromFix(
+      lat: fix.lat,
+      lon: fix.lon,
+      precise: precise,
+      accuracyM: fix.accuracyM,
+    );
+    final me = _myIdentity(ref);
+    final tempId = '${DateTime.now().millisecondsSinceEpoch}';
+
+    // Optimistic insert as a location-typed message (body fallback + rich).
+    ref.read(conversationProvider(peerId).notifier).addMessage(
+          ChatMessage(
+            id: tempId,
+            peerId: peerId,
+            content: payload.toBody(),
+            timestamp: DateTime.now(),
+            isOutbound: true,
+            deliveryStatus: 'sent',
+            contentType: 'location',
+            rich: payload.toRich(),
+            conversationId: peerId,
+            sender: me,
+          ),
+        );
+
+    final result = await ref.read(skcommsSyncProvider.notifier).sendMessage(
+          peerId: peerId,
+          content: payload.toBody(),
+          contentType: 'location',
+          rich: payload.toRich(),
+        );
+    if (result != null &&
+        (result.echoedMessage != null || result.reply != null)) {
+      await ref.read(conversationProvider(peerId).notifier).ingestSendResponse(
+            peerId,
+            echoedMessage: result.echoedMessage,
+            reply: result.reply,
+          );
+    }
   }
 
   Future<void> _pickAndSendAttachment(
