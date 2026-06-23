@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -693,13 +695,25 @@ class _NodeChip extends StatelessWidget {
   }
 }
 
-// ── Viewer (opened as a route-less modal page) ──────────────────────────────
+// ── Viewer (opened as a full-screen route ABOVE the tab shell) ──────────────
 
+/// Open the media viewer as a full-screen route on the **root** navigator so it
+/// sits ABOVE the [ShellRoute] (and therefore above the bottom nav bar) — the
+/// old bug rendered the viewer inside the shell's child Navigator, so the
+/// `Chats/Spaces/Activity/Ops/Me` bar + iOS browser chrome overlapped the media
+/// controls. `rootNavigator: true` pushes onto the top-level Navigator, whose
+/// route covers the whole screen; an opaque black [PageRouteBuilder] gives the
+/// immersive black backdrop with a quick fade-in.
 void _openViewer(BuildContext context) {
-  Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => const SkosFileViewer(),
+  Navigator.of(context, rootNavigator: true).push(
+    PageRouteBuilder<void>(
+      opaque: true,
+      barrierColor: Colors.black,
       fullscreenDialog: true,
+      transitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (_, _, _) => const SkosFileViewer(),
+      transitionsBuilder: (_, animation, _, child) =>
+          FadeTransition(opacity: animation, child: child),
     ),
   );
 }
@@ -747,8 +761,22 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   // Whether we've jumped to the tapped file's index after the listing loaded.
   bool _seekedToInitial = false;
 
+  // ── Immersive-viewer chrome state ──────────────────────────────────────────
+  // Whether the translucent top/bottom bars are shown. Start visible so the
+  // user always sees close/options/play on entry.
+  bool _chromeVisible = true;
+  // True while the current image page is pinch-zoomed (disables page swipe).
+  bool _zoomed = false;
+  // The active page's video/audio controller (null for images / while loading);
+  // drives the bottom control bar + center play button.
+  VideoPlayerController? _activeController;
+  // Auto-hide timer for the chrome during video playback.
+  Timer? _hideTimer;
+
   @override
   void dispose() {
+    _hideTimer?.cancel();
+    _activeController?.removeListener(_onActiveTick);
     _controller.dispose();
     _pageController?.dispose();
     super.dispose();
@@ -861,10 +889,23 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
     );
   }
 
-  /// The swipeable gallery scaffold for image/video/audio. Builds the media
+  /// The immersive full-screen gallery for image/video/audio. Builds the media
   /// list from the current directory listing, opens at the tapped file, and
   /// lazily renders each page by its kind (off-screen video controllers are
   /// disposed by [_MediaPlayer] going out of the keep-alive window).
+  ///
+  /// Layout (a [Stack] over an opaque black backdrop, NO Scaffold/AppBar so the
+  /// tab shell can never show through):
+  ///   * the [PageView] of media fills the screen; each page fits its media with
+  ///     `BoxFit.contain` in the box BETWEEN the top bar and the bottom control
+  ///     bar (so nothing is ever clipped),
+  ///   * a translucent **top bar** (close ✕ · filename + `node · i/total` ·
+  ///     options ⋮) pinned under the top safe-area inset,
+  ///   * a translucent **bottom control bar** (video/audio only:
+  ///     play/pause + scrubbable progress + `m:ss / m:ss`) pinned above the
+  ///     bottom safe-area inset,
+  ///   * a large **center play ▶ overlay** on a paused video.
+  /// Bars auto-hide after ~3s during video playback; any tap toggles them.
   Widget _buildGalleryScaffold(FileRef open) {
     final node = ref.watch(selectedNodeProvider);
     final currentDir = ref.watch(currentPathProvider);
@@ -900,62 +941,184 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
     }
     final current = items[_pageIndex.clamp(0, items.length - 1)];
 
-    return Scaffold(
-      backgroundColor: SovereignColors.surfaceBase,
-      appBar: AppBar(
-        backgroundColor: SovereignColors.surfaceCard,
-        foregroundColor: SovereignColors.textPrimary,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              current.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            Text(
-              items.length > 1
-                  ? '${current.node} · ${_pageIndex + 1} / ${items.length}'
-                  : '${current.node} · ${current.path}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 11, color: SovereignColors.textSecondary),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_vert_rounded),
-            tooltip: 'Options',
-            onPressed: () => showMediaOptionsSheet(context, current),
+    final viewPadding = MediaQuery.viewPaddingOf(context);
+
+    return PopScope(
+      // Default pop behaviour (back gesture / ✕ both close the route).
+      canPop: true,
+      child: Scaffold(
+        // Opaque black backdrop. The route itself is also opaque (PageRouteBuilder
+        // opaque:true) so the shell never shows through.
+        backgroundColor: Colors.black,
+        // Do NOT add a bottomNavigationBar / AppBar — this is the WHOLE screen.
+        body: GestureDetector(
+          // A tap anywhere that isn't the media surface still toggles the bars,
+          // so the user can always summon the close/options affordances.
+          behavior: HitTestBehavior.deferToChild,
+          onTap: _toggleChrome,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // ── Media pager (fills the screen; each page insets its media to
+              //    sit between the bars via the padding we pass down). ─────────
+              PageView.builder(
+                controller: controller,
+                // Disable swipe while an image is pinch-zoomed.
+                physics: _zoomed
+                    ? const NeverScrollableScrollPhysics()
+                    : const PageScrollPhysics(),
+                itemCount: items.length,
+                onPageChanged: (i) {
+                  setState(() {
+                    _pageIndex = i;
+                    _zoomed = false;
+                    _activeController = null;
+                  });
+                  // Keep openFileProvider in sync so the options sheet + any
+                  // external observers track the visible page.
+                  ref.read(openFileProvider.notifier).state =
+                      (node: items[i].node, path: items[i].path);
+                  // Re-show chrome on page change so controls are findable.
+                  _revealChrome(autoHide: false);
+                },
+                itemBuilder: (context, i) {
+                  final item = items[i];
+                  final active = i == _pageIndex;
+                  // Long-press anywhere on the page → the options sheet (also
+                  // reachable via the top bar ⋮).
+                  return GestureDetector(
+                    onLongPress: () => showMediaOptionsSheet(context, item),
+                    behavior: HitTestBehavior.deferToChild,
+                    child: _GalleryPage(
+                    item: item,
+                    active: active,
+                    // Inset so the media's contain-box never overlaps the bars.
+                    topInset: viewPadding.top + _kTopBarHeight,
+                    bottomInset: viewPadding.bottom +
+                        (item.kind == MediaKind.image
+                            ? 0
+                            : _kBottomBarHeight),
+                    onTapSurface: _onSurfaceTap,
+                    onZoomChanged: (z) {
+                      if (z != _zoomed) setState(() => _zoomed = z);
+                    },
+                    onControllerReady: (c) {
+                      // Track the active page's controller so the bottom bar +
+                      // center play button can drive it. Wire playback auto-hide.
+                      if (active) {
+                        setState(() => _activeController = c);
+                        c.removeListener(_onActiveTick);
+                        c.addListener(_onActiveTick);
+                      }
+                    },
+                  ),
+                  );
+                },
+              ),
+
+              // ── Bottom control bar (video/audio) — pinned above safe area. ──
+              if (_activeController != null && current.kind != MediaKind.image)
+                _AnimatedChrome(
+                  visible: _chromeVisible,
+                  alignment: Alignment.bottomCenter,
+                  child: _BottomControlBar(
+                    controller: _activeController!,
+                    bottomInset: viewPadding.bottom,
+                    onToggle: _togglePlayActive,
+                  ),
+                ),
+
+              // ── Center play ▶ overlay (paused video only). ──────────────────
+              if (_activeController != null &&
+                  current.kind != MediaKind.image &&
+                  !_activeController!.value.isPlaying)
+                Center(
+                  child: _CenterPlayButton(onTap: _togglePlayActive),
+                ),
+
+              // ── Top bar (close · title+counter · options) — over safe area. ─
+              _AnimatedChrome(
+                visible: _chromeVisible,
+                alignment: Alignment.topCenter,
+                child: _TopBar(
+                  topInset: viewPadding.top,
+                  title: current.name,
+                  subtitle: items.length > 1
+                      ? '${current.node} · ${_pageIndex + 1} / ${items.length}'
+                      : '${current.node} · ${current.path}',
+                  onClose: () =>
+                      Navigator.of(context, rootNavigator: true).maybePop(),
+                  onOptions: () => showMediaOptionsSheet(context, current),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: PageView.builder(
-        controller: controller,
-        itemCount: items.length,
-        onPageChanged: (i) {
-          // Keep openFileProvider in sync so the options sheet + any external
-          // observers track the visible page.
-          setState(() => _pageIndex = i);
-          ref.read(openFileProvider.notifier).state =
-              (node: items[i].node, path: items[i].path);
-        },
-        itemBuilder: (context, i) {
-          final item = items[i];
-          final active = i == _pageIndex;
-          return GestureDetector(
-            onLongPress: () => showMediaOptionsSheet(context, item),
-            // Opaque so long-press registers over the whole page area.
-            behavior: HitTestBehavior.opaque,
-            child: _GalleryPage(item: item, active: active),
-          );
-        },
+        ),
       ),
     );
+  }
+
+  /// Toggle the play/pause state of the active page's controller (the gesture
+  /// that unlocks web audio — see [_MediaPlayerState._togglePlay] notes). On
+  /// PLAY we start the auto-hide timer; on PAUSE we keep chrome up.
+  void _togglePlayActive() {
+    final c = _activeController;
+    if (c == null || !c.value.isInitialized) return;
+    if (c.value.isPlaying) {
+      c.pause();
+      _revealChrome(autoHide: false);
+    } else {
+      c.play();
+      _revealChrome(autoHide: true);
+    }
+  }
+
+  /// Rebuild on the active controller's ticks so the bottom bar + center play
+  /// button reflect real playback state. When playback STARTS we arm auto-hide.
+  void _onActiveTick() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// Show the chrome; if [autoHide] and a video is playing, schedule a fade-out.
+  void _revealChrome({required bool autoHide}) {
+    _hideTimer?.cancel();
+    if (!_chromeVisible) setState(() => _chromeVisible = true);
+    final c = _activeController;
+    if (autoHide && c != null && c.value.isPlaying) {
+      _hideTimer = Timer(const Duration(seconds: 3), () {
+        if (!mounted) return;
+        // Only auto-hide while still playing — never strand a paused user.
+        if (_activeController?.value.isPlaying ?? false) {
+          setState(() => _chromeVisible = false);
+        }
+      });
+    }
+  }
+
+  /// Tap toggles chrome. Hiding is only allowed while a video is playing — for
+  /// images / paused video we keep the bars so close/play stay reachable.
+  void _toggleChrome() {
+    final c = _activeController;
+    final playing = c?.value.isPlaying ?? false;
+    if (_chromeVisible && playing) {
+      _hideTimer?.cancel();
+      setState(() => _chromeVisible = false);
+    } else {
+      _revealChrome(autoHide: playing);
+    }
+  }
+
+  /// Tap on the video/audio surface: when PAUSED, the tap PLAYS (the standard
+  /// gallery affordance — same as the center button); when PLAYING, it toggles
+  /// the chrome (so the user can pause via the bottom bar / find close).
+  void _onSurfaceTap() {
+    final c = _activeController;
+    if (c != null && c.value.isInitialized && !c.value.isPlaying) {
+      _togglePlayActive();
+    } else {
+      _toggleChrome();
+    }
   }
 
   Widget _buildBody(FileRef open, MediaKind kind, bool isTextKind) {
@@ -1028,48 +1191,66 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
 
 // ── Gallery page (one swipeable media surface) ───────────────────────────────
 
-/// One page of the swipe gallery. Renders the [item] by its kind. The video/
-/// audio player is only mounted when [active] (the visible page) so off-screen
-/// pages never decode/play — swiping away disposes the previous controller.
+/// One page of the swipe gallery. Renders the [item] by its kind, fitting the
+/// media with `BoxFit.contain` inside the box BETWEEN the bars (the parent
+/// passes [topInset] / [bottomInset]) so it is NEVER clipped or overlapped. The
+/// video/audio player is only mounted when [active] (the visible page) so
+/// off-screen pages never decode/play — swiping away disposes the controller.
 class _GalleryPage extends StatelessWidget {
-  const _GalleryPage({required this.item, required this.active});
+  const _GalleryPage({
+    required this.item,
+    required this.active,
+    required this.topInset,
+    required this.bottomInset,
+    required this.onTapSurface,
+    required this.onZoomChanged,
+    required this.onControllerReady,
+  });
   final MediaItem item;
   final bool active;
+  final double topInset;
+  final double bottomInset;
+  final VoidCallback onTapSurface;
+  final ValueChanged<bool> onZoomChanged;
+  final ValueChanged<VideoPlayerController> onControllerReady;
 
   @override
   Widget build(BuildContext context) {
     final url = mediaStreamUrl(item.node, item.path);
-    switch (item.kind) {
-      case MediaKind.image:
-        return _ImageView(url: url);
-      case MediaKind.video:
-      case MediaKind.audio:
-        if (!active) {
-          // Off-screen: a light placeholder, no VideoPlayerController alive.
-          return Center(
-            child: Icon(
-              item.kind == MediaKind.audio
-                  ? Icons.audiotrack_rounded
-                  : Icons.movie_creation_outlined,
-              size: 72,
-              color: SovereignColors.textTertiary,
-            ),
-          );
-        }
-        // ValueKey(url) → swapping pages tears down the old controller and
-        // builds a fresh one for the now-active page.
-        return _MediaPlayer(
-          key: ValueKey(url),
+    // The fit-box: media lives between the top bar and the bottom control bar.
+    final body = switch (item.kind) {
+      MediaKind.image => _ImageView(
           url: url,
-          audioOnly: item.kind == MediaKind.audio,
-        );
-      case MediaKind.pdf:
-      case MediaKind.markdown:
-      case MediaKind.text:
-      case MediaKind.other:
-        // Not a gallery kind, but guard anyway → never crash.
-        return _ImageView(url: url);
-    }
+          onZoomChanged: onZoomChanged,
+        ),
+      MediaKind.video || MediaKind.audio => active
+          ? _MediaPlayer(
+              key: ValueKey(url),
+              url: url,
+              audioOnly: item.kind == MediaKind.audio,
+              onTapSurface: onTapSurface,
+              onControllerReady: onControllerReady,
+            )
+          : Center(
+              child: Icon(
+                item.kind == MediaKind.audio
+                    ? Icons.audiotrack_rounded
+                    : Icons.movie_creation_outlined,
+                size: 72,
+                color: SovereignColors.textTertiary,
+              ),
+            ),
+      // Not a gallery kind, but guard anyway → never crash.
+      MediaKind.pdf ||
+      MediaKind.markdown ||
+      MediaKind.text ||
+      MediaKind.other =>
+        _ImageView(url: url, onZoomChanged: onZoomChanged),
+    };
+    return Padding(
+      padding: EdgeInsets.only(top: topInset, bottom: bottomInset),
+      child: body,
+    );
   }
 }
 
@@ -1311,17 +1492,55 @@ String _mimeFor(String path) {
 
 // ── Image surface (streaming, same-origin) ───────────────────────────────────
 
-class _ImageView extends StatelessWidget {
-  const _ImageView({required this.url});
+class _ImageView extends StatefulWidget {
+  const _ImageView({required this.url, this.onZoomChanged});
   final String url;
+
+  /// Notifies the gallery when the image is pinch-zoomed (scale > ~1) so it can
+  /// disable page-swipe while zoomed. Optional (standalone callers omit it).
+  final ValueChanged<bool>? onZoomChanged;
+
+  @override
+  State<_ImageView> createState() => _ImageViewState();
+}
+
+class _ImageViewState extends State<_ImageView> {
+  final _transform = TransformationController();
+  bool _zoomed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _transform.addListener(_onTransform);
+  }
+
+  void _onTransform() {
+    // Detect zoom from the matrix scale (m[0]); report state transitions only.
+    final scale = _transform.value.getMaxScaleOnAxis();
+    final z = scale > 1.02;
+    if (z != _zoomed) {
+      _zoomed = z;
+      widget.onZoomChanged?.call(z);
+    }
+  }
+
+  @override
+  void dispose() {
+    _transform.removeListener(_onTransform);
+    _transform.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: InteractiveViewer(
+        transformationController: _transform,
         maxScale: 6,
+        // Pinch-zoom for images; double-tap-anywhere outside scaling is handled
+        // by the gallery's tap-to-toggle-chrome (deferToChild).
         child: Image.network(
-          url,
+          widget.url,
           fit: BoxFit.contain,
           loadingBuilder: (context, child, progress) {
             if (progress == null) return child;
@@ -1354,9 +1573,22 @@ typedef MediaControllerFactory = VideoPlayerController Function(Uri uri);
 MediaControllerFactory? debugMediaControllerFactory;
 
 class _MediaPlayer extends StatefulWidget {
-  const _MediaPlayer({super.key, required this.url, required this.audioOnly});
+  const _MediaPlayer({
+    super.key,
+    required this.url,
+    required this.audioOnly,
+    this.onTapSurface,
+    this.onControllerReady,
+  });
   final String url;
   final bool audioOnly;
+
+  /// Called on a tap of the media surface (the parent toggles chrome / plays).
+  final VoidCallback? onTapSurface;
+
+  /// Reports the initialized controller up to the gallery so the immersive
+  /// bottom bar + center play button can drive it. Fired once init completes.
+  final ValueChanged<VideoPlayerController>? onControllerReady;
 
   @override
   State<_MediaPlayer> createState() => _MediaPlayerState();
@@ -1378,11 +1610,11 @@ class _MediaPlayerState extends State<_MediaPlayer> {
     // from the range-capable endpoint (no full download → the 300 MB masters
     // seek fine). We:
     //   1. build the controller,
-    //   2. attach a listener so the play/pause icon + progress + position
-    //      readout track ACTUAL playback state (the old code never did this, so
-    //      the controls looked dead — they never reflected play/pause/seek),
-    //   3. await initialize() BEFORE showing controls, then setState so the UI
-    //      rebuilds with the ready controller.
+    //   2. attach a listener so the surface rebuilds (the active page's
+    //      controls live in the parent gallery, but we still rebuild the
+    //      surface on ticks for the video frame),
+    //   3. await initialize() BEFORE showing controls, then report the
+    //      controller up so the parent can wire the bottom bar + center play.
     final uri = Uri.parse(widget.url);
     final factory = debugMediaControllerFactory;
     final c =
@@ -1396,14 +1628,20 @@ class _MediaPlayerState extends State<_MediaPlayer> {
         return;
       }
       setState(() => _ready = true);
+      // Hand the live controller to the gallery (post-frame so the parent's
+      // setState lands after this build).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onControllerReady?.call(c);
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e);
     }
   }
 
-  /// Rebuild on every controller tick so the icon/progress/position reflect the
-  /// real state (play, pause, seek, buffering, completion). Guarded by mounted.
+  /// Rebuild on every controller tick so the video frame stays current. The
+  /// play/pause icon + progress + position readout live in the parent gallery's
+  /// bottom bar (driven by the same controller), guarded by mounted.
   void _onTick() {
     if (mounted) setState(() {});
   }
@@ -1413,22 +1651,6 @@ class _MediaPlayerState extends State<_MediaPlayer> {
     _controller?.removeListener(_onTick);
     _controller?.dispose();
     super.dispose();
-  }
-
-  /// Toggle play/pause. On web the browser blocks UNMUTED autoplay without a
-  /// user gesture — but this runs from a tap (button or surface), which IS the
-  /// gesture, so calling play() here both starts playback and produces sound.
-  /// We never rely on autoplay; the explicit tap is required. The listener
-  /// (_onTick) drives the icon flip — we do NOT wrap the async play()/pause() in
-  /// setState (that was the old bug: it set state before the state had changed).
-  void _togglePlay() {
-    final c = _controller;
-    if (c == null || !_ready) return;
-    if (c.value.isPlaying) {
-      c.pause();
-    } else {
-      c.play();
-    }
   }
 
   @override
@@ -1447,7 +1669,7 @@ class _MediaPlayerState extends State<_MediaPlayer> {
         ? Center(
             child: Icon(
               isPlaying ? Icons.graphic_eq_rounded : Icons.audiotrack_rounded,
-              size: 96,
+              size: 120,
               color: SovereignColors.soulLumina,
             ),
           )
@@ -1457,57 +1679,13 @@ class _MediaPlayerState extends State<_MediaPlayer> {
             child: VideoPlayer(c),
           );
 
-    return Column(
-      children: [
-        Expanded(
-          child: GestureDetector(
-            // Tapping the surface toggles play/pause too — also a user gesture,
-            // so it unlocks web audio just like the button.
-            onTap: _togglePlay,
-            behavior: HitTestBehavior.opaque,
-            child: Center(child: surface),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: VideoProgressIndicator(
-            c,
-            allowScrubbing: true,
-            colors: const VideoProgressColors(
-              playedColor: SovereignColors.soulLumina,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          child: Row(
-            children: [
-              Text(
-                _fmtDuration(c.value.position),
-                style: const TextStyle(
-                    color: SovereignColors.textSecondary, fontSize: 12),
-              ),
-              const Spacer(),
-              Text(
-                _fmtDuration(c.value.duration),
-                style: const TextStyle(
-                    color: SovereignColors.textSecondary, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 16),
-          child: IconButton.filled(
-            iconSize: 32,
-            tooltip: isPlaying ? 'Pause' : 'Play',
-            icon: Icon(isPlaying
-                ? Icons.pause_rounded
-                : Icons.play_arrow_rounded),
-            onPressed: _togglePlay,
-          ),
-        ),
-      ],
+    // The surface fills the box BETWEEN the bars (the gallery already inset us);
+    // BoxFit.contain via AspectRatio keeps the whole frame visible. A tap is a
+    // user gesture (unlocks web audio) — the parent decides play vs toggle.
+    return GestureDetector(
+      onTap: widget.onTapSurface,
+      behavior: HitTestBehavior.opaque,
+      child: Center(child: surface),
     );
   }
 }
@@ -1522,6 +1700,231 @@ String _fmtDuration(Duration d) {
   final body =
       h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$s' : '$m:$s';
   return neg ? '-$body' : body;
+}
+
+// ── Immersive viewer chrome (top bar / bottom control bar / center play) ─────
+
+/// Heights of the translucent bars (excluding the safe-area insets the parent
+/// adds). Used both to size the bars and to inset the media's contain-box so
+/// the media is shrunk to fit BETWEEN them — never overlapped.
+const double _kTopBarHeight = 56;
+const double _kBottomBarHeight = 96;
+
+/// Fades + slides the chrome in/out for the auto-hide / tap-to-toggle behaviour.
+/// Stays mounted (IgnorePointer when hidden) so toggling is cheap + the hit
+/// area is gone while invisible.
+class _AnimatedChrome extends StatelessWidget {
+  const _AnimatedChrome({
+    required this.visible,
+    required this.alignment,
+    required this.child,
+  });
+  final bool visible;
+  final Alignment alignment;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignment,
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: AnimatedOpacity(
+          opacity: visible ? 1 : 0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+/// The translucent top bar over the media: close ✕ (left), filename + a
+/// `node · i / total` counter (center), options ⋮ (right). Respects the top
+/// safe-area inset ([topInset]) so the notch / status bar never clips it.
+class _TopBar extends StatelessWidget {
+  const _TopBar({
+    required this.topInset,
+    required this.title,
+    required this.subtitle,
+    required this.onClose,
+    required this.onOptions,
+  });
+  final double topInset;
+  final String title;
+  final String subtitle;
+  final VoidCallback onClose;
+  final VoidCallback onOptions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(top: topInset),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.72),
+            Colors.black.withValues(alpha: 0.0),
+          ],
+        ),
+      ),
+      child: SizedBox(
+        height: _kTopBarHeight,
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.close_rounded,
+                  color: SovereignColors.textPrimary),
+              tooltip: 'Close',
+              onPressed: onClose,
+            ),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: SovereignColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: SovereignColors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.more_vert_rounded,
+                  color: SovereignColors.textPrimary),
+              tooltip: 'Options',
+              onPressed: onOptions,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The translucent bottom control bar for video/audio: play/pause, a scrubbable
+/// [VideoProgressIndicator], and the `m:ss / m:ss` position/duration readout.
+/// Pinned ABOVE the bottom safe-area inset ([bottomInset]) so the iOS home
+/// indicator / browser chrome never sits over the controls (the original bug).
+class _BottomControlBar extends StatelessWidget {
+  const _BottomControlBar({
+    required this.controller,
+    required this.bottomInset,
+    required this.onToggle,
+  });
+  final VideoPlayerController controller;
+  final double bottomInset;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = controller.value;
+    final isPlaying = v.isPlaying;
+    return Container(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.78),
+            Colors.black.withValues(alpha: 0.0),
+          ],
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 16, 10),
+        child: Row(
+          children: [
+            IconButton(
+              key: const Key('skosBottomBarPlayPause'),
+              iconSize: 34,
+              tooltip: isPlaying ? 'Pause' : 'Play',
+              color: SovereignColors.textPrimary,
+              icon: Icon(isPlaying
+                  ? Icons.pause_rounded
+                  : Icons.play_arrow_rounded),
+              onPressed: onToggle,
+            ),
+            Expanded(
+              child: VideoProgressIndicator(
+                controller,
+                allowScrubbing: true,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                colors: const VideoProgressColors(
+                  playedColor: SovereignColors.soulLumina,
+                  bufferedColor: SovereignColors.textTertiary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              '${_fmtDuration(v.position)} / ${_fmtDuration(v.duration)}',
+              style: const TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 12,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The large circular center play overlay shown on a paused video — the
+/// standard gallery affordance. Tapping it starts playback (+ sound).
+class _CenterPlayButton extends StatelessWidget {
+  const _CenterPlayButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      key: const Key('skosCenterPlay'),
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: 76,
+        height: 76,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withValues(alpha: 0.5),
+          border: Border.all(
+            color: SovereignColors.textPrimary.withValues(alpha: 0.85),
+            width: 2,
+          ),
+        ),
+        child: const Icon(
+          Icons.play_arrow_rounded,
+          size: 46,
+          color: SovereignColors.textPrimary,
+        ),
+      ),
+    );
+  }
 }
 
 // ── Other / unknown binary ───────────────────────────────────────────────────

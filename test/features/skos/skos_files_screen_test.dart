@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:skchat/features/skos/access_client.dart';
 import 'package:skchat/features/skos/skos_files_screen.dart';
 import 'package:skchat/features/skos/skos_models.dart';
+import 'package:skchat/core/theme/glass_widgets.dart';
 import 'package:skchat/features/skos/skos_providers.dart';
 import 'package:video_player/video_player.dart';
 
@@ -427,6 +428,45 @@ void main() {
   });
 
   testWidgets(
+      'Immersive viewer is full-screen: no bottom-nav in its tree, opaque '
+      'black backdrop, top bar with close + options', (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+      const FsEntry(name: 'b.png', path: '/m/b.png', type: FsEntryType.file),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accessClientProvider.overrideWithValue(_FixedClient()),
+          currentPathProvider.overrideWith((ref) => '/m'),
+          dirListingProvider.overrideWith((ref) async => entries),
+          openFileProvider
+              .overrideWith((ref) => (node: '.158', path: '/m/a.png')),
+        ],
+        child: const MaterialApp(home: SkosFileViewer()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // The immersive viewer renders NO tab bottom-nav (it opens ABOVE the shell
+    // on the root navigator, so the Chats/Spaces/Activity/Ops/Me bar — the
+    // GlassNavBar — must never appear in its widget tree).
+    expect(find.byType(GlassNavBar), findsNothing);
+
+    // Opaque black backdrop (immersive). The viewer Scaffold is black.
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(scaffold.backgroundColor, const Color(0xFF000000));
+    // No AppBar — the chrome is the custom translucent top bar instead.
+    expect(scaffold.appBar, isNull);
+
+    // Top bar affordances: close ✕ + options ⋮ (+ the counter).
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.more_vert_rounded), findsOneWidget);
+    expect(find.textContaining('1 / 2'), findsOneWidget);
+  });
+
+  testWidgets(
       'Viewer builds a PageView over the directory media list', (tester) async {
     final entries = <FsEntry>[
       const FsEntry(
@@ -544,26 +584,65 @@ void main() {
           child: const MaterialApp(home: SkosFileViewer()),
         ),
       );
-      // build → dirListing future resolves → initialize() completes → controls.
+      // build → dirListing future resolves → initialize() completes →
+      // onControllerReady (post-frame) → the immersive bottom control bar +
+      // center play button mount.
+      await tester.pump();
       await tester.pump();
       await tester.pump();
       await tester.pump();
 
-      // Initialized but not playing → the Play icon is shown, isPlaying false.
+      // Initialized but not playing → the bottom-bar Play button + the
+      // prominent center play overlay are both present; isPlaying false.
       expect(fake.value.isPlaying, isFalse);
-      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      final bottomBtn = find.byKey(const Key('skosBottomBarPlayPause'));
+      expect(bottomBtn, findsOneWidget);
+      expect(find.byKey(const Key('skosCenterPlay')), findsOneWidget);
 
-      // Tap Play → controller starts; the listener flips the icon to Pause.
-      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      // Tap the bottom-bar Play button → controller starts; the listener flips
+      // the icon to Pause and the center overlay fades out.
+      await tester.tap(bottomBtn);
       await tester.pump();
       expect(fake.value.isPlaying, isTrue);
       expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      expect(find.byKey(const Key('skosCenterPlay')), findsNothing);
 
-      // Tap Pause → controller pauses; the icon flips back to Play.
-      await tester.tap(find.byIcon(Icons.pause_rounded));
+      // Tap Pause → controller pauses; the play icon comes back.
+      await tester.tap(bottomBtn);
       await tester.pump();
       expect(fake.value.isPlaying, isFalse);
-      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    });
+
+    testWidgets('center play overlay starts playback (paused video affordance)',
+        (tester) async {
+      final entries = <FsEntry>[
+        const FsEntry(name: 'clip.mp4', path: '/m/clip.mp4', type: FsEntryType.file),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accessClientProvider.overrideWithValue(_FixedClient()),
+            currentPathProvider.overrideWith((ref) => '/m'),
+            dirListingProvider.overrideWith((ref) async => entries),
+            openFileProvider
+                .overrideWith((ref) => (node: '.158', path: '/m/clip.mp4')),
+          ],
+          child: const MaterialApp(home: SkosFileViewer()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      // The big center play button is shown while paused → tapping it plays.
+      final center = find.byKey(const Key('skosCenterPlay'));
+      expect(center, findsOneWidget);
+      await tester.tap(center);
+      await tester.pump();
+      expect(fake.value.isPlaying, isTrue);
+      // Once playing, the center overlay is gone (standard gallery behaviour).
+      expect(find.byKey(const Key('skosCenterPlay')), findsNothing);
     });
 
     testWidgets('audio shows a scrubbable progress + play/pause that works',
@@ -586,10 +665,11 @@ void main() {
       await tester.pump();
       await tester.pump();
       await tester.pump();
+      await tester.pump();
 
       // Audio surface: a real scrubbable progress indicator + working toggle.
       expect(find.byType(VideoProgressIndicator), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.tap(find.byKey(const Key('skosBottomBarPlayPause')));
       await tester.pump();
       expect(fake.value.isPlaying, isTrue);
     });
