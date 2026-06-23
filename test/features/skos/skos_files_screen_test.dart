@@ -953,4 +953,99 @@ void main() {
     expect(find.text('skos Files'), findsOneWidget);
     expect(container.read(currentPathProvider), dir);
   });
+
+  // ── Interactive swipe-up-a-folder (iOS swipe-back) gesture ────────────────
+
+  group('swipe right → up a folder (interactive)', () {
+    /// Mount the Files browser at a NON-root dir whose parent is the exposed
+    /// root, with rootsProvider warmed so the gesture can clamp synchronously.
+    /// Returns the container so the test can read currentPathProvider after the
+    /// drag settles.
+    ProviderContainer filesAt(String dir) => ProviderContainer(overrides: [
+          accessClientProvider.overrideWithValue(_FixedClient()),
+          currentPathProvider.overrideWith((ref) => dir),
+          rootsProvider('.158').overrideWith((ref) async => ['/home/x/clawd']),
+          rootsProvider(kDefaultAccessNode)
+              .overrideWith((ref) async => ['/home/x/clawd']),
+        ]);
+
+    testWidgets('a rightward drag PAST threshold navigates up to the parent',
+        (tester) async {
+      const dir = '/home/x/clawd/docs';
+      final container = filesAt(dir);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: SkosFilesScreen()),
+      ));
+      await tester.pumpAndSettle();
+      expect(container.read(currentPathProvider), dir);
+
+      // Drag the listing far to the RIGHT (well past 1/3 of the screen width),
+      // then let the commit slide-out + navigation settle. The horizontal drag
+      // is owned by the swipe wrapper (the listing's ListView keeps vertical).
+      await tester.drag(
+        find.byType(SkosFilesScreen),
+        const Offset(700, 0),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+
+      // Committed → we went up one folder (parent clamped to the root).
+      expect(container.read(currentPathProvider), '/home/x/clawd');
+    });
+
+    testWidgets('a small drag UNDER threshold leaves the path unchanged',
+        (tester) async {
+      const dir = '/home/x/clawd/docs';
+      final container = filesAt(dir);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: SkosFilesScreen()),
+      ));
+      await tester.pumpAndSettle();
+      expect(container.read(currentPathProvider), dir);
+
+      // A short rightward drag (well under 1/3 width) must snap back, NOT
+      // navigate. A slow timed drag registers no fling velocity.
+      await tester.timedDrag(
+        find.byType(SkosFilesScreen),
+        const Offset(30, 0),
+        const Duration(milliseconds: 600),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+
+      // Unchanged — still in the same folder (peek-and-let-go → stays).
+      expect(container.read(currentPathProvider), dir);
+    });
+
+    testWidgets('the parent-name peek appears mid-drag', (tester) async {
+      const dir = '/home/x/clawd/docs';
+      final container = filesAt(dir);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: SkosFilesScreen()),
+      ));
+      await tester.pumpAndSettle();
+
+      // Begin a drag (do not release) and assert the "up to {parent}" peek is
+      // revealed proportional to the in-progress gesture.
+      final start = tester.getCenter(find.byType(SkosFilesScreen));
+      final gesture = await tester.startGesture(start);
+      await gesture.moveBy(const Offset(120, 0));
+      await tester.pump();
+
+      // Parent of /home/x/clawd/docs is the root /home/x/clawd → "up to clawd".
+      expect(find.textContaining('up to clawd'), findsOneWidget);
+
+      // Release → snaps back, path unchanged.
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(container.read(currentPathProvider), dir);
+    });
+  });
+
 }

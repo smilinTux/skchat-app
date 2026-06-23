@@ -240,23 +240,284 @@ class SkosFilesScreen extends ConsumerWidget {
             Expanded(
               child: searching
                   ? const _SearchResults()
-                  // Swipe RIGHT anywhere on the listing → go up a folder
-                  // (parent dir, clamped to the exposed roots). Vertical scroll
-                  // is unaffected (different gesture axis).
-                  : GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onHorizontalDragEnd: (d) {
-                        if ((d.primaryVelocity ?? 0) > 250) {
-                          ref.read(currentPathProvider.notifier).state =
-                              parentPathWithinRoots(path, roots);
-                        }
-                      },
-                      child: const _DirListing(),
-                    ),
+                  // Interactive swipe RIGHT (iOS swipe-back feel) → go up a
+                  // folder. The listing follows the finger, a "going up" peek is
+                  // revealed on the left, and releasing past threshold (or a
+                  // fling) commits the parent navigation; otherwise it springs
+                  // back. Vertical scroll is unaffected (orthogonal axis → the
+                  // ListView owns it). See [_SwipeUpDir].
+                  : _SwipeUpDir(node: node, path: path, roots: roots),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Interactive "swipe right → up a folder" gesture ──────────────────────────
+
+/// Wraps the [_DirListing] in an iOS-swipe-back-style INTERACTIVE gesture:
+/// dragging RIGHT slides the whole listing to the right (following the finger,
+/// with rubber-band resistance past a clamp), revealing a "going up" peek on the
+/// LEFT (a back chevron + the parent folder's name). Releasing PAST the commit
+/// threshold — or a rightward fling — animates the page the rest of the way out
+/// and navigates up one folder ([parentPathWithinRoots]); a release UNDER the
+/// threshold springs back to rest (the "peek and let go → stays" feel). At an
+/// exposed root (nowhere further up) the drag always rubber-bands back.
+///
+/// Vertical list scrolling is untouched: this owns only the HORIZONTAL drag, so
+/// the inner [ListView] keeps the vertical axis. The peek + commit-threshold
+/// emphasis make it obvious, mid-gesture, what releasing will do — fixing the
+/// old fire-on-fling version the user could not tell was working.
+class _SwipeUpDir extends ConsumerStatefulWidget {
+  const _SwipeUpDir({
+    required this.node,
+    required this.path,
+    required this.roots,
+  });
+
+  /// The node whose listing is shown (only used to derive the parent label when
+  /// the parent is the roots list).
+  final String node;
+
+  /// The current directory path (null = already at the roots list).
+  final String? path;
+
+  /// The exposed-root paths for [node] (warmed in the parent build) — used to
+  /// clamp the parent navigation so it never escapes an allowlisted root.
+  final List<String> roots;
+
+  @override
+  ConsumerState<_SwipeUpDir> createState() => _SwipeUpDirState();
+}
+
+class _SwipeUpDirState extends ConsumerState<_SwipeUpDir>
+    with SingleTickerProviderStateMixin {
+  /// Drives the snap-back (→ 0) and the commit slide-out (→ screen width). While
+  /// the finger is down we set [_offset] directly; on release we hand off to the
+  /// controller so the motion is a smooth spring/curve.
+  late final AnimationController _anim;
+  Animation<double>? _slide;
+
+  /// Current horizontal translation of the listing (px). >0 = slid right. 0 at
+  /// rest. Mutated live during the drag, animated on release.
+  double _offset = 0;
+
+  /// True between an accepted release and the post-animation navigation, so the
+  /// drag callbacks ignore stray events while the commit slide-out plays.
+  bool _committing = false;
+
+  /// The width captured at drag start, for thresholds / clamping / slide-out.
+  double _width = 1;
+
+  // Fraction of the width the page must be dragged past to COMMIT on release.
+  static const double _kCommitFraction = 1 / 3;
+  // Hard clamp on how far the page can slide (fraction of width) — beyond the
+  // clamp the drag rubber-bands (logarithmic falloff) so it never runs away.
+  static const double _kMaxFraction = 0.6;
+  // Fling velocity (px/s) that commits regardless of distance (a quick flick).
+  static const double _kFlingVelocity = 600;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    )..addListener(() {
+        final s = _slide;
+        if (s != null) setState(() => _offset = s.value);
+      });
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  /// Whether there IS a folder to go up to from the current path (clamped to the
+  /// roots). When false (already at the roots list) the gesture only rubber-
+  /// bands — it never navigates.
+  bool get _canGoUp =>
+      parentPathWithinRoots(widget.path, widget.roots) != null;
+
+  /// The label shown in the peek: the parent folder's name, or "roots" when the
+  /// parent IS the roots list (one level under a root, or null target).
+  String get _parentLabel {
+    final parent = parentPathWithinRoots(widget.path, widget.roots);
+    if (parent == null) return 'roots';
+    return _basename(parent);
+  }
+
+  /// The px distance past which a RELEASE commits (1/3 of the width).
+  double get _commitThreshold => _width * _kCommitFraction;
+
+  /// Apply rubber-band resistance beyond the clamp so the page slows as it is
+  /// pulled further, never exceeding ~[_kMaxFraction] + a small overshoot.
+  double _rubberBand(double raw) {
+    final cap = _width * _kMaxFraction;
+    if (raw <= cap) return raw;
+    final over = raw - cap;
+    // Logarithmic falloff on the overshoot (feels like iOS edge resistance).
+    return cap + (cap * 0.18) * (1 - 1 / (1 + over / cap));
+  }
+
+  void _onStart(DragStartDetails d) {
+    if (_committing) return;
+    _anim.stop();
+    _width = MediaQuery.sizeOf(context).width;
+    if (_width <= 0) _width = 1;
+  }
+
+  void _onUpdate(DragUpdateDetails d) {
+    if (_committing) return;
+    final next = _offset + d.delta.dx;
+    // Only rightward travel matters ("up" is to the right). Left of rest gives a
+    // tiny resistance then clamps at 0 so the list never slides off-left.
+    if (next <= 0) {
+      setState(() => _offset = next < -24 ? -24 : next);
+      return;
+    }
+    setState(() => _offset = _rubberBand(next));
+  }
+
+  void _onEnd(DragEndDetails d) {
+    if (_committing) return;
+    final v = d.primaryVelocity ?? 0;
+    final flung = v > _kFlingVelocity;
+    final pastThreshold = _offset > _commitThreshold;
+    if (_canGoUp && (flung || pastThreshold)) {
+      _commit();
+    } else {
+      _snapBack();
+    }
+  }
+
+  /// Spring the page back to rest (0) — the "peek and let go → stays" behaviour
+  /// (also the rubber-band at the root, and any sub-threshold release).
+  void _snapBack() {
+    _slide = Tween<double>(begin: _offset, end: 0).animate(
+      CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic),
+    );
+    _anim
+      ..reset()
+      ..forward();
+  }
+
+  /// Slide the page the rest of the way out, THEN navigate up + reset offset so
+  /// the freshly-loaded parent listing appears at rest (not mid-slide).
+  void _commit() {
+    setState(() => _committing = true);
+    _slide = Tween<double>(begin: _offset, end: _width).animate(
+      CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic),
+    );
+    _anim
+      ..reset()
+      ..forward().whenComplete(() {
+        if (!mounted) return;
+        ref.read(currentPathProvider.notifier).state =
+            parentPathWithinRoots(widget.path, widget.roots);
+        setState(() {
+          _offset = 0;
+          _committing = false;
+        });
+      });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Progress 0→1 toward the commit threshold (drives the peek fade/scale and
+    // the threshold-crossed emphasis). Capped at 1 once past the threshold.
+    final threshold = _commitThreshold <= 0 ? 1.0 : _commitThreshold;
+    final progress = (_offset / threshold).clamp(0.0, 1.0);
+    final pastThreshold = _offset >= threshold && _canGoUp;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      // Horizontal-only drag → the vertical axis stays with the inner ListView,
+      // so list scrolling is completely unaffected.
+      onHorizontalDragStart: _onStart,
+      onHorizontalDragUpdate: _onUpdate,
+      onHorizontalDragEnd: _onEnd,
+      child: Stack(
+        children: [
+          // ── The "going up" peek, revealed BEHIND the sliding page on the
+          //    left. Fades + scales in with drag progress; brightens + flips the
+          //    icon once past the commit threshold so "release now = go up" is
+          //    unmistakable. Hidden when there is nowhere up (at the roots). ──
+          if (_offset > 0 && _canGoUp)
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 20),
+                  child: Opacity(
+                    opacity: (0.25 + progress * 0.75).clamp(0.0, 1.0),
+                    child: Transform.scale(
+                      scale: 0.85 + progress * 0.15,
+                      child: _GoingUpPeek(
+                        parentLabel: _parentLabel,
+                        armed: pastThreshold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          // ── The directory listing itself, translated to follow the finger. ──
+          Transform.translate(
+            offset: Offset(_offset, 0),
+            child: const _DirListing(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The peek hint shown behind the sliding listing during a swipe-up: a back
+/// chevron + "up to {parentName}" (or "to roots"). When [armed] (the drag has
+/// crossed the commit threshold) it brightens to the soul accent and flips the
+/// icon to an upward arrow, so the user can see at a glance that releasing now
+/// goes up a folder.
+class _GoingUpPeek extends StatelessWidget {
+  const _GoingUpPeek({required this.parentLabel, required this.armed});
+
+  final String parentLabel;
+  final bool armed;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        armed ? SovereignColors.soulLumina : SovereignColors.textSecondary;
+    final toRoots = parentLabel == 'roots';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          armed
+              ? Icons.arrow_upward_rounded
+              : Icons.chevron_left_rounded,
+          color: color,
+          size: 30,
+        ),
+        const SizedBox(width: 6),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 180),
+          child: Text(
+            toRoots ? 'to roots' : 'up to $parentLabel',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 14,
+              fontWeight: armed ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
