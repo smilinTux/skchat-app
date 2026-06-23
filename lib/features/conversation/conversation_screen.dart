@@ -12,6 +12,7 @@ import '../../services/skcomms_client.dart';
 import '../calls/call_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
+import '../groups/groups_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomms_sync.dart';
 import '../../core/chat_text.dart';
@@ -240,6 +241,90 @@ class ConversationScreen extends ConsumerWidget {
         );
   }
 
+  /// Promote this 1:1 into a group by adding a member (SAME room id).
+  ///
+  /// Opens a peer picker; on selection it calls
+  /// `POST /api/v1/groups/{peerId}/members`, which the backend treats as a
+  /// promote-1:1 (no new object id, existing history carried). The new group
+  /// then appears in the chat/groups list and we land on the group info screen.
+  Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final chats = ref.read(chatsProvider);
+    // Candidate members: other 1:1 conversations (not this one, not groups).
+    final candidates = chats
+        .where((c) => !c.isGroup && c.peerId != peerId)
+        .toList();
+
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        final tt = Theme.of(sheetCtx).textTheme;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Text('Add people',
+                    style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  'Adding someone turns this chat into a group.',
+                  style: tt.bodySmall
+                      ?.copyWith(color: SovereignColors.textTertiary),
+                ),
+              ),
+              if (candidates.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('No other peers to add yet.'),
+                )
+              else
+                ...candidates.map((c) => ListTile(
+                      leading: SoulAvatar(
+                        soulColor: c.resolvedSoulColor,
+                        initials: c.resolvedInitials,
+                        isAgent: c.isAgent,
+                        isOnline: c.isOnline,
+                        size: 40,
+                      ),
+                      title: Text(c.displayName),
+                      subtitle: Text(c.isAgent ? 'Agent' : 'Human',
+                          style: TextStyle(
+                              color: SovereignColors.textTertiary,
+                              fontSize: 12)),
+                      onTap: () => Navigator.of(sheetCtx).pop(c.peerId),
+                    )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null) return;
+
+    final client = ref.read(skcommsClientProvider);
+    try {
+      // The backend promotes the 1:1 (peerId) into a group of the same id.
+      await client.addGroupMember(peerId, identity: picked);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not create group: $e')));
+      return;
+    }
+    // Refresh the lists so the new group appears (is_group:true).
+    await ref.read(groupsProvider.notifier).refresh();
+    await ref.read(chatsProvider.notifier).refresh();
+    if (!context.mounted) return;
+    context.push(AppRoutes.groupInfoPath(peerId));
+  }
+
   PreferredSizeWidget _buildAppBar(
     BuildContext context,
     WidgetRef ref,
@@ -298,6 +383,21 @@ class ConversationScreen extends ConsumerWidget {
       actions: [
         const EncryptBadge(size: 16),
         const SizedBox(width: 4),
+        // Group info (groups) OR "add people" → promote a 1:1 to a group.
+        if (conversation.isGroup == true)
+          IconButton(
+            icon: const Icon(Icons.group_outlined),
+            tooltip: 'Group info',
+            onPressed: () => context.push(AppRoutes.groupInfoPath(peerId)),
+          )
+        else
+          Consumer(
+            builder: (context, ref, _) => IconButton(
+              icon: const Icon(Icons.group_add_outlined),
+              tooltip: 'Add people (make a group)',
+              onPressed: () => _promoteToGroup(context, ref),
+            ),
+          ),
         if (conversation.isAgent == true) ModelPickerButton(peerId: peerId),
         Consumer(
           builder: (context, ref, _) => IconButton(
