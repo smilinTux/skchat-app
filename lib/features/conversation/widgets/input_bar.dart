@@ -108,8 +108,6 @@ class _InputBarState extends State<InputBar> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
-
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
@@ -123,7 +121,10 @@ class _InputBarState extends State<InputBar> {
               ),
             ),
           ),
-          padding: EdgeInsets.fromLTRB(8, 8, 8, 8 + bottomPadding),
+          // Bottom inset (home indicator) is handled by SafeArea below — do
+          // NOT also add MediaQuery.padding.bottom here or the composer floats
+          // up with a gap beneath it ("input too high").
+          padding: const EdgeInsets.all(8),
           child: SafeArea(
             top: false,
             child: Row(
