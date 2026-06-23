@@ -11,6 +11,7 @@ class InputBar extends StatefulWidget {
     super.key,
     required this.onSend,
     this.onAttach,
+    this.onShareLocation,
     this.onTyping,
     this.soulColor = SovereignColors.soulLumina,
   });
@@ -27,6 +28,11 @@ class InputBar extends StatefulWidget {
   /// The conversation screen owns the actual pick→upload→send flow (it has the
   /// recipient + riverpod client).  Null leaves the button disabled.
   final Future<void> Function()? onAttach;
+
+  /// Called when the user picks "Share location" from the +-menu. The
+  /// conversation screen owns the geolocation prompt → precise/approx choice
+  /// → typed `location` send. Null hides the location entry.
+  final Future<void> Function()? onShareLocation;
 
   final Color soulColor;
 
@@ -97,6 +103,61 @@ class _InputBarState extends State<InputBar> {
     }
   }
 
+  /// Open the +-menu: attach a file, or share location. With only one option
+  /// available we invoke it directly (no needless sheet).
+  Future<void> _openPlusMenu() async {
+    final hasAttach = widget.onAttach != null;
+    final hasLocation = widget.onShareLocation != null;
+    if (hasAttach && !hasLocation) return _attach();
+    if (hasLocation && !hasAttach) return _shareLocation();
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.attach_file_rounded,
+                  color: SovereignColors.textSecondary),
+              title: const Text('Attach file',
+                  style: TextStyle(color: SovereignColors.textPrimary)),
+              onTap: () => Navigator.of(sheetCtx).pop('attach'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.location_on_outlined,
+                  color: SovereignColors.textSecondary),
+              title: const Text('Share location',
+                  style: TextStyle(color: SovereignColors.textPrimary)),
+              subtitle: const Text(
+                'Approximate by default — you choose precise',
+                style: TextStyle(
+                    color: SovereignColors.textTertiary, fontSize: 12),
+              ),
+              onTap: () => Navigator.of(sheetCtx).pop('location'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'attach') {
+      await _attach();
+    } else if (choice == 'location') {
+      await _shareLocation();
+    }
+  }
+
+  Future<void> _shareLocation() async {
+    final onShare = widget.onShareLocation;
+    if (onShare == null) return;
+    await onShare();
+  }
+
   /// Enter sends on desktop; Shift+Enter inserts a newline.
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent &&
@@ -132,7 +193,7 @@ class _InputBarState extends State<InputBar> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Attachment
+                // + menu (attach file / share location)
                 IconButton(
                   icon: _attaching
                       ? SizedBox(
@@ -144,11 +205,14 @@ class _InputBarState extends State<InputBar> {
                                 AlwaysStoppedAnimation<Color>(widget.soulColor),
                           ),
                         )
-                      : const Icon(Icons.attach_file_rounded),
+                      : const Icon(Icons.add_rounded),
                   color: SovereignColors.textSecondary,
-                  onPressed:
-                      widget.onAttach == null || _attaching ? null : _attach,
-                  tooltip: 'Attach file',
+                  onPressed: (widget.onAttach == null &&
+                              widget.onShareLocation == null) ||
+                          _attaching
+                      ? null
+                      : _openPlusMenu,
+                  tooltip: 'Add',
                 ),
 
                 // Text field with explicit focus management

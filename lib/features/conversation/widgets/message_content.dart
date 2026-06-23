@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/theme.dart';
 import '../../../core/chat_text.dart';
 import '../../../models/chat_message.dart';
+import '../location/location_payload.dart';
+import 'location_card.dart';
 
 /// Renders a message's body **by `content_type`** -- the GOLDEN RULE.
 ///
@@ -32,6 +34,7 @@ class MessageContent extends StatelessWidget {
     'markdown',
     'md',
     'system',
+    'location',
   };
 
   bool get _isKnown => knownTypes.contains(message.contentType.toLowerCase());
@@ -41,6 +44,15 @@ class MessageContent extends StatelessWidget {
     final ct = message.contentType.toLowerCase();
 
     switch (ct) {
+      case 'location':
+        // Phase 4: render a map-pin card. If the rich payload is missing/garbled
+        // we fall through to the body fallback (Golden rule) — a location with no
+        // coordinates still shows its `body` text.
+        final loc = LocationPayload.tryParse(message.rich);
+        if (loc != null) {
+          return LocationCard(payload: loc, textColor: textColor);
+        }
+        return _PlainBody(text: _bodyText(), color: textColor);
       case 'system':
         return _SystemLine(text: _bodyText(), color: textColor);
       case 'text':
