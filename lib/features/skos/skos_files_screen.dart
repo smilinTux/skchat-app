@@ -225,6 +225,9 @@ class SkosFilesScreen extends ConsumerWidget {
     final query = ref.watch(searchQueryProvider);
     final searching = query.trim().isNotEmpty;
 
+    // Keep the roots list warm so swipe-up-a-folder can clamp synchronously.
+    final roots = ref.watch(rootsProvider(node)).valueOrNull ?? const <String>[];
+
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       body: SafeArea(
@@ -237,7 +240,19 @@ class SkosFilesScreen extends ConsumerWidget {
             Expanded(
               child: searching
                   ? const _SearchResults()
-                  : const _DirListing(),
+                  // Swipe RIGHT anywhere on the listing → go up a folder
+                  // (parent dir, clamped to the exposed roots). Vertical scroll
+                  // is unaffected (different gesture axis).
+                  : GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onHorizontalDragEnd: (d) {
+                        if ((d.primaryVelocity ?? 0) > 250) {
+                          ref.read(currentPathProvider.notifier).state =
+                              parentPathWithinRoots(path, roots);
+                        }
+                      },
+                      child: const _DirListing(),
+                    ),
             ),
           ],
         ),
