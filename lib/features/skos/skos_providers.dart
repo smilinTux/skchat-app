@@ -79,6 +79,27 @@ final dirListingProvider = FutureProvider<List<FsEntry>>((ref) async {
   return client.listDir(key.node, key.path!);
 });
 
+/// The exposed-root absolute paths for a node (cached) — used to clamp "go up a
+/// folder" so it never navigates above an allowlisted root.
+final rootsProvider = FutureProvider.family<List<String>, String>((ref, node) async {
+  final client = ref.watch(accessClientProvider);
+  final roots = await client.listRoots(node);
+  return roots.map((e) => e.path).toList();
+});
+
+/// Navigate up one folder from [current], clamped to [roots]: at an exposed
+/// root (or above) it returns null (the roots list); otherwise the parent dir.
+String? parentPathWithinRoots(String? current, List<String> roots) {
+  if (current == null || current.isEmpty) return null; // already at roots
+  if (roots.contains(current)) return null; // at a root → up = roots list
+  final i = current.lastIndexOf('/');
+  final parent = i > 0 ? current.substring(0, i) : '';
+  if (parent.isEmpty) return null;
+  final withinRoot =
+      roots.any((r) => parent == r || parent.startsWith('$r/'));
+  return withinRoot ? parent : null;
+}
+
 /// (node, path) of the file currently open in the viewer, or null.
 typedef FileRef = ({String node, String path});
 
