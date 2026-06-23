@@ -16,6 +16,7 @@ Future<void> showMessageActions({
   required Color soulColor,
   VoidCallback? onReply,
   void Function(String emoji)? onReact,
+  VoidCallback? onEdit,
 }) {
   HapticFeedback.mediumImpact();
   return Navigator.of(context, rootNavigator: true).push(
@@ -25,6 +26,7 @@ Future<void> showMessageActions({
       soulColor: soulColor,
       onReply: onReply,
       onReact: onReact,
+      onEdit: onEdit,
     ),
   );
 }
@@ -39,6 +41,7 @@ class _MessageActionsRoute extends PopupRoute<void> {
     required this.soulColor,
     this.onReply,
     this.onReact,
+    this.onEdit,
   });
 
   final ChatMessage message;
@@ -46,6 +49,7 @@ class _MessageActionsRoute extends PopupRoute<void> {
   final Color soulColor;
   final VoidCallback? onReply;
   final void Function(String emoji)? onReact;
+  final VoidCallback? onEdit;
 
   @override
   Color? get barrierColor => Colors.black.withValues(alpha: 0.28);
@@ -94,6 +98,12 @@ class _MessageActionsRoute extends PopupRoute<void> {
               });
             }
           : null,
+      onEdit: onEdit != null
+          ? () {
+              navigator.pop();
+              onEdit!();
+            }
+          : null,
       onCopy: () {
         navigator.pop();
         Clipboard.setData(ClipboardData(text: message.content));
@@ -119,6 +129,7 @@ class _MessageActionsOverlay extends StatelessWidget {
     required this.soulColor,
     this.onReply,
     this.onReact,
+    this.onEdit,
     required this.onCopy,
   });
 
@@ -128,6 +139,7 @@ class _MessageActionsOverlay extends StatelessWidget {
   final Color soulColor;
   final VoidCallback? onReply;
   final VoidCallback? onReact;
+  final VoidCallback? onEdit;
   final VoidCallback onCopy;
 
   @override
@@ -174,6 +186,7 @@ class _MessageActionsOverlay extends StatelessWidget {
                 soulColor: soulColor,
                 onReply: onReply,
                 onReact: onReact,
+                onEdit: onEdit,
                 onCopy: onCopy,
               ),
             ),
@@ -192,12 +205,14 @@ class _ActionsMenu extends StatelessWidget {
     required this.soulColor,
     this.onReply,
     this.onReact,
+    this.onEdit,
     required this.onCopy,
   });
 
   final Color soulColor;
   final VoidCallback? onReply;
   final VoidCallback? onReact;
+  final VoidCallback? onEdit;
   final VoidCallback onCopy;
 
   @override
@@ -243,6 +258,15 @@ class _ActionsMenu extends StatelessWidget {
                   soulColor: soulColor,
                   onTap: onReply!,
                   isFirst: onReact == null,
+                ),
+                _Divider(soulColor: soulColor),
+              ],
+              if (onEdit != null) ...[
+                _ActionTile(
+                  icon: Icons.edit_outlined,
+                  label: 'Edit',
+                  soulColor: soulColor,
+                  onTap: onEdit!,
                 ),
                 _Divider(soulColor: soulColor),
               ],

@@ -4,7 +4,13 @@ import 'package:flutter/services.dart';
 import '../../../core/theme/theme.dart';
 
 /// Emoji options shown in the reaction picker.
-const List<String> _kReactionEmojis = ['❤️', '🔥', '👍', '😂', '😮', '😢', '🙏'];
+const List<String> _kReactionEmojis = ['❤️', '🔥', '👍', '😂', '😮', '🙏'];
+
+/// Larger set shown in the overflow grid picker.
+const List<String> _kOverflowEmojis = [
+  '❤️', '🔥', '👍', '👎', '😂', '😮', '😢', '🙏', '😍', '🤔', '🎉', '👀',
+  '💯', '🙌', '😅', '😎', '🥳', '🤯', '😴', '🤝', '✅', '❌', '⚡', '🚀',
+];
 
 /// Shows a frosted-glass row of emoji reactions anchored to [anchorRect].
 ///
@@ -180,13 +186,18 @@ class _PickerRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: _kReactionEmojis
-                .map((emoji) => _EmojiButton(
-                      emoji: emoji,
-                      soulColor: soulColor,
-                      onTap: () => onSelect(emoji),
-                    ))
-                .toList(),
+            children: [
+              ..._kReactionEmojis.map((emoji) => _EmojiButton(
+                    emoji: emoji,
+                    soulColor: soulColor,
+                    onTap: () => onSelect(emoji),
+                  )),
+              // Overflow: opens the full emoji grid.
+              _OverflowButton(
+                soulColor: soulColor,
+                onSelect: onSelect,
+              ),
+            ],
           ),
         ),
       ),
@@ -262,6 +273,112 @@ class _EmojiButtonState extends State<_EmojiButton>
           height: 36,
           child: Center(
             child: Text(widget.emoji, style: const TextStyle(fontSize: 22)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Overflow button + full-grid picker
+
+class _OverflowButton extends StatelessWidget {
+  const _OverflowButton({required this.soulColor, required this.onSelect});
+
+  final Color soulColor;
+  final void Function(String emoji) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        HapticFeedback.selectionClick();
+        // Close the row picker, then open the grid sheet.
+        Navigator.of(context, rootNavigator: true).pop();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          showModalBottomSheet<void>(
+            context: context,
+            backgroundColor: Colors.transparent,
+            builder: (_) => _EmojiGridSheet(
+              soulColor: soulColor,
+              onSelect: onSelect,
+            ),
+          );
+        });
+      },
+      child: SizedBox(
+        width: 36,
+        height: 36,
+        child: Center(
+          child: Icon(
+            Icons.add_circle_outline,
+            size: 22,
+            color: soulColor.withValues(alpha: 0.8),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmojiGridSheet extends StatelessWidget {
+  const _EmojiGridSheet({required this.soulColor, required this.onSelect});
+
+  final Color soulColor;
+  final void Function(String emoji) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: SovereignColors.surfaceRaised.withValues(alpha: 0.96),
+            border: Border(
+              top: BorderSide(color: soulColor.withValues(alpha: 0.25)),
+            ),
+          ),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            12 + MediaQuery.of(context).padding.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: SovereignColors.textTertiary,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 14),
+              GridView.count(
+                shrinkWrap: true,
+                crossAxisCount: 8,
+                children: _kOverflowEmojis
+                    .map((e) => GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            HapticFeedback.mediumImpact();
+                            Navigator.of(context).pop();
+                            onSelect(e);
+                          },
+                          child: Center(
+                            child: Text(e, style: const TextStyle(fontSize: 24)),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
           ),
         ),
       ),

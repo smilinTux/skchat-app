@@ -19,6 +19,8 @@ const String _kAttachPrefix = "__ATTACH__:";
 /// and must never render as ordinary chat text.
 const String _kReactPrefix = "__REACT__:";
 const String _kTypingPrefix = "__TYPING__:";
+const String _kEditPrefix = "__EDIT__:";
+const String _kReceiptPrefix = "__RECEIPT__:";
 
 /// A bare UUID token (delivery receipt / message-id envelope) — never chat text.
 final RegExp _kUuidOnly = RegExp(
@@ -55,6 +57,8 @@ String? displayTextFor(String? raw) {
   // never shown as a chat bubble or list preview.
   if (trimmed.startsWith(_kReactPrefix)) return null;
   if (trimmed.startsWith(_kTypingPrefix)) return null;
+  if (trimmed.startsWith(_kEditPrefix)) return null;
+  if (trimmed.startsWith(_kReceiptPrefix)) return null;
 
   // Attachment sentinel (__ATTACH__:{json}). The conversation bubble renders a
   // file card from this; for list previews we surface a short "📎 filename"

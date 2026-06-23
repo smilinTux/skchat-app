@@ -7,24 +7,30 @@ import '../../core/theme/theme.dart';
 import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
 import '../../models/call_state.dart';
+import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
 import '../calls/call_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomms_sync.dart';
+import '../../core/chat_text.dart';
 import 'conversation_provider.dart';
+import 'reply_state_provider.dart';
 import 'widgets/model_picker_button.dart';
 import 'widgets/message_bubble.dart';
+import 'widgets/reply_preview.dart';
+import 'widgets/thread_view.dart';
+import 'widgets/conversation_subviews.dart';
 import 'widgets/typing_indicator.dart';
 import 'widgets/input_bar.dart';
 import 'message_dedup.dart';
 
 /// Conversation screen — shows message bubbles for a 1:1 or group chat.
-/// AppBar shows soul-color avatar, name, presence, and encryption indicator.
-/// Messages: outbound right (user's soul-color tint), inbound left (glass + accent edge).
-/// Typing indicator: personality-aware per PRD.
-/// Input bar: glass-surface, bottom-pinned.
+/// AppBar: soul-color avatar, name, presence, encryption indicator, and a
+/// header menu opening the Media / Files / Links / Pinned sub-views.
+/// Message rows carry the full interaction kit (swipe-reply, react, edit,
+/// receipts, thread). Reply composer chip sits above the input bar.
 class ConversationScreen extends ConsumerWidget {
   const ConversationScreen({super.key, required this.peerId});
 
@@ -38,28 +44,40 @@ class ConversationScreen extends ConsumerWidget {
       orElse: () => conversations.first,
     );
     final messages = dedupForDisplay(ref.watch(conversationProvider(peerId)));
+    final replyTarget = ref.watch(replyStateProvider(peerId));
     final soul = conversation.resolvedSoulColor;
+    final me = _myIdentity(ref);
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
-      appBar: _buildAppBar(context, conversation, soul),
+      appBar: _buildAppBar(context, ref, conversation, soul, messages),
       body: Column(
         children: [
-          // Message list
           Expanded(
             child: _MessageList(
               messages: messages,
               soulColor: soul,
-              isTyping: conversation.isTyping,
+              userSoulColor: SovereignColors.soulChef,
+              myIdentity: me,
               peerName: conversation.displayName,
               isAgent: conversation.isAgent,
               onReact: (messageId, emoji) => ref
                   .read(conversationProvider(peerId).notifier)
                   .react(messageId, emoji),
+              onReply: (message) =>
+                  ref.read(replyStateProvider(peerId).notifier).setReply(message),
+              onEdit: (messageId, body) => ref
+                  .read(conversationProvider(peerId).notifier)
+                  .editMessage(messageId, body),
+              onOpenThread: (threadId) => showThreadView(
+                context: context,
+                ref: ref,
+                threadId: threadId,
+                soulColor: soul,
+              ),
             ),
           ),
 
-          // Typing indicator strip
           if (conversation.isTyping)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -73,27 +91,44 @@ class ConversationScreen extends ConsumerWidget {
               ),
             ),
 
-          // Input bar — adds message optimistically, then sends to daemon.
+          // Reply composer chip (quotes the message being replied to).
+          if (replyTarget != null)
+            ReplyPreview(
+              replyMessage: replyTarget,
+              soulColor: soul,
+              onCancel: () =>
+                  ref.read(replyStateProvider(peerId).notifier).clear(),
+            ),
+
           InputBar(
             soulColor: soul,
             onSend: (text) async {
+              final reply = ref.read(replyStateProvider(peerId));
               final tempId = '${DateTime.now().millisecondsSinceEpoch}';
-              // Optimistic insert so the user sees the message immediately.
+              // Optimistic insert (carries reply_to_id so the quote renders).
               ref.read(conversationProvider(peerId).notifier).addMessage(
-                ChatMessage(
-                  id: tempId,
-                  peerId: peerId,
-                  content: text,
-                  timestamp: DateTime.now(),
-                  isOutbound: true,
-                  deliveryStatus: 'sent',
-                ),
-              );
-              // Fire-and-forget to daemon; delivery status updated on next poll.
+                    ChatMessage(
+                      id: tempId,
+                      peerId: peerId,
+                      content: text,
+                      timestamp: DateTime.now(),
+                      isOutbound: true,
+                      deliveryStatus: 'sent',
+                      replyToId: reply?.id,
+                      threadId: reply?.threadId,
+                      conversationId: peerId,
+                      sender: me,
+                    ),
+                  );
+              // Fire-and-forget to the daemon; carry reply_to_id/thread_id.
               ref.read(skcommsSyncProvider.notifier).sendMessage(
-                peerId: peerId,
-                content: text,
-              );
+                    peerId: peerId,
+                    content: text,
+                    inReplyTo: reply?.id,
+                    threadId: reply?.threadId,
+                  );
+              // Clear the reply chip after sending.
+              ref.read(replyStateProvider(peerId).notifier).clear();
             },
             onAttach: () => _pickAndSendAttachment(context, ref, peerId),
             onTyping: (isTyping) => ref
@@ -105,11 +140,11 @@ class ConversationScreen extends ConsumerWidget {
     );
   }
 
-  /// Pick a file, upload it to the daemon, then send an attachment-reference
-  /// message so both sides render a [FileTransferBubble] for the transfer.
-  ///
-  /// Uses byte data (web has no file paths) so the same path works on every
-  /// platform.  Optimistically inserts the bubble on success.
+  String _myIdentity(WidgetRef ref) {
+    final id = ref.read(daemonServiceProvider).localIdentity;
+    return id != null ? normalizePeerKey(id) : 'me';
+  }
+
   Future<void> _pickAndSendAttachment(
     BuildContext context,
     WidgetRef ref,
@@ -126,7 +161,7 @@ class ConversationScreen extends ConsumerWidget {
       );
       return;
     }
-    if (picked == null || picked.files.isEmpty) return; // user cancelled
+    if (picked == null || picked.files.isEmpty) return;
 
     final file = picked.files.first;
     final bytes = file.bytes;
@@ -146,9 +181,7 @@ class ConversationScreen extends ConsumerWidget {
         filename: file.name,
       );
     } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Upload failed: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('Upload failed: $e')));
       return;
     }
 
@@ -169,29 +202,29 @@ class ConversationScreen extends ConsumerWidget {
     final body = ref0.encode();
     final tempId = '${DateTime.now().millisecondsSinceEpoch}';
 
-    // Optimistic insert so the sender sees the attachment bubble immediately.
     ref.read(conversationProvider(peerId).notifier).addMessage(
-      ChatMessage(
-        id: tempId,
-        peerId: peerId,
-        content: body,
-        timestamp: DateTime.now(),
-        isOutbound: true,
-        deliveryStatus: 'sent',
-      ),
-    );
+          ChatMessage(
+            id: tempId,
+            peerId: peerId,
+            content: body,
+            timestamp: DateTime.now(),
+            isOutbound: true,
+            deliveryStatus: 'sent',
+          ),
+        );
 
-    // Deliver the attachment-reference message over the normal transport.
     ref.read(skcommsSyncProvider.notifier).sendMessage(
-      peerId: peerId,
-      content: body,
-    );
+          peerId: peerId,
+          content: body,
+        );
   }
 
   PreferredSizeWidget _buildAppBar(
     BuildContext context,
+    WidgetRef ref,
     conversation,
     Color soul,
+    List<ChatMessage> messages,
   ) {
     final tt = Theme.of(context).textTheme;
 
@@ -244,9 +277,7 @@ class ConversationScreen extends ConsumerWidget {
       actions: [
         const EncryptBadge(size: 16),
         const SizedBox(width: 4),
-        // Reply-model picker — only for AI agents (Lumina/Opus).
         if (conversation.isAgent == true) ModelPickerButton(peerId: peerId),
-        // Voice call button — initiates call and navigates to outgoing screen.
         Consumer(
           builder: (context, ref, _) => IconButton(
             icon: const Icon(Icons.call_outlined),
@@ -258,16 +289,15 @@ class ConversationScreen extends ConsumerWidget {
                 orElse: () => conversations.first,
               );
               ref.read(callProvider.notifier).initiateCall(
-                peerId: peerId,
-                peerName: conv.displayName,
-                peerSoulColor: conv.resolvedSoulColor,
-                type: CallType.voice,
-              );
+                    peerId: peerId,
+                    peerName: conv.displayName,
+                    peerSoulColor: conv.resolvedSoulColor,
+                    type: CallType.voice,
+                  );
               context.push(AppRoutes.outgoingCallPath(peerId));
             },
           ),
         ),
-        // Video call button.
         Consumer(
           builder: (context, ref, _) => IconButton(
             icon: const Icon(Icons.videocam_outlined),
@@ -279,16 +309,15 @@ class ConversationScreen extends ConsumerWidget {
                 orElse: () => conversations.first,
               );
               ref.read(callProvider.notifier).initiateCall(
-                peerId: peerId,
-                peerName: conv.displayName,
-                peerSoulColor: conv.resolvedSoulColor,
-                type: CallType.video,
-              );
+                    peerId: peerId,
+                    peerName: conv.displayName,
+                    peerSoulColor: conv.resolvedSoulColor,
+                    type: CallType.video,
+                  );
               context.push(AppRoutes.outgoingCallPath(peerId));
             },
           ),
         ),
-        // LiveKit SFU group/agent call button.
         IconButton(
           icon: const Icon(Icons.meeting_room_outlined),
           tooltip: 'Agent room (LiveKit)',
@@ -305,10 +334,23 @@ class ConversationScreen extends ConsumerWidget {
             );
           },
         ),
-        IconButton(
+        // Header menu — per-conversation sub-views.
+        PopupMenuButton<int>(
           icon: const Icon(Icons.more_vert_rounded),
-          onPressed: () {},
           tooltip: 'More options',
+          color: SovereignColors.surfaceRaised,
+          onSelected: (i) => showConversationSubviews(
+            context: context,
+            messages: messages,
+            soulColor: soul,
+            initialIndex: i,
+          ),
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: 0, child: _MenuRow(Icons.photo_library_outlined, 'Media')),
+            PopupMenuItem(value: 1, child: _MenuRow(Icons.insert_drive_file_outlined, 'Files')),
+            PopupMenuItem(value: 2, child: _MenuRow(Icons.link, 'Links')),
+            PopupMenuItem(value: 3, child: _MenuRow(Icons.push_pin_outlined, 'Pinned')),
+          ],
         ),
       ],
     );
@@ -322,26 +364,49 @@ class ConversationScreen extends ConsumerWidget {
   }
 }
 
-/// Scrollable message list with auto-scroll-to-bottom behavior.
+class _MenuRow extends StatelessWidget {
+  const _MenuRow(this.icon, this.label);
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: SovereignColors.textSecondary),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: SovereignColors.textPrimary)),
+      ],
+    );
+  }
+}
+
+/// Scrollable message list with auto-scroll-to-bottom + scroll-to-message.
 class _MessageList extends StatefulWidget {
   const _MessageList({
     required this.messages,
     required this.soulColor,
-    required this.isTyping,
+    required this.userSoulColor,
+    required this.myIdentity,
     required this.peerName,
     required this.isAgent,
     required this.onReact,
+    required this.onReply,
+    required this.onEdit,
+    required this.onOpenThread,
   });
 
   final List<ChatMessage> messages;
   final Color soulColor;
-  final bool isTyping;
+  final Color userSoulColor;
+  final String myIdentity;
   final String peerName;
   final bool isAgent;
 
-  /// Called when the user long-presses a bubble and picks an emoji:
-  /// (messageId, emoji).
   final void Function(String messageId, String emoji) onReact;
+  final void Function(ChatMessage message) onReply;
+  final void Function(String messageId, String body) onEdit;
+  final void Function(String threadId) onOpenThread;
 
   @override
   State<_MessageList> createState() => _MessageListState();
@@ -353,8 +418,6 @@ class _MessageListState extends State<_MessageList> {
   @override
   void initState() {
     super.initState();
-    // Jump to the latest message on open (the conversation provider keeps state
-    // across opens, so messages are often already present on first build).
     _scrollToBottom(animate: false);
   }
 
@@ -382,6 +445,22 @@ class _MessageListState extends State<_MessageList> {
     });
   }
 
+  /// Scroll to a specific message index (quoted-reply tap → original).
+  void _scrollToIndex(int index) {
+    if (!_scrollController.hasClients || index < 0) return;
+    // Approximate: jump proportionally to the message position. The ListView is
+    // not extent-fixed, so this lands near the original (good enough UX).
+    final max = _scrollController.position.maxScrollExtent;
+    final frac = widget.messages.isEmpty
+        ? 0.0
+        : index / widget.messages.length;
+    _scrollController.animateTo(
+      (max * frac).clamp(0.0, max),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+    );
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
@@ -396,10 +475,31 @@ class _MessageListState extends State<_MessageList> {
       itemCount: widget.messages.length,
       itemBuilder: (context, index) {
         final message = widget.messages[index];
+        // Resolve the replied-to message (for the quoted block) within window.
+        ChatMessage? repliedTo;
+        if (message.replyToId != null) {
+          final matches = widget.messages
+              .where((m) => m.id == message.replyToId)
+              .toList();
+          if (matches.isNotEmpty) repliedTo = matches.first;
+        }
         return MessageBubble(
           message: message,
           soulColor: widget.soulColor,
+          userSoulColor: widget.userSoulColor,
+          myIdentity: widget.myIdentity,
+          repliedTo: repliedTo,
           onReact: (emoji) => widget.onReact(message.id, emoji),
+          onReply: () => widget.onReply(message),
+          onEdit: (body) => widget.onEdit(message.id, body),
+          onJumpToReplied: repliedTo == null
+              ? null
+              : () => _scrollToIndex(
+                    widget.messages.indexWhere((m) => m.id == repliedTo!.id),
+                  ),
+          onOpenThread: message.hasThread
+              ? () => widget.onOpenThread(message.threadId!)
+              : null,
         );
       },
     );

@@ -159,4 +159,117 @@ void main() {
       expect(TypingSignal.parse(sent['message'] as String)!.isStart, isTrue);
     });
   });
+
+  group('EditSignal + ReceiptSignal (typed-contract additions)', () {
+    test('ReactionSignal carries an optional sender', () {
+      final parsed = ReactionSignal.parse(
+        const ReactionSignal(targetId: 'm', emoji: '👍', sender: 'chef')
+            .encode(),
+      );
+      expect(parsed!.sender, 'chef');
+    });
+
+    test('EditSignal round-trips', () {
+      final wire = const EditSignal(targetId: 'm-2', body: 'new text').encode();
+      expect(wire.startsWith(EditSignal.prefix), isTrue);
+      final back = EditSignal.parse(wire)!;
+      expect(back.targetId, 'm-2');
+      expect(back.body, 'new text');
+      expect(EditSignal.parse('plain'), isNull);
+    });
+
+    test('ReceiptSignal round-trips and rejects a bad kind', () {
+      final wire =
+          const ReceiptSignal(targetId: 'm-3', kind: 'read', sender: 'lumina')
+              .encode();
+      expect(wire.startsWith(ReceiptSignal.prefix), isTrue);
+      final back = ReceiptSignal.parse(wire)!;
+      expect(back.kind, 'read');
+      expect(back.sender, 'lumina');
+      expect(
+        ReceiptSignal.parse('__RECEIPT__:{"target_id":"x","kind":"bogus"}'),
+        isNull,
+      );
+    });
+
+    test('displayTextFor drops edit + receipt sentinels', () {
+      expect(
+        displayTextFor(const EditSignal(targetId: 'm', body: 'x').encode()),
+        isNull,
+      );
+      expect(
+        displayTextFor(
+          const ReceiptSignal(targetId: 'm', kind: 'read').encode(),
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('typed-contract HTTP endpoints', () {
+    late _CannedAdapter adapter;
+    late SKCommsClient client;
+
+    setUp(() {
+      adapter = _CannedAdapter({});
+      final dio = Dio()..httpClientAdapter = adapter;
+      client = SKCommsClient(baseUrl: 'http://test.local:9384', dio: dio);
+    });
+
+    test('react posts conversation_id/message_id/emoji/op', () async {
+      adapter.routes['/api/v1/react'] = {'ok': true};
+      final ok = await client.react(
+        conversationId: 'lumina',
+        messageId: 'm-1',
+        emoji: '🔥',
+        op: 'add',
+      );
+      expect(ok, isTrue);
+      final sent = adapter.lastRequest!.data as Map<String, dynamic>;
+      expect(adapter.lastRequest!.path, '/api/v1/react');
+      expect(sent['conversation_id'], 'lumina');
+      expect(sent['message_id'], 'm-1');
+      expect(sent['emoji'], '🔥');
+      expect(sent['op'], 'add');
+    });
+
+    test('edit posts message_id/body', () async {
+      adapter.routes['/api/v1/edit'] = {'ok': true};
+      final ok = await client.edit(messageId: 'm-2', body: 'fixed');
+      expect(ok, isTrue);
+      final sent = adapter.lastRequest!.data as Map<String, dynamic>;
+      expect(adapter.lastRequest!.path, '/api/v1/edit');
+      expect(sent['message_id'], 'm-2');
+      expect(sent['body'], 'fixed');
+    });
+
+    test('receipt posts conversation_id/message_id/kind', () async {
+      adapter.routes['/api/v1/receipt'] = {'ok': true};
+      final ok = await client.receipt(
+        conversationId: 'lumina',
+        messageId: 'm-3',
+        kind: 'read',
+      );
+      expect(ok, isTrue);
+      final sent = adapter.lastRequest!.data as Map<String, dynamic>;
+      expect(adapter.lastRequest!.path, '/api/v1/receipt');
+      expect(sent['kind'], 'read');
+    });
+
+    test('send carries reply_to_id and thread_id', () async {
+      adapter.routes['/api/v1/send'] = {
+        'delivered': true,
+        'envelope_id': 'e-9',
+      };
+      await client.sendMessage(
+        recipient: 'lumina',
+        message: 'a reply',
+        inReplyTo: 'm-0',
+        threadId: 'thr-1',
+      );
+      final sent = adapter.lastRequest!.data as Map<String, dynamic>;
+      expect(sent['reply_to_id'], 'm-0');
+      expect(sent['thread_id'], 'thr-1');
+    });
+  });
 }

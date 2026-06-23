@@ -17,13 +17,19 @@ import '../chats/chats_provider.dart';
 class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   Timer? _pollTimer;
 
-  /// Ids of reaction sentinels already folded into state, so re-polling the
-  /// same history (reactions persist) doesn't double-apply them.
-  final Set<String> _appliedReactionIds = {};
+  /// Ids of reaction/edit/receipt sentinels already folded into state, so
+  /// re-polling the same history (these persist) doesn't double-apply them.
+  final Set<String> _appliedControlIds = {};
 
   /// Clears the transient "is composing" flag after an inbound typing-start
   /// that isn't followed by a stop (sender crashed, message dropped, etc.).
   Timer? _typingClearTimer;
+
+  /// The local operator's short identity (reaction/receipt attribution).
+  String get _me {
+    final id = ref.read(daemonServiceProvider).localIdentity;
+    return id != null ? normalizePeerKey(id) : 'me';
+  }
 
   @override
   List<ChatMessage> build(String peerId) {
@@ -75,9 +81,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
   /// Fetch conversation history from the skchat local store via CLI.
   ///
-  /// Calls `skchat inbox --json` and filters messages by [peerId].
-  /// Falls back to the SKComms HTTP API for conversation IDs when the CLI
-  /// is unavailable.  Merges into Hive-persisted state without duplicates.
+  /// Calls `skchat history <peer> --json` and filters messages by [peerId].
+  /// Folds reaction / typing / edit / receipt sentinels into UI state rather
+  /// than rendering them. Merges into Hive-persisted state without duplicates.
   Future<void> _fetchFromDaemon(String peerId) async {
     final daemon = ref.read(daemonServiceProvider);
     final repo = ref.read(messageRepositoryProvider);
@@ -113,8 +119,26 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           // (we applied them optimistically) and already-applied ones.
           final react = ReactionSignal.parse(m.content);
           if (react != null) {
-            if (!isOutbound && _appliedReactionIds.add(m.id)) {
-              _applyReaction(react);
+            if (!isOutbound && _appliedControlIds.add(m.id)) {
+              _applyReaction(react, fallbackSender: senderShort);
+            }
+            continue;
+          }
+
+          // Edit sentinel (__EDIT__) — replace the target's body + mark edited.
+          final edit = EditSignal.parse(m.content);
+          if (edit != null) {
+            if (!isOutbound && _appliedControlIds.add(m.id)) {
+              _applyEdit(edit, at: m.timestamp);
+            }
+            continue;
+          }
+
+          // Receipt sentinel (__RECEIPT__) — fold into delivered/read lists.
+          final receipt = ReceiptSignal.parse(m.content);
+          if (receipt != null) {
+            if (!isOutbound && _appliedControlIds.add(m.id)) {
+              _applyReceipt(receipt, fallbackSender: senderShort);
             }
             continue;
           }
@@ -141,6 +165,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             content: m.content,
             timestamp: m.timestamp,
             isOutbound: isOutbound,
+            conversationId: peerShort,
+            sender: m.sender,
+            threadId: m.threadId,
             deliveryStatus: isOutbound ? 'sent' : 'delivered',
           ));
         }
@@ -152,6 +179,8 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           for (final msg in fresh) {
             await repo.saveMessage(msg);
           }
+          // Mark freshly-arrived inbound messages as read (best-effort).
+          _sendReadReceiptsFor(peerId, fresh);
         }
         return;
       }
@@ -217,16 +246,16 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     ];
 
     final repo = ref.read(messageRepositoryProvider);
-    await repo.updateDeliveryStatus(this.arg, messageId, status);
+    await repo.updateDeliveryStatus(arg, messageId, status);
   }
 
-  /// Fold a reaction into the target message's `reactions` map (emoji → count).
+  /// Fold a reaction into the target message's `reactionSenders` map.
   ///
-  /// Used both for the local optimistic update when the operator reacts and
-  /// for incoming reaction sentinels from a peer. A 'remove' action decrements
-  /// (dropping the entry at zero); 'add' increments. Persists the updated
-  /// message so the reaction survives an app restart.
-  void _applyReaction(ReactionSignal react) {
+  /// Add appends [sender] to the emoji's sender-list (idempotent); remove drops
+  /// it. The emoji entry is removed when its sender-list empties. Persists the
+  /// updated message so the reaction survives an app restart.
+  void _applyReaction(ReactionSignal react, {String? fallbackSender}) {
+    final who = react.sender ?? fallbackSender ?? '?';
     var changed = false;
     final updated = <ChatMessage>[];
     for (final m in state) {
@@ -234,37 +263,136 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         updated.add(m);
         continue;
       }
-      final next = Map<String, int>.from(m.reactions);
+      final next = {
+        for (final e in m.reactionSenders.entries)
+          e.key: List<String>.from(e.value),
+      };
+      final list = next.putIfAbsent(react.emoji, () => <String>[]);
       if (react.isAdd) {
-        next[react.emoji] = (next[react.emoji] ?? 0) + 1;
+        if (!list.contains(who)) list.add(who);
       } else {
-        final c = (next[react.emoji] ?? 0) - 1;
-        if (c > 0) {
-          next[react.emoji] = c;
-        } else {
-          next.remove(react.emoji);
-        }
+        list.remove(who);
+        if (list.isEmpty) next.remove(react.emoji);
       }
-      updated.add(m.copyWith(reactions: next));
+      updated.add(m.copyWith(reactionSenders: next));
       changed = true;
     }
     if (!changed) return;
     state = updated;
-    // Persist the reacted message so it survives a reload.
     final repo = ref.read(messageRepositoryProvider);
     final target = state.firstWhere((m) => m.id == react.targetId);
     repo.saveMessage(target);
   }
 
-  /// React to a message in this conversation: apply locally (optimistic) and
-  /// send the `__REACT__` sentinel to the peer over the transport.
+  /// Replace a message's body and mark it edited (folds an incoming __EDIT__).
+  void _applyEdit(EditSignal edit, {DateTime? at}) {
+    var changed = false;
+    final updated = <ChatMessage>[];
+    for (final m in state) {
+      if (m.id != edit.targetId) {
+        updated.add(m);
+        continue;
+      }
+      updated.add(m.copyWith(
+        content: edit.body,
+        editedAt: at ?? DateTime.now(),
+        editHistory: [...m.editHistory, m.content],
+      ));
+      changed = true;
+    }
+    if (!changed) return;
+    state = updated;
+    final repo = ref.read(messageRepositoryProvider);
+    repo.saveMessage(state.firstWhere((m) => m.id == edit.targetId));
+  }
+
+  /// Fold a delivery/read receipt into the target message's receipt lists.
+  void _applyReceipt(ReceiptSignal receipt, {String? fallbackSender}) {
+    final who = receipt.sender ?? fallbackSender ?? '?';
+    var changed = false;
+    final updated = <ChatMessage>[];
+    for (final m in state) {
+      if (m.id != receipt.targetId) {
+        updated.add(m);
+        continue;
+      }
+      final delivered = List<String>.from(m.receiptsDelivered);
+      final read = List<String>.from(m.receiptsRead);
+      if (receipt.kind == 'read') {
+        if (!read.contains(who)) read.add(who);
+        if (!delivered.contains(who)) delivered.add(who);
+      } else {
+        if (!delivered.contains(who)) delivered.add(who);
+      }
+      // Mirror onto the simple delivery-status string the bubble already reads.
+      final status = read.isNotEmpty
+          ? 'read'
+          : (delivered.isNotEmpty ? 'delivered' : m.deliveryStatus);
+      updated.add(m.copyWith(
+        receiptsDelivered: delivered,
+        receiptsRead: read,
+        deliveryStatus: status,
+      ));
+      changed = true;
+    }
+    if (!changed) return;
+    state = updated;
+    final repo = ref.read(messageRepositoryProvider);
+    repo.saveMessage(state.firstWhere((m) => m.id == receipt.targetId));
+  }
+
+  /// React to a message in this conversation: toggle the operator's reaction
+  /// optimistically and send it to the peer (HTTP `/react` then sentinel).
   Future<void> react(String targetMessageId, String emoji) async {
-    _applyReaction(ReactionSignal(targetId: targetMessageId, emoji: emoji));
+    final me = _me;
+    final matches = state.where((m) => m.id == targetMessageId).toList();
+    final ChatMessage? target = matches.isEmpty ? null : matches.first;
+    final already = target?.reactedBy(emoji, me) ?? false;
+    final op = already ? 'remove' : 'add';
+    _applyReaction(
+      ReactionSignal(
+        targetId: targetMessageId,
+        emoji: emoji,
+        action: op,
+        sender: me,
+      ),
+    );
     await ref.read(skcommsSyncProvider.notifier).sendReaction(
           peerId: arg,
           targetMessageId: targetMessageId,
           emoji: emoji,
+          action: op,
+          me: me,
         );
+  }
+
+  /// Edit an own message: apply locally (optimistic) and send the edit.
+  /// The 24h window is enforced by the server; the UI also hides the affordance
+  /// for older messages, so this is the belt to that suspenders.
+  Future<void> editMessage(String targetMessageId, String newBody) async {
+    final trimmed = newBody.trim();
+    if (trimmed.isEmpty) return;
+    _applyEdit(EditSignal(targetId: targetMessageId, body: trimmed));
+    await ref.read(skcommsSyncProvider.notifier).sendEdit(
+          peerId: arg,
+          targetMessageId: targetMessageId,
+          body: trimmed,
+        );
+  }
+
+  /// Send read receipts for a batch of freshly-arrived inbound messages.
+  void _sendReadReceiptsFor(String peerId, List<ChatMessage> fresh) {
+    final sync = ref.read(skcommsSyncProvider.notifier);
+    final me = _me;
+    for (final m in fresh) {
+      if (m.isOutbound) continue;
+      sync.sendReceipt(
+        peerId: peerId,
+        targetMessageId: m.id,
+        kind: 'read',
+        me: me,
+      );
+    }
   }
 
   /// Handle an incoming typing sentinel: flip the peer's "is composing" flag.
