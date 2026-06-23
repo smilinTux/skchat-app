@@ -50,6 +50,13 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   Timer? _daemonTimer;
   final Set<String> _seenEnvelopeIds = {};
 
+  /// Consecutive failed health checks. The daemon goes briefly unresponsive
+  /// while generating an agent reply (~15-20s), so ONE failed /health poll must
+  /// not flash the "offline / messages will queue" banner. Require two failures
+  /// in a row before flipping offline; any success resets the streak.
+  int _healthFailStreak = 0;
+  static const _healthFailThreshold = 2;
+
   @override
   DaemonState build() {
     // Defer polling so Riverpod state is fully initialized before first read.
@@ -92,9 +99,18 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     }
 
     if (!alive) {
-      state = state.copyWith(status: DaemonStatus.offline);
+      _healthFailStreak++;
+      // Debounce: only flip offline after repeated failures, so the brief
+      // unresponsiveness during reply generation doesn't flash the banner.
+      // If we're already offline, keep it; otherwise stay online until the
+      // streak crosses the threshold.
+      if (_healthFailStreak >= _healthFailThreshold ||
+          state.status == DaemonStatus.offline) {
+        state = state.copyWith(status: DaemonStatus.offline);
+      }
       return;
     }
+    _healthFailStreak = 0;
 
     // Health is good → online. Decorate with transport info best-effort.
     Map<String, dynamic>? statusInfo;
