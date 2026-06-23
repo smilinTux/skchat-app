@@ -5,6 +5,45 @@ import 'package:skchat/features/skos/access_client.dart';
 import 'package:skchat/features/skos/skos_files_screen.dart';
 import 'package:skchat/features/skos/skos_models.dart';
 import 'package:skchat/features/skos/skos_providers.dart';
+import 'package:video_player/video_player.dart';
+
+/// A no-plugin [VideoPlayerController]: [initialize] flips the initialized flag
+/// (+ a fake duration), [play]/[pause] flip `isPlaying`. Assigning `value =`
+/// goes through [ValueNotifier]'s setter, which fires listeners — exactly the
+/// path the real controller uses to drive the play/pause icon — so this fake
+/// exercises the real init → listener → toggle wiring inside the media player.
+class _FakeVideoController extends VideoPlayerController {
+  _FakeVideoController() : super.networkUrl(Uri.parse('http://x/test.mp4'));
+
+  @override
+  Future<void> initialize() async {
+    value = value.copyWith(
+      duration: const Duration(seconds: 30),
+      isInitialized: true,
+    );
+  }
+
+  @override
+  Future<void> play() async {
+    value = value.copyWith(isPlaying: true);
+  }
+
+  @override
+  Future<void> pause() async {
+    value = value.copyWith(isPlaying: false);
+  }
+
+  @override
+  Future<void> seekTo(Duration position) async {
+    value = value.copyWith(position: position);
+  }
+
+  @override
+  Future<void> dispose() async {
+    // No platform texture; just drop the ValueNotifier listeners.
+    super.dispose();
+  }
+}
 
 /// A deterministic, no-latency client returning a fixed tree + hits so the
 /// Files surface is testable offline. [writable] flips the write-scope path.
@@ -325,6 +364,129 @@ void main() {
     expect(parsed.queryParameters['node'], '.158');
   });
 
+  // ── Swipe gallery + long-press options ──────────────────────────────────
+
+  group('buildMediaGallery', () {
+    const node = '.158';
+    const dir = '/home/x/AI LIFE';
+    final entries = <FsEntry>[
+      const FsEntry(name: 'notes.md', path: '', type: FsEntryType.file),
+      const FsEntry(name: 'a.png', path: '', type: FsEntryType.file),
+      const FsEntry(name: 'sub', path: '', type: FsEntryType.dir),
+      const FsEntry(name: 'b.mp4', path: '', type: FsEntryType.file),
+      const FsEntry(name: 'c.mp3', path: '', type: FsEntryType.file),
+      const FsEntry(name: 'd.pdf', path: '', type: FsEntryType.file),
+    ];
+
+    test('keeps only image/video/audio files, in listing order', () {
+      final g = buildMediaGallery(
+        node: node,
+        currentDir: dir,
+        entries: entries,
+        openPath: '$dir/a.png',
+      );
+      expect(g.items.map((m) => m.name).toList(),
+          ['a.png', 'b.mp4', 'c.mp3']);
+      // dirs, markdown and pdf are excluded.
+      expect(g.items.map((m) => m.kind).toList(),
+          [MediaKind.image, MediaKind.video, MediaKind.audio]);
+    });
+
+    test('opens at the index of the tapped media file', () {
+      final g = buildMediaGallery(
+        node: node,
+        currentDir: dir,
+        entries: entries,
+        openPath: '$dir/b.mp4',
+      );
+      expect(g.index, 1);
+      expect(g.items[g.index].name, 'b.mp4');
+    });
+
+    test('non-media open path collapses to a single standalone item', () {
+      final g = buildMediaGallery(
+        node: node,
+        currentDir: dir,
+        entries: entries,
+        openPath: '$dir/d.pdf',
+      );
+      expect(g.items.length, 1);
+      expect(g.items.single.name, 'd.pdf');
+      expect(g.index, 0);
+    });
+
+    test('builds full paths from currentDir + name when entry.path empty', () {
+      final g = buildMediaGallery(
+        node: node,
+        currentDir: dir,
+        entries: entries,
+        openPath: '$dir/a.png',
+      );
+      expect(g.items.first.path, '$dir/a.png');
+    });
+  });
+
+  testWidgets(
+      'Viewer builds a PageView over the directory media list', (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(
+          name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+      const FsEntry(
+          name: 'b.png', path: '/m/b.png', type: FsEntryType.file),
+      const FsEntry(
+          name: 'c.png', path: '/m/c.png', type: FsEntryType.file),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accessClientProvider.overrideWithValue(_FixedClient()),
+          currentPathProvider.overrideWith((ref) => '/m'),
+          dirListingProvider.overrideWith((ref) async => entries),
+          openFileProvider
+              .overrideWith((ref) => (node: '.158', path: '/m/b.png')),
+        ],
+        child: const MaterialApp(home: SkosFileViewer()),
+      ),
+    );
+    await tester.pump(); // build
+    await tester.pump(); // let the async dirListing future resolve
+
+    // The gallery surface is a PageView, opened on the tapped file's index.
+    expect(find.byType(PageView), findsOneWidget);
+    // Counter reflects 3 media, opened at index 1 (b.png -> "2 / 3").
+    expect(find.textContaining('2 / 3'), findsOneWidget);
+  });
+
+  testWidgets('Long-press on a media page opens the options sheet',
+      (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(
+          name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accessClientProvider.overrideWithValue(_FixedClient()),
+          currentPathProvider.overrideWith((ref) => '/m'),
+          dirListingProvider.overrideWith((ref) async => entries),
+          openFileProvider
+              .overrideWith((ref) => (node: '.158', path: '/m/a.png')),
+        ],
+        child: const MaterialApp(home: SkosFileViewer()),
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(find.byType(PageView));
+    await tester.pumpAndSettle();
+
+    // The Sovereign-Glass options sheet surfaces all four actions.
+    expect(find.text('Share / Open in app'), findsOneWidget);
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Copy link'), findsOneWidget);
+    expect(find.text('Send to chat (soon)'), findsOneWidget);
+  });
+
   testWidgets(
       'Viewer routes an image file to the streaming image surface '
       '(no text edit affordance)', (tester) async {
@@ -347,5 +509,89 @@ void main() {
     expect(find.byIcon(Icons.save_rounded), findsNothing);
     // Image kind → InteractiveViewer-wrapped streaming Image surface.
     expect(find.byType(InteractiveViewer), findsOneWidget);
+  });
+
+  // ── Playback: the play/pause button actually toggles the controller ───────
+
+  group('media playback controls', () {
+    late _FakeVideoController fake;
+
+    setUp(() {
+      fake = _FakeVideoController();
+      // Route _MediaPlayer through the fake so we can assert the real
+      // init → listener → toggle wiring without a platform video plugin.
+      debugMediaControllerFactory = (_) => fake;
+    });
+
+    tearDown(() {
+      debugMediaControllerFactory = null;
+    });
+
+    testWidgets('play/pause button toggles isPlaying on the controller',
+        (tester) async {
+      final entries = <FsEntry>[
+        const FsEntry(name: 'clip.mp4', path: '/m/clip.mp4', type: FsEntryType.file),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accessClientProvider.overrideWithValue(_FixedClient()),
+            currentPathProvider.overrideWith((ref) => '/m'),
+            dirListingProvider.overrideWith((ref) async => entries),
+            openFileProvider
+                .overrideWith((ref) => (node: '.158', path: '/m/clip.mp4')),
+          ],
+          child: const MaterialApp(home: SkosFileViewer()),
+        ),
+      );
+      // build → dirListing future resolves → initialize() completes → controls.
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      // Initialized but not playing → the Play icon is shown, isPlaying false.
+      expect(fake.value.isPlaying, isFalse);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+      // Tap Play → controller starts; the listener flips the icon to Pause.
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(fake.value.isPlaying, isTrue);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+      // Tap Pause → controller pauses; the icon flips back to Play.
+      await tester.tap(find.byIcon(Icons.pause_rounded));
+      await tester.pump();
+      expect(fake.value.isPlaying, isFalse);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    });
+
+    testWidgets('audio shows a scrubbable progress + play/pause that works',
+        (tester) async {
+      final entries = <FsEntry>[
+        const FsEntry(name: 'song.mp3', path: '/m/song.mp3', type: FsEntryType.file),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accessClientProvider.overrideWithValue(_FixedClient()),
+            currentPathProvider.overrideWith((ref) => '/m'),
+            dirListingProvider.overrideWith((ref) async => entries),
+            openFileProvider
+                .overrideWith((ref) => (node: '.158', path: '/m/song.mp3')),
+          ],
+          child: const MaterialApp(home: SkosFileViewer()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      // Audio surface: a real scrubbable progress indicator + working toggle.
+      expect(find.byType(VideoProgressIndicator), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(fake.value.isPlaying, isTrue);
+    });
   });
 }

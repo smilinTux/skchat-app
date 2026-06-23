@@ -14,6 +14,7 @@ class GlassCard extends StatelessWidget {
     this.padding = const EdgeInsets.all(16),
     this.margin = EdgeInsets.zero,
     this.onTap,
+    this.onLongPress,
   });
 
   final Widget child;
@@ -24,6 +25,7 @@ class GlassCard extends StatelessWidget {
   final EdgeInsets padding;
   final EdgeInsets margin;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +37,7 @@ class GlassCard extends StatelessWidget {
           filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
           child: GestureDetector(
             onTap: onTap,
+            onLongPress: onLongPress,
             child: Container(
               decoration: BoxDecoration(
                 color: Color.fromRGBO(

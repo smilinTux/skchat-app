@@ -1,5 +1,9 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/theme/theme.dart';
@@ -9,6 +13,9 @@ import 'skos_providers.dart';
 // PDF surface: native (url_launcher "Open PDF") vs web (<iframe> embed).
 import 'skos_pdf_view_stub.dart'
     if (dart.library.html) 'skos_pdf_view_web.dart';
+// Browser-download seam: native no-op vs web <a download> anchor.
+import 'media_actions_stub.dart'
+    if (dart.library.html) 'media_actions_web.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 /// SkosFilesScreen — the skos Files browser + corpus search (P9, on the P7
@@ -18,8 +25,11 @@ import 'skos_pdf_view_stub.dart'
 /// One sovereign disk + one sovereign brain, addressable from the app:
 ///   * a node picker (`.158` / `.41`) — which node's access MCP to talk to,
 ///   * a path breadcrumb + directory listing (tap a dir to descend),
-///   * tap a file → a text viewer with an Edit/Save affordance that is
-///     **disabled/read-only unless a write scope is granted** (default),
+///   * tap a file → a swipeable media viewer (PageView over the directory's
+///     media) with an Edit/Save affordance that is **disabled/read-only unless
+///     a write scope is granted** (default),
+///   * long-press a media tile / page → an options sheet (share / open in app /
+///     download / copy link / send to chat),
 ///   * a corpus search bar (`pg_search`) → hits tagged with `{node,path}`;
 ///     tap a hit to open that file on its owning node.
 ///
@@ -118,6 +128,67 @@ MediaKind mediaKindFor(String path) {
     default:
       return MediaKind.other;
   }
+}
+
+/// True for the swipeable-gallery kinds (image/video/audio). pdf/text/other are
+/// excluded — they open standalone, not in the PageView.
+@visibleForTesting
+bool isGalleryKind(MediaKind kind) =>
+    kind == MediaKind.image ||
+    kind == MediaKind.video ||
+    kind == MediaKind.audio;
+
+/// A single swipeable page in the media gallery: a {node,path} plus its kind.
+@visibleForTesting
+class MediaItem {
+  const MediaItem({required this.node, required this.path, required this.kind});
+  final String node;
+  final String path;
+  final MediaKind kind;
+
+  String get name => _basename(path);
+}
+
+/// Build the ordered media list for the gallery from a directory [entries]
+/// listing on [node], plus the index of [openPath] within it.
+///
+/// The list = files (not dirs) whose [mediaKindFor] is a gallery kind
+/// (image/video/audio), in listing order, each carrying its full path
+/// (`currentDir + '/' + name`, or the entry's own absolute path when present).
+/// If [openPath] is itself a gallery item the returned index points at it; if
+/// it is NOT in the list (e.g. a pdf/text tapped, or no listing yet) the list
+/// is collapsed to just that single open item at index 0 — the viewer then
+/// shows it alone with no neighbours to swipe to.
+@visibleForTesting
+({List<MediaItem> items, int index}) buildMediaGallery({
+  required String node,
+  required String? currentDir,
+  required List<FsEntry> entries,
+  required String openPath,
+}) {
+  final base = (currentDir == null || currentDir.isEmpty)
+      ? ''
+      : currentDir.replaceAll(RegExp(r'/+$'), '');
+  final items = <MediaItem>[];
+  for (final e in entries) {
+    if (!e.isFile) continue;
+    final full = e.path.isNotEmpty
+        ? e.path
+        : (base.isEmpty ? e.name : '$base/${e.name}');
+    final kind = mediaKindFor(full);
+    if (!isGalleryKind(kind)) continue;
+    items.add(MediaItem(node: node, path: full, kind: kind));
+  }
+  final idx = items.indexWhere((m) => m.path == openPath);
+  if (idx >= 0) return (items: items, index: idx);
+  // Open file isn't a gallery item (or the listing is empty / not loaded):
+  // show it alone.
+  return (
+    items: [
+      MediaItem(node: node, path: openPath, kind: mediaKindFor(openPath)),
+    ],
+    index: 0,
+  );
 }
 
 /// Build the same-origin streaming URL for a binary file on [node].
@@ -419,19 +490,21 @@ class _DirListing extends ConsumerWidget {
           separatorBuilder: (_, _) => const SizedBox(height: 8),
           itemBuilder: (context, i) {
             final e = entries[i];
+            // file_list entries carry only `name` (no full path), so build the
+            // child path from the current dir + name. Root entries (from
+            // list_roots) already have an absolute path — prefer it.
+            final cur = ref.read(currentPathProvider);
+            final base = (cur == null || cur.isEmpty)
+                ? ''
+                : cur.replaceAll(RegExp(r'/+$'), '');
+            final childPath = e.path.isNotEmpty
+                ? e.path
+                : (base.isEmpty ? e.name : '$base/${e.name}');
+            final kind = e.isFile ? mediaKindFor(childPath) : MediaKind.other;
+            final isMediaTile = e.isFile && isGalleryKind(kind);
             return _EntryTile(
               entry: e,
               onTap: () {
-                // file_list entries carry only `name` (no full path), so build
-                // the child path from the current dir + name. Root entries
-                // (from list_roots) already have an absolute path — prefer it.
-                final cur = ref.read(currentPathProvider);
-                final base = (cur == null || cur.isEmpty)
-                    ? ''
-                    : cur.replaceAll(RegExp(r'/+$'), '');
-                final childPath = e.path.isNotEmpty
-                    ? e.path
-                    : (base.isEmpty ? e.name : '$base/${e.name}');
                 if (e.isDir) {
                   ref.read(currentPathProvider.notifier).state = childPath;
                 } else {
@@ -440,6 +513,14 @@ class _DirListing extends ConsumerWidget {
                   _openViewer(context);
                 }
               },
+              // Long-press a media tile in the grid → the same options sheet
+              // the viewer uses. Non-media tiles have no long-press action.
+              onLongPress: isMediaTile
+                  ? () => showMediaOptionsSheet(
+                        context,
+                        MediaItem(node: node, path: childPath, kind: kind),
+                      )
+                  : null,
             );
           },
         );
@@ -449,9 +530,14 @@ class _DirListing extends ConsumerWidget {
 }
 
 class _EntryTile extends StatelessWidget {
-  const _EntryTile({required this.entry, required this.onTap});
+  const _EntryTile({
+    required this.entry,
+    required this.onTap,
+    this.onLongPress,
+  });
   final FsEntry entry;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -463,6 +549,7 @@ class _EntryTile extends StatelessWidget {
         : SovereignColors.textSecondary;
     return GlassCard(
       onTap: onTap,
+      onLongPress: onLongPress,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
@@ -617,14 +704,18 @@ void _openViewer(BuildContext context) {
   );
 }
 
-/// The file viewer. Dispatches on [mediaKindFor] of the open path:
+/// The file viewer. For the swipeable **gallery kinds** (image/video/audio) it
+/// is a [PageView] over the current directory's media (see [buildMediaGallery]),
+/// opening at the tapped file; swipe left/right = next/prev media. For the
+/// standalone kinds it dispatches on [mediaKindFor] of the open path:
 ///
 ///   * **image** (png/jpg/jpeg/gif/webp/bmp) → `Image.network` of the
 ///     same-origin stream URL, inside an [InteractiveViewer] for pinch/zoom,
 ///     with a loading spinner + error fallback.
 ///   * **video** (mp4/mov/webm/m4v/mkv) → `VideoPlayerController.networkUrl`
 ///     (streams + seeks on web; handles the 300–380 MB masters) with
-///     play/pause + a scrubbable [VideoProgressIndicator].
+///     play/pause + a scrubbable [VideoProgressIndicator]. Off-screen page
+///     controllers are disposed so N videos never play at once.
 ///   * **audio** (mp3/wav/m4a/ogg/flac) → same `VideoPlayerController` (it
 ///     plays audio) with a play/pause + progress UI and no video surface.
 ///   * **pdf** → on web an `<iframe>` embed (browsers render PDF natively); on
@@ -648,9 +739,18 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   bool _saving = false;
   bool _loaded = false;
 
+  PageController? _pageController;
+  int _pageIndex = 0;
+  // The path of the file that was tapped to open the gallery. Captured once so
+  // swiping (which mutates openFileProvider) doesn't re-seek the initial page.
+  String? _initialOpenPath;
+  // Whether we've jumped to the tapped file's index after the listing loaded.
+  bool _seekedToInitial = false;
+
   @override
   void dispose() {
     _controller.dispose();
+    _pageController?.dispose();
     super.dispose();
   }
 
@@ -691,6 +791,12 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
     // Only the small-file text/markdown path is editable; binary media never.
     final isTextKind =
         kind == MediaKind.text || kind == MediaKind.markdown;
+
+    // Gallery (swipeable) kinds use the PageView body; everything else falls
+    // through to the single-surface dispatch.
+    if (open != null && isGalleryKind(kind)) {
+      return _buildGalleryScaffold(open);
+    }
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
@@ -752,6 +858,103 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
       body: open == null
           ? const _ErrorPanel(message: 'No file selected')
           : _buildBody(open, kind, isTextKind),
+    );
+  }
+
+  /// The swipeable gallery scaffold for image/video/audio. Builds the media
+  /// list from the current directory listing, opens at the tapped file, and
+  /// lazily renders each page by its kind (off-screen video controllers are
+  /// disposed by [_MediaPlayer] going out of the keep-alive window).
+  Widget _buildGalleryScaffold(FileRef open) {
+    final node = ref.watch(selectedNodeProvider);
+    final currentDir = ref.watch(currentPathProvider);
+    // Capture the tapped file once; swiping mutates openFileProvider, but the
+    // gallery list + initial index must be computed against the ORIGINAL open
+    // file so a swipe doesn't re-seek the PageView.
+    _initialOpenPath ??= open.path;
+    // The listing may still be loading; fall back to an empty list → the
+    // tapped file shows alone (buildMediaGallery handles the collapse).
+    final listing = ref.watch(dirListingProvider);
+    final entries = listing.asData?.value ?? const <FsEntry>[];
+    final gallery = buildMediaGallery(
+      node: node,
+      currentDir: currentDir,
+      entries: entries,
+      openPath: _initialOpenPath!,
+    );
+    final items = gallery.items;
+
+    // The PageController exists for the lifetime of the viewer. Its initialPage
+    // is 0 (the collapsed single item) while the listing loads; once the
+    // listing resolves we jump (post-frame) to the tapped file's real index.
+    final controller = _pageController ??= PageController();
+    if (!_seekedToInitial && listing.hasValue) {
+      _seekedToInitial = true;
+      _pageIndex = gallery.index;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (controller.hasClients && gallery.index != 0) {
+          controller.jumpToPage(gallery.index);
+        }
+      });
+    }
+    final current = items[_pageIndex.clamp(0, items.length - 1)];
+
+    return Scaffold(
+      backgroundColor: SovereignColors.surfaceBase,
+      appBar: AppBar(
+        backgroundColor: SovereignColors.surfaceCard,
+        foregroundColor: SovereignColors.textPrimary,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              current.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            Text(
+              items.length > 1
+                  ? '${current.node} · ${_pageIndex + 1} / ${items.length}'
+                  : '${current.node} · ${current.path}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 11, color: SovereignColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.more_vert_rounded),
+            tooltip: 'Options',
+            onPressed: () => showMediaOptionsSheet(context, current),
+          ),
+        ],
+      ),
+      body: PageView.builder(
+        controller: controller,
+        itemCount: items.length,
+        onPageChanged: (i) {
+          // Keep openFileProvider in sync so the options sheet + any external
+          // observers track the visible page.
+          setState(() => _pageIndex = i);
+          ref.read(openFileProvider.notifier).state =
+              (node: items[i].node, path: items[i].path);
+        },
+        itemBuilder: (context, i) {
+          final item = items[i];
+          final active = i == _pageIndex;
+          return GestureDetector(
+            onLongPress: () => showMediaOptionsSheet(context, item),
+            // Opaque so long-press registers over the whole page area.
+            behavior: HitTestBehavior.opaque,
+            child: _GalleryPage(item: item, active: active),
+          );
+        },
+      ),
     );
   }
 
@@ -823,6 +1026,289 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   }
 }
 
+// ── Gallery page (one swipeable media surface) ───────────────────────────────
+
+/// One page of the swipe gallery. Renders the [item] by its kind. The video/
+/// audio player is only mounted when [active] (the visible page) so off-screen
+/// pages never decode/play — swiping away disposes the previous controller.
+class _GalleryPage extends StatelessWidget {
+  const _GalleryPage({required this.item, required this.active});
+  final MediaItem item;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = mediaStreamUrl(item.node, item.path);
+    switch (item.kind) {
+      case MediaKind.image:
+        return _ImageView(url: url);
+      case MediaKind.video:
+      case MediaKind.audio:
+        if (!active) {
+          // Off-screen: a light placeholder, no VideoPlayerController alive.
+          return Center(
+            child: Icon(
+              item.kind == MediaKind.audio
+                  ? Icons.audiotrack_rounded
+                  : Icons.movie_creation_outlined,
+              size: 72,
+              color: SovereignColors.textTertiary,
+            ),
+          );
+        }
+        // ValueKey(url) → swapping pages tears down the old controller and
+        // builds a fresh one for the now-active page.
+        return _MediaPlayer(
+          key: ValueKey(url),
+          url: url,
+          audioOnly: item.kind == MediaKind.audio,
+        );
+      case MediaKind.pdf:
+      case MediaKind.markdown:
+      case MediaKind.text:
+      case MediaKind.other:
+        // Not a gallery kind, but guard anyway → never crash.
+        return _ImageView(url: url);
+    }
+  }
+}
+
+// ── Options sheet (long-press: share / download / copy / send-to-chat) ───────
+
+/// Show the Sovereign-Glass media options sheet for [item]: share/open-in-app
+/// (file via `share_plus`), download (web), copy link, and a send-to-chat stub.
+Future<void> showMediaOptionsSheet(BuildContext context, MediaItem item) {
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _MediaOptionsSheet(item: item),
+  );
+}
+
+class _MediaOptionsSheet extends StatefulWidget {
+  const _MediaOptionsSheet({required this.item});
+  final MediaItem item;
+
+  @override
+  State<_MediaOptionsSheet> createState() => _MediaOptionsSheetState();
+}
+
+class _MediaOptionsSheetState extends State<_MediaOptionsSheet> {
+  bool _busy = false;
+
+  String get _url => mediaStreamUrl(widget.item.node, widget.item.path);
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// Share / Open in app. Prefers sharing the actual FILE bytes (so the OS
+  /// share sheet offers Save-to-Photos / open-in-a-video-app / send-to-app);
+  /// falls back to a URL share if fetching the bytes is unsupported/fails.
+  Future<void> _share() async {
+    setState(() => _busy = true);
+    try {
+      final bytes = await _fetchBytes(_url);
+      final mime = _mimeFor(widget.item.path);
+      final xfile = XFile.fromData(
+        bytes,
+        name: widget.item.name,
+        mimeType: mime,
+      );
+      await Share.shareXFiles([xfile], subject: widget.item.name);
+    } catch (_) {
+      // File share unsupported (or fetch failed) → URL share. NOTE: tailnet
+      // /media/file URLs only resolve for devices on the tailnet.
+      try {
+        await Share.share(_url, subject: widget.item.name);
+      } catch (e) {
+        _snack('Share failed: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _close();
+    }
+  }
+
+  Future<Uint8List> _fetchBytes(String url) async {
+    final dio = Dio();
+    final resp = await dio.get<List<int>>(
+      url,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return Uint8List.fromList(resp.data ?? const []);
+  }
+
+  void _download() {
+    // Web: anchor download of the stream URL. Native: no-op (share covers it).
+    if (kIsWeb) {
+      triggerBrowserDownload(_url, widget.item.name);
+      _snack('Downloading ${widget.item.name}…');
+    } else {
+      _snack('Use Share to save on this device');
+    }
+    _close();
+  }
+
+  Future<void> _copyLink() async {
+    await Clipboard.setData(ClipboardData(text: _url));
+    _snack('Link copied');
+    _close();
+  }
+
+  void _sendToChat() {
+    // TODO(skchat): wire to the skchat send lane (attach this {node,path} as a
+    // media message). Stubbed for now — does not block the gallery UX.
+    _snack('Send to chat — coming soon');
+    _close();
+  }
+
+  void _close() {
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, 0, 12, 12 + bottomPad),
+      child: GlassCard(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Row(
+                children: [
+                  Icon(
+                    widget.item.kind == MediaKind.image
+                        ? Icons.image_outlined
+                        : widget.item.kind == MediaKind.audio
+                            ? Icons.audiotrack_rounded
+                            : Icons.movie_outlined,
+                    color: SovereignColors.soulLumina,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: SovereignColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(
+                height: 8, color: SovereignColors.textTertiary, thickness: 0.3),
+            _OptionRow(
+              icon: Icons.ios_share_rounded,
+              label: _busy ? 'Sharing…' : 'Share / Open in app',
+              onTap: _busy ? null : _share,
+            ),
+            _OptionRow(
+              icon: Icons.download_rounded,
+              label: 'Download',
+              onTap: _busy ? null : _download,
+            ),
+            _OptionRow(
+              icon: Icons.link_rounded,
+              label: 'Copy link',
+              onTap: _busy ? null : _copyLink,
+            ),
+            _OptionRow(
+              icon: Icons.send_rounded,
+              label: 'Send to chat (soon)',
+              onTap: _busy ? null : _sendToChat,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OptionRow extends StatelessWidget {
+  const _OptionRow({required this.icon, required this.label, this.onTap});
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = onTap == null;
+    final color = disabled
+        ? SovereignColors.textTertiary
+        : SovereignColors.textPrimary;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 16),
+            Text(
+              label,
+              style: TextStyle(
+                  color: color, fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Best-effort MIME from extension for the shared [XFile]. Covers the gallery
+/// kinds; defaults to `application/octet-stream`.
+String _mimeFor(String path) {
+  final lower = path.toLowerCase();
+  final dot = lower.lastIndexOf('.');
+  final ext = dot < 0 ? '' : lower.substring(dot + 1);
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'bmp':
+      return 'image/bmp';
+    case 'mp4':
+    case 'm4v':
+      return 'video/mp4';
+    case 'mov':
+      return 'video/quicktime';
+    case 'webm':
+      return 'video/webm';
+    case 'mkv':
+      return 'video/x-matroska';
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'm4a':
+      return 'audio/mp4';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'flac':
+      return 'audio/flac';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
 // ── Image surface (streaming, same-origin) ───────────────────────────────────
 
 class _ImageView extends StatelessWidget {
@@ -858,8 +1344,17 @@ class _ImageView extends StatelessWidget {
 
 // ── Video / audio surface (streaming + seek, same-origin) ────────────────────
 
+/// Test seam: the function used to build the [VideoPlayerController]. Production
+/// is `VideoPlayerController.networkUrl`; a widget test injects a fake so the
+/// play/pause wiring (init → listener → toggle) is assertable without a platform
+/// video plugin. Reset to null in tearDown.
+typedef MediaControllerFactory = VideoPlayerController Function(Uri uri);
+
+@visibleForTesting
+MediaControllerFactory? debugMediaControllerFactory;
+
 class _MediaPlayer extends StatefulWidget {
-  const _MediaPlayer({required this.url, required this.audioOnly});
+  const _MediaPlayer({super.key, required this.url, required this.audioOnly});
   final String url;
   final bool audioOnly;
 
@@ -879,13 +1374,27 @@ class _MediaPlayerState extends State<_MediaPlayer> {
   }
 
   Future<void> _init() async {
-    // VideoPlayerController plays both video and audio. networkUrl streams from
-    // the range-capable endpoint (no full download → 300 MB masters seek fine).
-    final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    // VideoPlayerController decodes BOTH video and audio. networkUrl streams
+    // from the range-capable endpoint (no full download → the 300 MB masters
+    // seek fine). We:
+    //   1. build the controller,
+    //   2. attach a listener so the play/pause icon + progress + position
+    //      readout track ACTUAL playback state (the old code never did this, so
+    //      the controls looked dead — they never reflected play/pause/seek),
+    //   3. await initialize() BEFORE showing controls, then setState so the UI
+    //      rebuilds with the ready controller.
+    final uri = Uri.parse(widget.url);
+    final factory = debugMediaControllerFactory;
+    final c =
+        factory != null ? factory(uri) : VideoPlayerController.networkUrl(uri);
     _controller = c;
+    c.addListener(_onTick);
     try {
       await c.initialize();
-      if (!mounted) return;
+      if (!mounted) {
+        c.dispose();
+        return;
+      }
       setState(() => _ready = true);
     } catch (e) {
       if (!mounted) return;
@@ -893,18 +1402,33 @@ class _MediaPlayerState extends State<_MediaPlayer> {
     }
   }
 
+  /// Rebuild on every controller tick so the icon/progress/position reflect the
+  /// real state (play, pause, seek, buffering, completion). Guarded by mounted.
+  void _onTick() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _controller?.removeListener(_onTick);
     _controller?.dispose();
     super.dispose();
   }
 
+  /// Toggle play/pause. On web the browser blocks UNMUTED autoplay without a
+  /// user gesture — but this runs from a tap (button or surface), which IS the
+  /// gesture, so calling play() here both starts playback and produces sound.
+  /// We never rely on autoplay; the explicit tap is required. The listener
+  /// (_onTick) drives the icon flip — we do NOT wrap the async play()/pause() in
+  /// setState (that was the old bug: it set state before the state had changed).
   void _togglePlay() {
     final c = _controller;
-    if (c == null) return;
-    setState(() {
-      c.value.isPlaying ? c.pause() : c.play();
-    });
+    if (c == null || !_ready) return;
+    if (c.value.isPlaying) {
+      c.pause();
+    } else {
+      c.play();
+    }
   }
 
   @override
@@ -914,13 +1438,18 @@ class _MediaPlayerState extends State<_MediaPlayer> {
     }
     final c = _controller;
     if (!_ready || c == null) {
+      // Spinner until initialize() completes.
       return const Center(child: CircularProgressIndicator());
     }
 
+    final isPlaying = c.value.isPlaying;
     final surface = widget.audioOnly
-        ? const Center(
-            child: Icon(Icons.audiotrack_rounded,
-                size: 96, color: SovereignColors.soulLumina),
+        ? Center(
+            child: Icon(
+              isPlaying ? Icons.graphic_eq_rounded : Icons.audiotrack_rounded,
+              size: 96,
+              color: SovereignColors.soulLumina,
+            ),
           )
         : AspectRatio(
             aspectRatio:
@@ -930,7 +1459,15 @@ class _MediaPlayerState extends State<_MediaPlayer> {
 
     return Column(
       children: [
-        Expanded(child: Center(child: surface)),
+        Expanded(
+          child: GestureDetector(
+            // Tapping the surface toggles play/pause too — also a user gesture,
+            // so it unlocks web audio just like the button.
+            onTap: _togglePlay,
+            behavior: HitTestBehavior.opaque,
+            child: Center(child: surface),
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: VideoProgressIndicator(
@@ -942,10 +1479,29 @@ class _MediaPlayerState extends State<_MediaPlayer> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: Row(
+            children: [
+              Text(
+                _fmtDuration(c.value.position),
+                style: const TextStyle(
+                    color: SovereignColors.textSecondary, fontSize: 12),
+              ),
+              const Spacer(),
+              Text(
+                _fmtDuration(c.value.duration),
+                style: const TextStyle(
+                    color: SovereignColors.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 16),
           child: IconButton.filled(
             iconSize: 32,
-            icon: Icon(c.value.isPlaying
+            tooltip: isPlaying ? 'Pause' : 'Play',
+            icon: Icon(isPlaying
                 ? Icons.pause_rounded
                 : Icons.play_arrow_rounded),
             onPressed: _togglePlay,
@@ -954,6 +1510,18 @@ class _MediaPlayerState extends State<_MediaPlayer> {
       ],
     );
   }
+}
+
+/// `m:ss` (or `h:mm:ss`) for the position/duration readout.
+String _fmtDuration(Duration d) {
+  final neg = d.isNegative;
+  final abs = d.abs();
+  final s = abs.inSeconds.remainder(60).toString().padLeft(2, '0');
+  final m = abs.inMinutes.remainder(60);
+  final h = abs.inHours;
+  final body =
+      h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$s' : '$m:$s';
+  return neg ? '-$body' : body;
 }
 
 // ── Other / unknown binary ───────────────────────────────────────────────────
