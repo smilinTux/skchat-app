@@ -429,8 +429,8 @@ class ConversationScreen extends ConsumerWidget {
     final isAgentChat = chats.any((c) => c.peerId == peerId && c.isAgent);
     if (isAgentChat) {
       messenger.showSnackBar(const SnackBar(
-        content: Text('To include Lumina in a group, create a New Group and '
-            'add her — this keeps your 1:1 with her working.'),
+        content: Text('To include an agent in a group, use New Group (the ✎ '
+            'button) and add them — this keeps your 1:1 with them working.'),
       ));
       return;
     }

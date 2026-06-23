@@ -25,9 +25,52 @@ class ChatsScreen extends ConsumerWidget {
           ? _buildEmpty(context, tt)
           : _buildList(conversations, context),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => context.push(AppRoutes.peerPicker),
-        tooltip: 'New message',
+        onPressed: () => _showComposeMenu(context),
+        tooltip: 'New',
         child: const Icon(Icons.edit_rounded),
+      ),
+    );
+  }
+
+  /// Compose menu: start a 1:1 message OR create a new group. (Create-group was
+  /// previously unreachable — the only entry points went to the peer picker.)
+  void _showComposeMenu(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline_rounded,
+                  color: SovereignColors.textSecondary),
+              title: const Text('New message',
+                  style: TextStyle(color: SovereignColors.textPrimary)),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                context.push(AppRoutes.peerPicker);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.group_add_rounded,
+                  color: SovereignColors.textSecondary),
+              title: const Text('New group',
+                  style: TextStyle(color: SovereignColors.textPrimary)),
+              subtitle: const Text('Pick members + name it',
+                  style: TextStyle(
+                      color: SovereignColors.textTertiary, fontSize: 12)),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                context.push(AppRoutes.createGroup);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
@@ -45,8 +88,8 @@ class ChatsScreen extends ConsumerWidget {
         ),
         IconButton(
           icon: const Icon(Icons.edit_outlined),
-          tooltip: 'New message',
-          onPressed: () => context.push(AppRoutes.peerPicker),
+          tooltip: 'New message or group',
+          onPressed: () => _showComposeMenu(context),
         ),
         const SizedBox(width: 4),
       ],
