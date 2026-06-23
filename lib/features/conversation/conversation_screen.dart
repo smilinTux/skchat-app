@@ -50,6 +50,12 @@ class ConversationScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
+      // Explicitly resize the body to the soft-keyboard inset. On mobile web
+      // this (combined with the bottom-anchored reverse list + inset-padded
+      // composer below, and the `interactive-widget=resizes-content` viewport
+      // meta in web/index.html) keeps the conversation visible instead of the
+      // browser scrolling the whole canvas up when the composer is focused.
+      resizeToAvoidBottomInset: true,
       appBar: _buildAppBar(context, ref, conversation, soul, messages),
       body: Column(
         children: [
@@ -430,10 +436,30 @@ class _MessageList extends StatefulWidget {
 class _MessageListState extends State<_MessageList> {
   final _scrollController = ScrollController();
 
+  /// Last-seen bottom view inset (soft-keyboard height). When it changes we
+  /// re-pin to the bottom so the latest message stays just above the keyboard.
+  double _lastBottomInset = 0;
+
   @override
   void initState() {
     super.initState();
+    // Bottom-anchored (reverse:true) list: the bottom is offset 0, so a fresh
+    // list already starts pinned to the newest message — no jump needed. Keep
+    // an explicit pin for safety on the first frame.
     _scrollToBottom(animate: false);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // React to the soft keyboard opening/closing. On mobile web the browser may
+    // shift the canvas when the composer is focused; re-pinning to the bottom
+    // keeps the latest messages visible above the keyboard instead of blank.
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    if (inset != _lastBottomInset) {
+      _lastBottomInset = inset;
+      _scrollToBottom(animate: false);
+    }
   }
 
   @override
@@ -444,10 +470,12 @@ class _MessageListState extends State<_MessageList> {
     }
   }
 
+  /// Scroll so the NEWEST message is visible. With `reverse: true` the newest
+  /// item is at the start of the scroll range, i.e. minScrollExtent (offset 0).
   void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
+      final target = _scrollController.position.minScrollExtent; // == 0.0
       if (animate) {
         _scrollController.animateTo(
           target,
@@ -461,14 +489,18 @@ class _MessageListState extends State<_MessageList> {
   }
 
   /// Scroll to a specific message index (quoted-reply tap → original).
+  /// `index` is in chronological (widget.messages) order; the reversed list
+  /// puts the newest at offset 0, so a higher chronological index sits closer
+  /// to offset 0.
   void _scrollToIndex(int index) {
     if (!_scrollController.hasClients || index < 0) return;
     // Approximate: jump proportionally to the message position. The ListView is
-    // not extent-fixed, so this lands near the original (good enough UX).
+    // not extent-fixed, so this lands near the original (good enough UX). In a
+    // reversed list, offset grows from newest(0)→oldest(max), so we invert the
+    // chronological fraction.
     final max = _scrollController.position.maxScrollExtent;
-    final frac = widget.messages.isEmpty
-        ? 0.0
-        : index / widget.messages.length;
+    final count = widget.messages.length;
+    final frac = count <= 1 ? 0.0 : (count - 1 - index) / (count - 1);
     _scrollController.animateTo(
       (max * frac).clamp(0.0, max),
       duration: const Duration(milliseconds: 350),
@@ -484,12 +516,18 @@ class _MessageListState extends State<_MessageList> {
 
   @override
   Widget build(BuildContext context) {
+    final count = widget.messages.length;
     return ListView.builder(
       controller: _scrollController,
+      // Bottom-anchored: newest message pins to the bottom of the viewport, so
+      // it stays visible just above the soft keyboard on mobile web (where the
+      // browser/canvas resize for the keyboard is unreliable, esp. iOS Safari).
+      reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: widget.messages.length,
+      itemCount: count,
       itemBuilder: (context, index) {
-        final message = widget.messages[index];
+        // reverse:true → walk the message list from newest to oldest.
+        final message = widget.messages[count - 1 - index];
         // Resolve the replied-to message (for the quoted block) within window.
         ChatMessage? repliedTo;
         if (message.replyToId != null) {
