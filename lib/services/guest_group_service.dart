@@ -1,10 +1,25 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
 import 'guest_identity.dart';
+
+/// On web, use the actual served ORIGIN (correct host AND port, e.g. the
+/// tailscale `:9443`) so guest/invite calls are same-origin and work over the
+/// tunnel — not the compile-time default which omits the port. Null on native
+/// (falls back to the configured default).
+String? _webOriginOrNull() {
+  if (!kIsWeb) return null;
+  try {
+    final o = Uri.base.origin;
+    return (o.isNotEmpty && o != 'null') ? o : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Result of a successful guest join: the session token + the LiveKit call
 /// bootstrap + initial messages. Everything is scoped to ONE group server-side.
@@ -205,8 +220,8 @@ class GuestGroupService {
       jsonEncode({'body': body, 'group_id': groupId, 'ts': '$ts'});
 }
 
-final guestGroupServiceProvider =
-    Provider<GuestGroupService>((ref) => GuestGroupService());
+final guestGroupServiceProvider = Provider<GuestGroupService>(
+    (ref) => GuestGroupService(webuiBaseUrl: _webOriginOrNull()));
 
 // ── Operator-side invite minting (used from group_info_screen) ───────────────
 
@@ -252,5 +267,5 @@ class GuestInviteService {
   }
 }
 
-final guestInviteServiceProvider =
-    Provider<GuestInviteService>((ref) => GuestInviteService());
+final guestInviteServiceProvider = Provider<GuestInviteService>(
+    (ref) => GuestInviteService(webuiBaseUrl: _webOriginOrNull()));
