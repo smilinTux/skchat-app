@@ -424,6 +424,16 @@ class ConversationScreen extends ConsumerWidget {
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final chats = ref.read(chatsProvider);
+    // Don't promote an AGENT (Lumina) 1:1 in place — a same-id group would
+    // shadow her brain DM and stop her replies. Direct to a fresh group.
+    final isAgentChat = chats.any((c) => c.peerId == peerId && c.isAgent);
+    if (isAgentChat) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('To include Lumina in a group, create a New Group and '
+            'add her — this keeps your 1:1 with her working.'),
+      ));
+      return;
+    }
     // Candidate members: other 1:1 conversations (not this one, not groups).
     final candidates = chats
         .where((c) => !c.isGroup && c.peerId != peerId)
@@ -431,53 +441,82 @@ class ConversationScreen extends ConsumerWidget {
 
     final picked = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true, // allow a tall, scrollable sheet
       backgroundColor: SovereignColors.surfaceRaised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetCtx) {
         final tt = Theme.of(sheetCtx).textTheme;
+        final maxH = MediaQuery.of(sheetCtx).size.height * 0.8;
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-                child: Text('Add people',
-                    style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(
-                  'Adding someone turns this chat into a group.',
-                  style: tt.bodySmall
-                      ?.copyWith(color: SovereignColors.textTertiary),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxH),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 10, bottom: 6),
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color:
+                          SovereignColors.textTertiary.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
-              ),
-              if (candidates.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text('No other peers to add yet.'),
-                )
-              else
-                ...candidates.map((c) => ListTile(
-                      leading: SoulAvatar(
-                        soulColor: c.resolvedSoulColor,
-                        initials: c.resolvedInitials,
-                        isAgent: c.isAgent,
-                        isOnline: c.isOnline,
-                        size: 40,
-                      ),
-                      title: Text(c.displayName),
-                      subtitle: Text(c.isAgent ? 'Agent' : 'Human',
-                          style: TextStyle(
-                              color: SovereignColors.textTertiary,
-                              fontSize: 12)),
-                      onTap: () => Navigator.of(sheetCtx).pop(c.peerId),
-                    )),
-              const SizedBox(height: 8),
-            ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                  child: Text('Add people',
+                      style:
+                          tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text(
+                    'Adding someone turns this chat into a group.',
+                    style: tt.bodySmall
+                        ?.copyWith(color: SovereignColors.textTertiary),
+                  ),
+                ),
+                if (candidates.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text('No other peers to add yet.'),
+                  )
+                else
+                  // Scrollable so you can reach every candidate, not just the
+                  // top few that fit on screen.
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: candidates.length,
+                      itemBuilder: (_, i) {
+                        final c = candidates[i];
+                        return ListTile(
+                          leading: SoulAvatar(
+                            soulColor: c.resolvedSoulColor,
+                            initials: c.resolvedInitials,
+                            isAgent: c.isAgent,
+                            isOnline: c.isOnline,
+                            size: 40,
+                          ),
+                          title: Text(c.displayName),
+                          subtitle: Text(c.isAgent ? 'Agent' : 'Human',
+                              style: TextStyle(
+                                  color: SovereignColors.textTertiary,
+                                  fontSize: 12)),
+                          onTap: () => Navigator.of(sheetCtx).pop(c.peerId),
+                        );
+                      },
+                    ),
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
         );
       },
