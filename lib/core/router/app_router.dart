@@ -30,6 +30,7 @@ import '../../features/skmap/skmap_screen.dart';
 import '../../features/skos/skos_files_screen.dart';
 import '../../features/skos/skos_control_screen.dart';
 import '../../features/join/join_screen.dart';
+import '../../features/guest/guest_landing_screen.dart';
 import '../../services/join_service.dart';
 
 /// Named route paths.
@@ -131,6 +132,14 @@ class AppRoutes {
   ///   `/join?room=ROOM&invite=TOKEN`   (guest)
   ///   `/join?room=ROOM&sovereign=1`    (sovereign)
   static const join = '/join';
+
+  /// Guest GROUP access landing (outside the authed shell):
+  ///   `/g/:token` — opens the group invite, prompts a name (first visit),
+  ///   generates+persists a browser keypair, and enters the guest room.
+  static const guestGroup = '/g/:token';
+
+  /// Build a guest-group landing path for an invite [token].
+  static String guestGroupPath(String token) => '/g/$token';
 
   /// Build a guest join link/route for [room] with an [invite] token.
   static String guestJoinPath(String room, String invite) =>
@@ -318,6 +327,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             return const _InvalidJoinScreen();
           }
           return JoinScreen(link: link);
+        },
+      ),
+
+      // ── Guest GROUP access (shareable-link, outside the shell) ───────────
+      // `/g/:token` lands an untrusted guest into ONE group with full in-room
+      // functionality (chat/files/call) but no nav/admin/invite. The landing
+      // generates+persists a WebCrypto keypair and joins; a returning guest
+      // (cached key) auto-joins.
+      GoRoute(
+        path: AppRoutes.guestGroup,
+        builder: (context, state) {
+          final token = state.pathParameters['token'] ?? '';
+          if (token.isEmpty) return const _InvalidJoinScreen();
+          return GuestLandingScreen(token: token);
         },
       ),
 

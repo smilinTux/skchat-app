@@ -63,6 +63,7 @@ dependencies:
 
   # File picker for chat attachments (multipart upload to the daemon)
   file_picker: ^11.0.2
+  web: ^1.1.0
 
   # Native synced watch-together playback (direct-file video on mobile/desktop;
   # the web surface uses HTML <video>/iframe embeds in watch_video_web.dart)
