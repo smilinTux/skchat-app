@@ -188,16 +188,122 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       // CLI unavailable — fall through to HTTP fallback.
     }
 
-    // Fallback: SKComms HTTP conversation listing (no per-message history yet).
+    // Fallback: SKComms HTTP conversation history (the ONLY path on web, where
+    // there is no local `skchat` CLI to spawn). Calls
+    // GET /api/v1/conversations/{peer_id} with the FULL peer key the backend
+    // stores under (the fqid, e.g. `lumina@chef.skworld`) — NOT the normalized
+    // short name — then folds the returned contract messages into state.
     final client = ref.read(skcommsClientProvider);
     try {
+      // Gate on health first (cheap) so an unreachable daemon short-circuits
+      // before the heavier history fetch.
       final alive = await client.isAlive();
       if (!alive) return;
-      // HTTP API does not yet expose per-conversation message history;
-      // the CLI path above is the canonical source.  Nothing more to do.
+      final raw = await client.getConversationFull(peerId);
+      if (raw.isEmpty) return;
+      await _ingestContractMessages(peerId, raw);
     } catch (_) {
-      // Daemon offline — keep Hive data.
+      // Daemon offline / endpoint missing — keep Hive data.
     }
+  }
+
+  /// Fold a list of contract message maps (from GET /api/v1/conversations/{id}
+  /// or the `/api/v1/send` reply) into conversation state.
+  ///
+  /// Directionality is derived by comparing the message `sender` against the
+  /// local operator identity (the contract carries no `is_outbound`). Control
+  /// sentinels (react/edit/receipt/typing) are folded, not rendered. Dedups by
+  /// id and by content+direction so a re-poll never doubles a bubble.
+  Future<void> _ingestContractMessages(
+    String peerId,
+    List<Map<String, dynamic>> raw,
+  ) async {
+    final daemon = ref.read(daemonServiceProvider);
+    final repo = ref.read(messageRepositoryProvider);
+    final localId = daemon.localIdentity;
+    final localShort = localId != null ? normalizePeerKey(localId) : null;
+    final peerShort = normalizePeerKey(peerId);
+
+    final existing = state.map((m) => m.id).toSet();
+    final seenSig = <String>{
+      for (final m in state) '${m.isOutbound}|${m.content}',
+    };
+    final fresh = <ChatMessage>[];
+
+    for (final json in raw) {
+      final parsed = ChatMessage.fromJson(json);
+      final senderShort =
+          parsed.sender != null ? normalizePeerKey(parsed.sender!) : '';
+      // Outbound iff WE authored it; otherwise it's the peer's (inbound).
+      final isOutbound = localShort != null && senderShort == localShort;
+      final body = parsed.content;
+
+      // Control sentinels — fold into target state instead of rendering.
+      final react = ReactionSignal.parse(body);
+      if (react != null) {
+        if (!isOutbound && _appliedControlIds.add(parsed.id)) {
+          _applyReaction(react, fallbackSender: senderShort);
+        }
+        continue;
+      }
+      final edit = EditSignal.parse(body);
+      if (edit != null) {
+        if (!isOutbound && _appliedControlIds.add(parsed.id)) {
+          _applyEdit(edit, at: parsed.timestamp);
+        }
+        continue;
+      }
+      final receipt = ReceiptSignal.parse(body);
+      if (receipt != null) {
+        if (!isOutbound && _appliedControlIds.add(parsed.id)) {
+          _applyReceipt(receipt, fallbackSender: senderShort);
+        }
+        continue;
+      }
+      final typing = TypingSignal.parse(body);
+      if (typing != null) {
+        if (!isOutbound) _handleIncomingTyping(peerShort, typing);
+        continue;
+      }
+
+      if (existing.contains(parsed.id)) continue;
+      if (displayTextFor(body) == null) continue;
+      final sig = '$isOutbound|$body';
+      if (!seenSig.add(sig)) continue;
+
+      fresh.add(parsed.copyWith(
+        peerId: peerShort,
+        isOutbound: isOutbound,
+        conversationId: peerShort,
+        deliveryStatus: isOutbound ? 'sent' : 'delivered',
+      ));
+    }
+
+    if (fresh.isEmpty) return;
+    final merged = _dedup([...state, ...fresh]);
+    merged.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    state = merged;
+    for (final msg in fresh) {
+      await repo.saveMessage(msg);
+    }
+    _sendReadReceiptsFor(peerId, fresh);
+  }
+
+  /// Append the contract `message` (echoed user turn) and `reply` (agent reply)
+  /// returned by POST /api/v1/send. Called right after a send on web so the
+  /// reply bubble appears immediately rather than 4s later on the next poll.
+  /// The optimistic user bubble is deduped away by content+direction.
+  Future<void> ingestSendResponse(
+    String peerId, {
+    Map<String, dynamic>? echoedMessage,
+    Map<String, dynamic>? reply,
+  }) async {
+    final batch = <Map<String, dynamic>>[
+      ?echoedMessage,
+      ?reply,
+    ];
+    if (batch.isEmpty) return;
+    await _ingestContractMessages(peerId, batch);
   }
 
   Future<void> addMessage(ChatMessage message) async {
