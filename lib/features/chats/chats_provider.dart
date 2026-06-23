@@ -51,45 +51,56 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
       final alive = await client.isAlive();
       if (!alive) return;
 
-      final peers = await client.getPeers();
-      if (peers.isEmpty) return;
-
       final seen = <String>{};
       final conversations = <Conversation>[];
 
-      for (final peer in peers) {
-        final name = normalizePeerKey(peer.name);
-        if (seen.contains(name)) continue;
-        seen.add(name);
-
-        // Preserve existing conversation metadata (last message, unread)
-        // while updating online status from the daemon.
-        final existing = state.cast<Conversation?>().firstWhere(
-              (c) => c?.peerId == name,
-              orElse: () => null,
-            );
-
-        conversations.add(Conversation(
-          peerId: name,
-          displayName: peer.name,
-          lastMessage: existing?.lastMessage ??
-              (peer.transports.isNotEmpty
-                  ? 'Connected via ${peer.transports.first}'
-                  : 'Peer discovered'),
-          lastMessageTime: existing?.lastMessageTime ?? peer.lastSeen ?? DateTime.now(),
-          soulColor: _agentSoulColor(name),
-          soulFingerprint: peer.fingerprint ?? name,
-          isOnline: peer.lastSeen != null &&
-              DateTime.now().difference(peer.lastSeen!).inMinutes < 30,
-          isAgent: _knownAgents.contains(name),
-          unreadCount: existing?.unreadCount ?? 0,
-          lastDeliveryStatus: existing?.lastDeliveryStatus ?? 'delivered',
-        ));
+      // 1) REAL conversations first — /api/v1/conversations returns Lumina
+      //    (pinned, named, with her last message) + any other live threads.
+      //    This is the source of truth for the list; getPeers() is only a
+      //    fallback for discovered peers that don't have a thread yet.
+      try {
+        final convs = await client.getConversations();
+        for (final m in convs) {
+          final c = Conversation.fromJson(m);
+          if (c.peerId.isEmpty) continue;
+          final key = normalizePeerKey(c.peerId);
+          if (!seen.add(key)) continue;
+          // soul colour for known agents is resolved in the UI via
+          // Conversation.resolvedSoulColor (json carries no colour).
+          conversations.add(c);
+        }
+      } catch (_) {
+        // conversations endpoint unavailable — fall through to peers only
       }
 
+      // 2) Discovered peers WITHOUT a conversation yet — show them as
+      //    startable chats (named, not the old "Peer discovered" placeholder).
+      try {
+        final peers = await client.getPeers();
+        for (final peer in peers) {
+          final raw = peer.name.isNotEmpty ? peer.name : (peer.fingerprint ?? '');
+          final key = normalizePeerKey(raw);
+          if (key.isEmpty || !seen.add(key)) continue;
+          conversations.add(Conversation(
+            peerId: key,
+            displayName: peer.name.isNotEmpty ? peer.name : key,
+            lastMessage: 'Tap to start chatting',
+            lastMessageTime: peer.lastSeen ?? DateTime.now(),
+            soulColor: _agentSoulColor(key),
+            soulFingerprint: peer.fingerprint ?? key,
+            isOnline: peer.lastSeen != null &&
+                DateTime.now().difference(peer.lastSeen!).inMinutes < 30,
+            isAgent: _knownAgents.contains(key),
+          ));
+        }
+      } catch (_) {/* peers unavailable — conversations alone is fine */}
+
       if (conversations.isNotEmpty) {
-        conversations.sort(
-            (a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
+        // Keep agents (Lumina) at the top, then by recency.
+        conversations.sort((a, b) {
+          if (a.isAgent != b.isAgent) return a.isAgent ? -1 : 1;
+          return b.lastMessageTime.compareTo(a.lastMessageTime);
+        });
         state = conversations;
         await repo.saveAll(conversations);
       }
