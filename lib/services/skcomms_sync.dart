@@ -76,27 +76,39 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   }
 
   /// Check daemon health and update connection status.
+  ///
+  /// TRUTH RULE: the daemon is ONLINE iff `/health` answers 2xx. The richer
+  /// `/api/v1/status` payload is decorative — a slow/failed status fetch must
+  /// NOT flip the UI to "offline" (that was the false-offline banner bug). So
+  /// status info is fetched best-effort and only ever decorates an already
+  /// established online state.
   Future<void> _checkDaemon() async {
     final client = ref.read(skcommsClientProvider);
+    bool alive;
     try {
-      final alive = await client.isAlive();
-      if (alive) {
-        final statusInfo = await client.getStatus();
-        state = state.copyWith(
-          status: DaemonStatus.online,
-          errorMessage: null,
-          lastPollAt: DateTime.now(),
-          transportInfo: statusInfo,
-        );
-      } else {
-        state = state.copyWith(status: DaemonStatus.offline);
-      }
-    } catch (e) {
-      state = state.copyWith(
-        status: DaemonStatus.offline,
-        errorMessage: e.toString(),
-      );
+      alive = await client.isAlive();
+    } catch (_) {
+      alive = false;
     }
+
+    if (!alive) {
+      state = state.copyWith(status: DaemonStatus.offline);
+      return;
+    }
+
+    // Health is good → online. Decorate with transport info best-effort.
+    Map<String, dynamic>? statusInfo;
+    try {
+      statusInfo = await client.getStatus();
+    } catch (_) {
+      statusInfo = null; // non-fatal: still online.
+    }
+    state = state.copyWith(
+      status: DaemonStatus.online,
+      errorMessage: null,
+      lastPollAt: DateTime.now(),
+      transportInfo: statusInfo,
+    );
   }
 
   /// Poll inbox for **call-request sentinels only**.
@@ -121,21 +133,28 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
         _seenEnvelopeIds.add(msg.envelopeId);
         _dispatchIncoming(msg);
       }
-      state = state.copyWith(
-        status: DaemonStatus.online,
-        lastPollAt: DateTime.now(),
-      );
+      // A successful poll only refreshes the heartbeat timestamp; it does NOT
+      // assert "online". Online/offline is owned authoritatively by
+      // _checkDaemon (health-gated), so the inbox poll cannot race it into a
+      // false-online (or, by symmetry, a false-offline) state.
+      if (state.status == DaemonStatus.online) {
+        state = state.copyWith(lastPollAt: DateTime.now());
+      }
     } catch (e) {
       // Don't flip status to offline on a single poll failure.
     }
   }
 
-  /// Send a message via the skchat CLI (primary), falling back to HTTP.
+  /// Send a message via the skchat CLI (primary, native), falling back to HTTP.
   ///
-  /// The CLI path stores the message locally AND delivers via SKComms transport.
-  /// Returns the envelope ID (from HTTP) or a CLI-generated token on success,
-  /// null on complete failure.
-  Future<String?> sendMessage({
+  /// On the web there is no local CLI, so the HTTP contract path is the real
+  /// send. The contract returns the persisted user turn AND the agent's reply;
+  /// we surface them on the [SendResult] so the conversation can render the
+  /// reply bubble immediately (see [SendResult.echoedMessage] / [reply]).
+  ///
+  /// Returns the [SendResult] on the HTTP path (carrying the reply), or a
+  /// synthetic CLI result on the native path, or null on complete failure.
+  Future<SendResult?> sendMessage({
     required String peerId,
     required String content,
     String? threadId,
@@ -143,7 +162,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     String? contentType,
     Map<String, dynamic>? rich,
   }) async {
-    // Primary: skchat CLI — local store + transport delivery.
+    // Primary: skchat CLI — local store + transport delivery (native only).
     final daemon = ref.read(daemonServiceProvider);
     final cliResult = await daemon.sendMessage(
       recipient: peerId,
@@ -152,11 +171,12 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
       replyTo: inReplyTo,
     );
     if (cliResult.success) {
-      // Return a synthetic ID so callers can track the message.
-      return 'cli_${DateTime.now().millisecondsSinceEpoch}';
+      // CLI stored + delivered locally; the conversation poll picks up both the
+      // echo and the reply from `skchat history`. No contract reply to surface.
+      return const SendResult(delivered: true, envelopeId: '');
     }
 
-    // Fallback: SKComms HTTP (transport only, no local store).
+    // Fallback (and the sole path on web): SKComms HTTP contract send.
     final client = ref.read(skcommsClientProvider);
     try {
       final result = await client.sendMessage(
@@ -167,7 +187,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
         contentType: contentType,
         rich: rich,
       );
-      return result.delivered ? result.envelopeId : null;
+      return result.delivered ? result : null;
     } catch (_) {
       return null;
     }

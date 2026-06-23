@@ -52,18 +52,37 @@ class SKCommsClient {
   }
 
   /// GET /api/v1/status — full transport health report.
+  ///
+  /// Returns a normalized `Map<String, dynamic>` and NEVER throws on a benign
+  /// shape mismatch: Dio's JSON decode can hand back a `Map<dynamic, dynamic>`
+  /// (or a non-map on some proxies), and a hard `as Map<String, dynamic>` cast
+  /// on that throws — which previously bubbled up to `_checkDaemon` and flipped
+  /// the UI to a FALSE "daemon offline" even though `/health` + `/api/v1/status`
+  /// were both 200. We accept any 2xx body and coerce it; a non-map 200 yields
+  /// an empty map (still "online"), not an exception.
   Future<Map<String, dynamic>> getStatus() async {
     final resp = await _dio.get('/api/v1/status');
-    return resp.data as Map<String, dynamic>;
+    final data = resp.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return <String, dynamic>{};
   }
 
   // ── Messaging ─────────────────────────────────────────────────────────────
 
   /// POST /api/v1/send — send a message to a peer.
   ///
-  /// [recipient] is the peer's name or fingerprint (e.g. 'lumina').
-  /// [message] is the plaintext content.
-  /// Returns the envelope ID on success.
+  /// [recipient] is the peer's fqid / name / fingerprint (e.g.
+  /// `lumina@chef.skworld`). [message] is the plaintext content.
+  ///
+  /// The live contract returns `{ok, reply:{full message}, message:{full
+  /// message}}` — the echoed user turn AND the agent's reply, both already
+  /// persisted server-side. We surface BOTH (parsed) so the caller can render
+  /// the reply bubble immediately, without waiting for the next history poll.
+  /// We also tolerate the OLDER daemon shape (`{delivered, envelope_id,
+  /// transport_used}`) so a mixed fleet keeps working.
+  ///
+  /// Both `peer_id` and `recipient` are sent (the contract reads `peer_id`;
+  /// `recipient` is kept for the legacy daemon).
   Future<SendResult> sendMessage({
     required String recipient,
     required String message,
@@ -73,22 +92,38 @@ class SKCommsClient {
     Map<String, dynamic>? rich,
   }) async {
     final body = <String, dynamic>{
+      // Contract key first, legacy key second (both harmless / additive).
+      'peer_id': recipient,
       'recipient': recipient,
+      'content': message,
       'message': message,
       'thread_id': threadId,
       // Contract field name is `reply_to_id`; keep `in_reply_to` for the older
       // daemon build that read that key (additive, both harmless).
       'reply_to_id': inReplyTo,
       'in_reply_to': inReplyTo,
-      if (contentType != null) 'content_type': contentType,
-      if (rich != null) 'rich': rich,
+      'content_type': ?contentType,
+      'rich': ?rich,
     };
     final resp = await _dio.post('/api/v1/send', data: body);
-    final data = resp.data as Map<String, dynamic>;
+    final data = resp.data is Map
+        ? Map<String, dynamic>.from(resp.data as Map)
+        : <String, dynamic>{};
+    final code = resp.statusCode ?? 0;
+    final ok = (data['ok'] as bool?) ?? (code >= 200 && code < 300);
+    final echoed = data['message'];
+    final reply = data['reply'];
     return SendResult(
-      delivered: data['delivered'] as bool? ?? false,
-      envelopeId: data['envelope_id'] as String? ?? '',
+      // `delivered` is true for a 2xx contract response (`ok`) OR the legacy
+      // `delivered` flag.
+      delivered: (data['delivered'] as bool?) ?? ok,
+      envelopeId: data['envelope_id'] as String? ??
+          (echoed is Map ? echoed['id'] as String? : null) ??
+          '',
       transportUsed: data['transport_used'] as String?,
+      echoedMessage:
+          echoed is Map ? Map<String, dynamic>.from(echoed) : null,
+      reply: reply is Map ? Map<String, dynamic>.from(reply) : null,
     );
   }
 
@@ -439,11 +474,21 @@ class SendResult {
     required this.delivered,
     required this.envelopeId,
     this.transportUsed,
+    this.echoedMessage,
+    this.reply,
   });
 
   final bool delivered;
   final String envelopeId;
   final String? transportUsed;
+
+  /// The server-persisted user turn from the contract `message` field (full
+  /// message map: `{id,sender,body,ts,...}`). Null on the legacy daemon.
+  final Map<String, dynamic>? echoedMessage;
+
+  /// The agent's reply from the contract `reply` field (full message map).
+  /// Null when the daemon did not return a synchronous reply.
+  final Map<String, dynamic>? reply;
 }
 
 class InboxMessage {

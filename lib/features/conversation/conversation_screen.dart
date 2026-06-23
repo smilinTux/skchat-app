@@ -120,15 +120,30 @@ class ConversationScreen extends ConsumerWidget {
                       sender: me,
                     ),
                   );
-              // Fire-and-forget to the daemon; carry reply_to_id/thread_id.
-              ref.read(skcommsSyncProvider.notifier).sendMessage(
-                    peerId: peerId,
-                    content: text,
-                    inReplyTo: reply?.id,
-                    threadId: reply?.threadId,
-                  );
-              // Clear the reply chip after sending.
+              // Clear the reply chip immediately (the optimistic bubble is in).
               ref.read(replyStateProvider(peerId).notifier).clear();
+              // Send to the daemon; carry reply_to_id/thread_id. The contract
+              // returns the persisted user turn AND the agent's reply — fold
+              // both in so the reply bubble appears without waiting for the
+              // next 4s history poll. (Native CLI sends carry no reply here;
+              // the history poll renders them instead.)
+              final result =
+                  await ref.read(skcommsSyncProvider.notifier).sendMessage(
+                        peerId: peerId,
+                        content: text,
+                        inReplyTo: reply?.id,
+                        threadId: reply?.threadId,
+                      );
+              if (result != null &&
+                  (result.echoedMessage != null || result.reply != null)) {
+                await ref
+                    .read(conversationProvider(peerId).notifier)
+                    .ingestSendResponse(
+                      peerId,
+                      echoedMessage: result.echoedMessage,
+                      reply: result.reply,
+                    );
+              }
             },
             onAttach: () => _pickAndSendAttachment(context, ref, peerId),
             onTyping: (isTyping) => ref
