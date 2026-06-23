@@ -4,10 +4,12 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import 'access_client.dart';
 import 'skos_models.dart';
@@ -697,25 +699,23 @@ class _NodeChip extends StatelessWidget {
 
 // ── Viewer (opened as a full-screen route ABOVE the tab shell) ──────────────
 
-/// Open the media viewer as a full-screen route on the **root** navigator so it
-/// sits ABOVE the [ShellRoute] (and therefore above the bottom nav bar) — the
-/// old bug rendered the viewer inside the shell's child Navigator, so the
-/// `Chats/Spaces/Activity/Ops/Me` bar + iOS browser chrome overlapped the media
-/// controls. `rootNavigator: true` pushes onto the top-level Navigator, whose
-/// route covers the whole screen; an opaque black [PageRouteBuilder] gives the
-/// immersive black backdrop with a quick fade-in.
+/// Open the media viewer as the full-screen `/skos/view` route. It is a
+/// **top-level GoRouter route** (a sibling of the [ShellRoute]) so it sits ABOVE
+/// the bottom nav bar AND so push/pop stay in sync with browser history.
+///
+/// The old implementation pushed an imperative [PageRouteBuilder] onto the root
+/// Navigator, bypassing GoRouter; on web that desynced from the browser URL, so
+/// closing (the ✕ → root-Navigator pop, or the phone-browser back gesture)
+/// re-resolved GoRouter's own stack and dumped the user back at the root
+/// listing instead of the directory they were browsing. Pushing the route
+/// through GoRouter ([context.push]) means [Navigator.pop] / the back gesture
+/// pop exactly this route, returning to the live `/skos/files` screen — which
+/// still holds [currentPathProvider], so we land back in the SAME folder.
+///
+/// We do NOT touch [currentPathProvider] here; only [openFileProvider] (set by
+/// the caller) changes, so the Files screen underneath is undisturbed.
 void _openViewer(BuildContext context) {
-  Navigator.of(context, rootNavigator: true).push(
-    PageRouteBuilder<void>(
-      opaque: true,
-      barrierColor: Colors.black,
-      fullscreenDialog: true,
-      transitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (_, _, _) => const SkosFileViewer(),
-      transitionsBuilder: (_, animation, _, child) =>
-          FadeTransition(opacity: animation, child: child),
-    ),
-  );
+  context.push(AppRoutes.skosView);
 }
 
 /// The file viewer. For the swipeable **gallery kinds** (image/video/audio) it
@@ -770,8 +770,20 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   // The active page's video/audio controller (null for images / while loading);
   // drives the bottom control bar + center play button.
   VideoPlayerController? _activeController;
+  // Tracks the active controller's last-seen playing state so [_onActiveTick]
+  // can detect the play→pause / play→end edge and re-summon the chrome.
+  bool _wasPlaying = false;
   // Auto-hide timer for the chrome during video playback.
   Timer? _hideTimer;
+
+  // ── Drag-to-dismiss state ──────────────────────────────────────────────────
+  // Cumulative vertical drag offset (px) of the in-progress dismiss gesture; the
+  // whole stack translates by this + fades as |offset| grows. 0 = at rest.
+  double _dragOffset = 0;
+  // Pixels of vertical travel past which a release/fling dismisses the viewer.
+  static const double _kDismissThreshold = 120;
+  // Fling velocity (px/s) that dismisses regardless of distance (a quick flick).
+  static const double _kDismissFlingVelocity = 700;
 
   @override
   void dispose() {
@@ -943,20 +955,40 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
 
     final viewPadding = MediaQuery.viewPaddingOf(context);
 
+    // Drag-to-dismiss visuals: as the stack is dragged up/down it translates with
+    // the finger and fades toward the black backdrop (snaps back if released
+    // under threshold). Opacity eases from 1 → ~0.4 across one threshold of
+    // travel so the dismiss feels physical without going fully invisible mid-drag.
+    final dragProgress =
+        (_dragOffset.abs() / _kDismissThreshold).clamp(0.0, 1.0);
+    final contentOpacity = 1.0 - (dragProgress * 0.6);
+
     return PopScope(
       // Default pop behaviour (back gesture / ✕ both close the route).
       canPop: true,
       child: Scaffold(
-        // Opaque black backdrop. The route itself is also opaque (PageRouteBuilder
-        // opaque:true) so the shell never shows through.
+        // Opaque black backdrop. The route itself is also opaque so the shell
+        // never shows through (the dragged content fades onto this black).
         backgroundColor: Colors.black,
         // Do NOT add a bottomNavigationBar / AppBar — this is the WHOLE screen.
         body: GestureDetector(
-          // A tap anywhere that isn't the media surface still toggles the bars,
-          // so the user can always summon the close/options affordances.
+          // ONE tap on the surface toggles the chrome (top bar with ✕ + bottom
+          // controls) — decoupled from play/pause, so the user can always
+          // summon the close button. `deferToChild` lets taps on the actual
+          // buttons (✕ / ⋮ / play) win.
           behavior: HitTestBehavior.deferToChild,
           onTap: _toggleChrome,
-          child: Stack(
+          // Vertical drag = drag-to-dismiss (Photos/Instagram style). HORIZONTAL
+          // paging is owned by the inner PageView (orthogonal axis → no
+          // conflict); the gesture is disabled while an image is pinch-zoomed so
+          // panning a zoomed photo never closes the viewer.
+          onVerticalDragUpdate: _zoomed ? null : _onDismissDragUpdate,
+          onVerticalDragEnd: _zoomed ? null : _onDismissDragEnd,
+          child: Opacity(
+            opacity: contentOpacity,
+            child: Transform.translate(
+              offset: Offset(0, _dragOffset),
+              child: Stack(
             fit: StackFit.expand,
             children: [
               // ── Media pager (fills the screen; each page insets its media to
@@ -1046,16 +1078,50 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
                   subtitle: items.length > 1
                       ? '${current.node} · ${_pageIndex + 1} / ${items.length}'
                       : '${current.node} · ${current.path}',
-                  onClose: () =>
-                      Navigator.of(context, rootNavigator: true).maybePop(),
+                  // Close via GoRouter pop so push/pop stay in sync with
+                  // browser history — returns to the live /skos/files screen,
+                  // which still shows the same browsed dir (currentPathProvider).
+                  onClose: _closeViewer,
                   onOptions: () => showMediaOptionsSheet(context, current),
                 ),
               ),
             ],
           ),
+            ),
+          ),
         ),
       ),
     );
+  }
+
+  /// Pop the viewer route. Prefers GoRouter's pop (keeps browser history in
+  /// sync); falls back to the root Navigator if there is nothing for GoRouter
+  /// to pop (e.g. the viewer was opened standalone in a test).
+  void _closeViewer() {
+    final router = GoRouter.maybeOf(context);
+    if (router != null && router.canPop()) {
+      router.pop();
+    } else {
+      Navigator.of(context, rootNavigator: true).maybePop();
+    }
+  }
+
+  /// Follow the finger while dragging vertically (either direction).
+  void _onDismissDragUpdate(DragUpdateDetails d) {
+    setState(() => _dragOffset += d.delta.dy);
+  }
+
+  /// On release: dismiss if dragged past the distance threshold OR flung fast
+  /// enough (in the direction of travel); otherwise spring back to rest.
+  void _onDismissDragEnd(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    final pastDistance = _dragOffset.abs() > _kDismissThreshold;
+    final flung = v.abs() > _kDismissFlingVelocity;
+    if (pastDistance || flung) {
+      _closeViewer();
+    } else {
+      setState(() => _dragOffset = 0);
+    }
   }
 
   /// Toggle the play/pause state of the active page's controller (the gesture
@@ -1074,9 +1140,30 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   }
 
   /// Rebuild on the active controller's ticks so the bottom bar + center play
-  /// button reflect real playback state. When playback STARTS we arm auto-hide.
+  /// button reflect real playback state. Also re-shows the chrome whenever the
+  /// video transitions to PAUSED or ENDED — so a user is never left on a stopped
+  /// video with the ✕ auto-hidden (the close button is always re-summoned).
   void _onActiveTick() {
     if (!mounted) return;
+    final c = _activeController;
+    final playing = c?.value.isPlaying ?? false;
+    final v = c?.value;
+    final ended = v != null &&
+        v.isInitialized &&
+        v.duration > Duration.zero &&
+        v.position >= v.duration;
+    final stopped = !playing || ended;
+    // On a play→pause / play→end transition, force the chrome back so the close
+    // affordance reappears; cancel any pending auto-hide.
+    if (stopped && _wasPlaying) {
+      _hideTimer?.cancel();
+      if (!_chromeVisible) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _chromeVisible = true);
+        });
+      }
+    }
+    _wasPlaying = playing;
     setState(() {});
   }
 
@@ -1096,30 +1183,29 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
     }
   }
 
-  /// Tap toggles chrome. Hiding is only allowed while a video is playing — for
-  /// images / paused video we keep the bars so close/play stay reachable.
+  /// A single tap on the media surface TOGGLES the chrome (top bar with ✕ +
+  /// bottom controls). This is fully decoupled from playback — it never
+  /// plays/pauses. Toggling works the same for images and video:
+  ///   * if the chrome is hidden → show it (and, if a video is playing, re-arm
+  ///     the 3 s auto-hide so it can fade again),
+  ///   * if the chrome is shown → hide it.
+  /// The user can always bring back the ✕ with one tap, and pausing/ending a
+  /// video re-shows the chrome ([_onActiveTick]) — so they are never stranded.
   void _toggleChrome() {
-    final c = _activeController;
-    final playing = c?.value.isPlaying ?? false;
-    if (_chromeVisible && playing) {
+    if (_chromeVisible) {
       _hideTimer?.cancel();
       setState(() => _chromeVisible = false);
     } else {
+      final playing = _activeController?.value.isPlaying ?? false;
       _revealChrome(autoHide: playing);
     }
   }
 
-  /// Tap on the video/audio surface: when PAUSED, the tap PLAYS (the standard
-  /// gallery affordance — same as the center button); when PLAYING, it toggles
-  /// the chrome (so the user can pause via the bottom bar / find close).
-  void _onSurfaceTap() {
-    final c = _activeController;
-    if (c != null && c.value.isInitialized && !c.value.isPlaying) {
-      _togglePlayActive();
-    } else {
-      _toggleChrome();
-    }
-  }
+  /// Tap on the video/audio surface ONLY toggles the chrome — it never controls
+  /// playback. Play/pause is driven exclusively by the center ▶ button and the
+  /// bottom bar's play/pause button, so a tap to find the ✕ can never
+  /// accidentally pause (or play) the media.
+  void _onSurfaceTap() => _toggleChrome();
 
   Widget _buildBody(FileRef open, MediaKind kind, bool isTextKind) {
     switch (kind) {
@@ -1219,9 +1305,17 @@ class _GalleryPage extends StatelessWidget {
     final url = mediaStreamUrl(item.node, item.path);
     // The fit-box: media lives between the top bar and the bottom control bar.
     final body = switch (item.kind) {
-      MediaKind.image => _ImageView(
-          url: url,
-          onZoomChanged: onZoomChanged,
+      // Image taps must toggle the chrome too — InteractiveViewer owns pan/zoom
+      // gestures, so the parent's deferToChild tap never reaches it. A
+      // translucent GestureDetector here catches the tap (chrome toggle) while
+      // letting pinch/pan flow through to the InteractiveViewer underneath.
+      MediaKind.image => GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: onTapSurface,
+          child: _ImageView(
+            url: url,
+            onZoomChanged: onZoomChanged,
+          ),
         ),
       MediaKind.video || MediaKind.audio => active
           ? _MediaPlayer(

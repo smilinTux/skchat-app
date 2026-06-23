@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:skchat/core/router/app_router.dart';
 import 'package:skchat/features/skos/access_client.dart';
 import 'package:skchat/features/skos/skos_files_screen.dart';
 import 'package:skchat/features/skos/skos_models.dart';
@@ -108,11 +110,26 @@ class _FixedClient implements AccessClient {
   void dispose() {}
 }
 
+/// A minimal GoRouter that mirrors production: `/` = the Files browser, and the
+/// full-screen `/skos/view` viewer route that `_openViewer` pushes. Using a
+/// router (not a bare `MaterialApp(home:)`) is required now that opening a file
+/// pushes the viewer through GoRouter (the close→root bugfix).
+GoRouter _testRouter() => GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const SkosFilesScreen()),
+        GoRoute(
+          path: AppRoutes.skosView,
+          builder: (_, _) => const SkosFileViewer(),
+        ),
+      ],
+    );
+
 Widget _app(AccessClient client) => ProviderScope(
       overrides: [
         accessClientProvider.overrideWithValue(client),
       ],
-      child: const MaterialApp(home: SkosFilesScreen()),
+      child: MaterialApp.router(routerConfig: _testRouter()),
     );
 
 void main() {
@@ -673,5 +690,267 @@ void main() {
       await tester.pump();
       expect(fake.value.isPlaying, isTrue);
     });
+  });
+
+  // ── New UX fixes: drag-to-dismiss, tap-toggles-chrome, close preserves dir ──
+
+  /// True when the top-bar chrome (the ✕ row) is currently shown. The chrome is
+  /// hidden by fading to opacity 0 (it stays mounted), so presence of the ✕ icon
+  /// is NOT a reliable signal — read the wrapping AnimatedOpacity instead.
+  bool chromeShown(WidgetTester tester) {
+    final close = find.byIcon(Icons.close_rounded);
+    if (close.evaluate().isEmpty) return false;
+    final opacity = tester.widget<AnimatedOpacity>(
+      find.ancestor(of: close, matching: find.byType(AnimatedOpacity)).first,
+    );
+    return opacity.opacity > 0.5;
+  }
+
+
+  /// Build the viewer behind a real GoRouter at a NON-root browsed dir, so we
+  /// can drag/close it and assert what we return to. Returns the container so
+  /// tests can read currentPathProvider after the pop.
+  ProviderContainer viewerContainer(List<FsEntry> entries, FileRef open,
+      {String dir = '/home/x/clawd/our-pics/lumina-portraits'}) {
+    return ProviderContainer(overrides: [
+      accessClientProvider.overrideWithValue(_FixedClient()),
+      currentPathProvider.overrideWith((ref) => dir),
+      dirListingProvider.overrideWith((ref) async => entries),
+      openFileProvider.overrideWith((ref) => open),
+    ]);
+  }
+
+  GoRouter viewerRouter() => GoRouter(
+        initialLocation: '/skos/files',
+        routes: [
+          GoRoute(
+            path: '/skos/files',
+            builder: (_, _) => const SkosFilesScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.skosView,
+            builder: (_, _) => const SkosFileViewer(),
+          ),
+        ],
+      );
+
+  testWidgets('drag-to-dismiss: a downward drag past threshold pops the viewer',
+      (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+      const FsEntry(name: 'b.png', path: '/m/b.png', type: FsEntryType.file),
+    ];
+    final container = viewerContainer(
+      entries,
+      (node: '.158', path: '/m/a.png'),
+    );
+    addTearDown(container.dispose);
+    final router = viewerRouter();
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+    await tester.pump();
+    // Drive onto the viewer route.
+    router.push(AppRoutes.skosView);
+    await tester.pumpAndSettle();
+    expect(find.byType(PageView), findsOneWidget);
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+
+    // Drag the media surface DOWN well past the 120px dismiss threshold.
+    await tester.drag(find.byType(PageView), const Offset(0, 320));
+    await tester.pumpAndSettle();
+
+    // The viewer route popped — we are back on the Files browser, no viewer.
+    expect(find.byType(SkosFileViewer), findsNothing);
+    expect(find.byType(PageView), findsNothing);
+    expect(find.text('skos Files'), findsOneWidget);
+  });
+
+  testWidgets('drag-to-dismiss: an UPWARD drag past threshold also pops',
+      (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+    ];
+    final container = viewerContainer(
+      entries,
+      (node: '.158', path: '/m/a.png'),
+    );
+    addTearDown(container.dispose);
+    final router = viewerRouter();
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+    await tester.pump();
+    router.push(AppRoutes.skosView);
+    await tester.pumpAndSettle();
+    expect(find.byType(PageView), findsOneWidget);
+
+    await tester.drag(find.byType(PageView), const Offset(0, -320));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SkosFileViewer), findsNothing);
+    expect(find.text('skos Files'), findsOneWidget);
+  });
+
+  testWidgets('drag-to-dismiss: a small drag under threshold snaps back (stays)',
+      (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+    ];
+    final container = viewerContainer(
+      entries,
+      (node: '.158', path: '/m/a.png'),
+    );
+    addTearDown(container.dispose);
+    final router = viewerRouter();
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+    await tester.pump();
+    router.push(AppRoutes.skosView);
+    await tester.pumpAndSettle();
+
+    // A short, slow drag (under the 120px threshold) must NOT dismiss.
+    await tester.drag(find.byType(PageView), const Offset(0, 40));
+    await tester.pumpAndSettle();
+    expect(find.byType(SkosFileViewer), findsOneWidget);
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+  });
+
+  group('tap toggles chrome (decoupled from play)', () {
+    late _FakeVideoController fake;
+    setUp(() {
+      fake = _FakeVideoController();
+      debugMediaControllerFactory = (_) => fake;
+    });
+    tearDown(() {
+      debugMediaControllerFactory = null;
+    });
+
+    testWidgets(
+        'a tap on the surface toggles the chrome ✕ without changing playback',
+        (tester) async {
+      final entries = <FsEntry>[
+        const FsEntry(
+            name: 'clip.mp4', path: '/m/clip.mp4', type: FsEntryType.file),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accessClientProvider.overrideWithValue(_FixedClient()),
+            currentPathProvider.overrideWith((ref) => '/m'),
+            dirListingProvider.overrideWith((ref) async => entries),
+            openFileProvider
+                .overrideWith((ref) => (node: '.158', path: '/m/clip.mp4')),
+          ],
+          child: const MaterialApp(home: SkosFileViewer()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      // Chrome starts visible; nothing is playing.
+      expect(chromeShown(tester), isTrue);
+      expect(fake.value.isPlaying, isFalse);
+
+      // Start playback via the bottom-bar button (the ONLY play path), then let
+      // the 3 s auto-hide fade the chrome out.
+      await tester.tap(find.byKey(const Key('skosBottomBarPlayPause')));
+      await tester.pump();
+      expect(fake.value.isPlaying, isTrue);
+      await tester.pump(const Duration(seconds: 4)); // auto-hide elapses
+      await tester.pump(const Duration(milliseconds: 300)); // fade out
+      expect(chromeShown(tester), isFalse);
+
+      // ONE tap on the surface brings the chrome back — and does NOT pause.
+      await tester.tapAt(tester.getCenter(find.byType(PageView)));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(chromeShown(tester), isTrue);
+      expect(fake.value.isPlaying, isTrue); // playback untouched by the tap
+
+      // Tapping again hides the chrome (still playing) — a true toggle.
+      await tester.tapAt(tester.getCenter(find.byType(PageView)));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(chromeShown(tester), isFalse);
+      expect(fake.value.isPlaying, isTrue);
+    });
+  });
+
+  testWidgets(
+      'tap toggles chrome on an IMAGE (✕ hides then re-shows on next tap)',
+      (tester) async {
+    final entries = <FsEntry>[
+      const FsEntry(name: 'a.png', path: '/m/a.png', type: FsEntryType.file),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accessClientProvider.overrideWithValue(_FixedClient()),
+          currentPathProvider.overrideWith((ref) => '/m'),
+          dirListingProvider.overrideWith((ref) async => entries),
+          openFileProvider
+              .overrideWith((ref) => (node: '.158', path: '/m/a.png')),
+        ],
+        child: const MaterialApp(home: SkosFileViewer()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // Chrome visible on entry.
+    expect(chromeShown(tester), isTrue);
+    // One tap on the surface hides it…
+    await tester.tapAt(tester.getCenter(find.byType(PageView)));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(chromeShown(tester), isFalse);
+    // …another tap brings the ✕ back (never stranded).
+    await tester.tapAt(tester.getCenter(find.byType(PageView)));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(chromeShown(tester), isTrue);
+  });
+
+  testWidgets(
+      'closing the viewer preserves currentPathProvider (returns to same dir)',
+      (tester) async {
+    const dir = '/home/x/clawd/our-pics/lumina-portraits';
+    final entries = <FsEntry>[
+      const FsEntry(name: 'a.png', path: '$dir/a.png', type: FsEntryType.file),
+    ];
+    final container = viewerContainer(
+      entries,
+      (node: '.158', path: '$dir/a.png'),
+      dir: dir,
+    );
+    addTearDown(container.dispose);
+    final router = viewerRouter();
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    expect(container.read(currentPathProvider), dir);
+    router.push(AppRoutes.skosView);
+    await tester.pumpAndSettle();
+    // Opening the viewer must NOT change the browsed dir.
+    expect(container.read(currentPathProvider), dir);
+
+    // Close via the ✕ — pops back to the Files screen.
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.pumpAndSettle();
+
+    // Back on the Files browser, STILL in the same folder (not root).
+    expect(find.byType(SkosFileViewer), findsNothing);
+    expect(find.text('skos Files'), findsOneWidget);
+    expect(container.read(currentPathProvider), dir);
   });
 }

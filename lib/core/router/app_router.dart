@@ -64,6 +64,13 @@ class AppRoutes {
   /// skos control panel (per-node health/node_info): /skos/control
   static const skosControl = '/skos/control';
 
+  /// skos full-screen media viewer (image/video/audio gallery), opened ABOVE
+  /// the shell so the bottom nav never shows through. Pushed via `context.push`
+  /// so browser-history back / the in-app ✕ pop consistently back to the live
+  /// skos Files screen (preserving its browsed dir) instead of resetting to
+  /// root — see SkosFileViewer + the close→root bugfix.
+  static const skosView = '/skos/view';
+
   /// A single Space room (takes a SpaceJoin via extra): /spaces/:id
   static const spaceRoom = '/spaces/:id';
 
@@ -265,6 +272,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.qrLogin,
         builder: (context, state) => const QrLoginScreen(),
+      ),
+
+      // ── skos full-screen media viewer (above the shell) ─────────────────
+      // A top-level (non-shell) route so it covers the bottom nav, with an
+      // opaque black backdrop + quick fade. Being a real GoRouter route keeps
+      // push/pop in sync with browser history: closing (✕ or back) pops back
+      // to the live /skos/files screen, which still holds its browsed dir
+      // (currentPathProvider) — fixing the close→root regression that the old
+      // imperative root-Navigator push caused on web.
+      GoRoute(
+        path: AppRoutes.skosView,
+        pageBuilder: (context, state) => CustomTransitionPage<void>(
+          key: state.pageKey,
+          opaque: true,
+          barrierColor: Colors.black,
+          fullscreenDialog: true,
+          transitionDuration: const Duration(milliseconds: 180),
+          child: const SkosFileViewer(),
+          transitionsBuilder: (_, animation, _, child) =>
+              FadeTransition(opacity: animation, child: child),
+        ),
       ),
 
       // ── Conference deep-link join (Sovereign vs Guest chooser) ──────────
