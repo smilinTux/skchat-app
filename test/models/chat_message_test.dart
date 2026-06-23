@@ -30,7 +30,7 @@ void main() {
         deliveryStatus: 'delivered',
         isAgent: true,
         senderName: 'Jarvis',
-        reactions: const {'fire': 2},
+        reactionSenders: const {'fire': ['u0', 'u1']},
       );
 
       final updated = original.copyWith(deliveryStatus: 'read');
@@ -57,7 +57,7 @@ void main() {
       final updated = original.copyWith(
         content: 'Updated',
         deliveryStatus: 'delivered',
-        reactions: const {'heart': 1},
+        reactionSenders: const {'heart': ['u0']},
       );
 
       expect(updated.content, 'Updated');
@@ -136,7 +136,7 @@ void main() {
           deliveryStatus: 'delivered',
           isEncrypted: true,
           replyToId: 'msg0',
-          reactions: const {'thumbsup': 1},
+          reactionSenders: const {'thumbsup': ['u0']},
           isAgent: false,
           senderName: 'Chef',
         );
@@ -145,13 +145,13 @@ void main() {
 
         expect(json['id'], 'msg1');
         expect(json['peer_id'], 'jarvis');
-        expect(json['content'], 'All green.');
-        expect(json['timestamp'], timestamp.toIso8601String());
+        expect(json['body'], 'All green.');
+        expect(json['ts'], timestamp.toIso8601String());
         expect(json['is_outbound'], true);
         expect(json['delivery_status'], 'delivered');
         expect(json['is_encrypted'], true);
         expect(json['reply_to_id'], 'msg0');
-        expect(json['reactions'], {'thumbsup': 1});
+        expect((json['reactions'] as Map)['thumbsup'], ['u0']);
         expect(json['is_agent'], false);
         expect(json['sender_name'], 'Chef');
       });
@@ -164,7 +164,7 @@ void main() {
           timestamp: DateTime(2026, 2, 27, 10, 15),
           isOutbound: true,
           deliveryStatus: 'read',
-          reactions: const {'star': 5},
+          reactionSenders: const {'star': ['u0', 'u1', 'u2', 'u3', 'u4']},
           isAgent: true,
           senderName: 'Opus',
         );

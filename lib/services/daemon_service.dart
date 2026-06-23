@@ -249,6 +249,8 @@ class DaemonService {
   Future<DaemonSendResult> sendMessage({
     required String recipient,
     required String content,
+    String? threadId,
+    String? replyTo,
   }) async {
     if (kIsWeb) {
       // No local CLI on the web — caller falls back to the HTTP SKComm client.
@@ -258,9 +260,16 @@ class DaemonService {
       );
     }
     try {
+      final args = <String>['send', recipient, content];
+      if (threadId != null && threadId.isNotEmpty) {
+        args.addAll(['--thread', threadId]);
+      }
+      if (replyTo != null && replyTo.isNotEmpty) {
+        args.addAll(['--reply-to', replyTo]);
+      }
       final result = await Process.run(
         skchatBin,
-        ['send', recipient, content],
+        args,
         workingDirectory: _workingDir,
         environment: {'SKCHAT_IDENTITY': _identity},
         stdoutEncoding: utf8,

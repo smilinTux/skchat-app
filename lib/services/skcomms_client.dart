@@ -65,12 +65,19 @@ class SKCommsClient {
     required String message,
     String? threadId,
     String? inReplyTo,
+    String? contentType,
+    Map<String, dynamic>? rich,
   }) async {
-    final body = {
+    final body = <String, dynamic>{
       'recipient': recipient,
       'message': message,
       'thread_id': threadId,
+      // Contract field name is `reply_to_id`; keep `in_reply_to` for the older
+      // daemon build that read that key (additive, both harmless).
+      'reply_to_id': inReplyTo,
       'in_reply_to': inReplyTo,
+      if (contentType != null) 'content_type': contentType,
+      if (rich != null) 'rich': rich,
     };
     final resp = await _dio.post('/api/v1/send', data: body);
     final data = resp.data as Map<String, dynamic>;
@@ -251,6 +258,110 @@ class SKCommsClient {
     );
     return (resp.data ?? {})['signature'] as String? ?? '';
   }
+  // ── Typed-message contract (react / edit / receipt / thread / conversation) ─
+
+  /// POST /api/v1/react -- toggle an emoji reaction on a message.
+  ///
+  /// [op] is 'add' or 'remove'. Same-origin via the webui. Returns true on a
+  /// 2xx; callers treat reactions optimistically and tolerate failure.
+  Future<bool> react({
+    required String conversationId,
+    required String messageId,
+    required String emoji,
+    String op = 'add',
+  }) async {
+    try {
+      final resp = await _dio.post('/api/v1/react', data: {
+        'conversation_id': conversationId,
+        'message_id': messageId,
+        'emoji': emoji,
+        'op': op,
+      });
+      final code = resp.statusCode ?? 0;
+      return code >= 200 && code < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// POST /api/v1/edit -- edit a message body (server enforces the 24h window).
+  Future<bool> edit({
+    required String messageId,
+    required String body,
+  }) async {
+    try {
+      final resp = await _dio.post('/api/v1/edit', data: {
+        'message_id': messageId,
+        'body': body,
+      });
+      final code = resp.statusCode ?? 0;
+      return code >= 200 && code < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// POST /api/v1/receipt -- mark a message delivered/read.
+  ///
+  /// [kind] is 'delivered' or 'read'.
+  Future<bool> receipt({
+    required String conversationId,
+    required String messageId,
+    required String kind,
+  }) async {
+    try {
+      final resp = await _dio.post('/api/v1/receipt', data: {
+        'conversation_id': conversationId,
+        'message_id': messageId,
+        'kind': kind,
+      });
+      final code = resp.statusCode ?? 0;
+      return code >= 200 && code < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// GET /api/v1/thread/{id} -- fetch all messages in a thread.
+  ///
+  /// Returns raw maps (the caller builds [ChatMessage]s with the right
+  /// directionality). Empty list on error.
+  Future<List<Map<String, dynamic>>> getThread(String threadId) async {
+    try {
+      final resp = await _dio.get<dynamic>(
+        '/api/v1/thread/${Uri.encodeComponent(threadId)}',
+      );
+      final data = resp.data;
+      final list = data is Map ? (data['messages'] as List?) : (data as List?);
+      return (list ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// GET /api/v1/conversations/{id} -- full typed-contract conversation
+  /// (messages with reactions/receipts/edits). Empty list on error.
+  Future<List<Map<String, dynamic>>> getConversationFull(
+    String conversationId,
+  ) async {
+    try {
+      final resp = await _dio.get<dynamic>(
+        '/api/v1/conversations/${Uri.encodeComponent(conversationId)}',
+      );
+      final data = resp.data;
+      final list = data is Map ? (data['messages'] as List?) : (data as List?);
+      return (list ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   // ── File Transfers ────────────────────────────────────────────────────────
 
   /// GET /api/v1/file_status?transfer_id={id} — poll file transfer progress.

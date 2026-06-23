@@ -140,12 +140,16 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     required String content,
     String? threadId,
     String? inReplyTo,
+    String? contentType,
+    Map<String, dynamic>? rich,
   }) async {
     // Primary: skchat CLI — local store + transport delivery.
     final daemon = ref.read(daemonServiceProvider);
     final cliResult = await daemon.sendMessage(
       recipient: peerId,
       content: content,
+      threadId: threadId,
+      replyTo: inReplyTo,
     );
     if (cliResult.success) {
       // Return a synthetic ID so callers can track the message.
@@ -160,6 +164,8 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
         message: content,
         threadId: threadId,
         inReplyTo: inReplyTo,
+        contentType: contentType,
+        rich: rich,
       );
       return result.delivered ? result.envelopeId : null;
     } catch (_) {
@@ -177,13 +183,81 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     required String targetMessageId,
     required String emoji,
     String action = 'add',
+    String? me,
   }) async {
+    // Contract endpoint first (same-origin webui). Best-effort: the daemon may
+    // be an older build without /api/v1/react, in which case we still deliver
+    // the reaction over the sentinel path so the peer sees it.
+    final client = ref.read(skcommsClientProvider);
+    var viaHttp = false;
+    try {
+      viaHttp = await client.react(
+        conversationId: peerId,
+        messageId: targetMessageId,
+        emoji: emoji,
+        op: action == 'remove' ? 'remove' : 'add',
+      );
+    } catch (_) {
+      viaHttp = false;
+    }
+    if (viaHttp) return;
     final body = ReactionSignal(
       targetId: targetMessageId,
       emoji: emoji,
       action: action,
+      sender: me,
     ).encode();
     await sendMessage(peerId: peerId, content: body);
+  }
+
+  /// Edit a previously-sent message. Tries POST /api/v1/edit first, then falls
+  /// back to the `__EDIT__` sentinel so the peer's copy updates too.
+  Future<void> sendEdit({
+    required String peerId,
+    required String targetMessageId,
+    required String body,
+  }) async {
+    final client = ref.read(skcommsClientProvider);
+    var viaHttp = false;
+    try {
+      viaHttp = await client.edit(messageId: targetMessageId, body: body);
+    } catch (_) {
+      viaHttp = false;
+    }
+    if (viaHttp) return;
+    final sentinel =
+        EditSignal(targetId: targetMessageId, body: body).encode();
+    await sendMessage(peerId: peerId, content: sentinel);
+  }
+
+  /// Send a delivery/read receipt for a message. POST /api/v1/receipt first,
+  /// then the `__RECEIPT__` sentinel fallback. Best-effort, never throws.
+  Future<void> sendReceipt({
+    required String peerId,
+    required String targetMessageId,
+    required String kind,
+    String? me,
+  }) async {
+    final client = ref.read(skcommsClientProvider);
+    var viaHttp = false;
+    try {
+      viaHttp = await client.receipt(
+        conversationId: peerId,
+        messageId: targetMessageId,
+        kind: kind,
+      );
+    } catch (_) {
+      viaHttp = false;
+    }
+    if (viaHttp) return;
+    final sentinel =
+        ReceiptSignal(targetId: targetMessageId, kind: kind, sender: me)
+            .encode();
+    try {
+      await sendMessage(peerId: peerId, content: sentinel);
+    } catch (_) {
+      // Receipts are best-effort.
+    }
   }
 
   /// Send an ephemeral typing signal to a peer (best-effort).

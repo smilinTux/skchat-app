@@ -2,23 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/theme.dart';
-import '../../../core/chat_text.dart';
 import '../../../models/attachment_ref.dart';
 import '../../../models/chat_message.dart';
+import 'edit_history_sheet.dart';
 import 'file_transfer_bubble.dart';
-import 'reaction_picker.dart';
+import 'message_actions_sheet.dart';
+import 'message_content.dart';
+import 'quoted_reply.dart';
 
-/// How far (logical px) the user must drag right to trigger the reply action.
+/// How far (logical px) the user must drag horizontally to trigger reply.
 const double _kReplyThreshold = 72.0;
 
-/// Message bubble per the PRD:
-/// - Outbound (right): user's soul-color tint on glass surface
-/// - Inbound (left): neutral glass with sender's soul-color left-edge accent line
-/// - Rounded corners 16px
-/// - Timestamp inside bubble, bottom-right, caption size
-/// - Swipe right to trigger reply (calls [onReply])
-/// - Long-press to open emoji reaction picker (calls [onReact])
-/// - Reactions row shown below the bubble when [message.reactions] is non-empty
+/// Message bubble -- the message-row interaction kit:
+/// - Swipe (right for inbound, left for outbound) to reply -> [onReply]
+/// - Long-press -> actions sheet (React/Reply/Edit/Copy) + reaction tray
+/// - Double-tap an own message -> inline edit -> [onEdit]
+/// - Reaction chips below the bubble; tap a chip to toggle -> [onReact]
+/// - Quoted-reply rendered above the body when [message.replyToId] resolves
+/// - "edited" badge + tap-for-history; delivery/read receipts on own messages
+/// - Thread affordance when the message belongs to a thread -> [onOpenThread]
+/// - Body rendered by content_type (golden rule) via [MessageContent]
 class MessageBubble extends StatefulWidget {
   const MessageBubble({
     super.key,
@@ -26,13 +29,18 @@ class MessageBubble extends StatefulWidget {
     required this.soulColor,
     this.userSoulColor = SovereignColors.soulChef,
     this.showSenderName = false,
+    this.repliedTo,
+    this.myIdentity = 'me',
     this.onReply,
     this.onReact,
+    this.onEdit,
+    this.onJumpToReplied,
+    this.onOpenThread,
   });
 
   final ChatMessage message;
 
-  /// Sender's soul-color (inbound accent bar / outbound tint).
+  /// Sender's soul-color (inbound accent / outbound tint).
   final Color soulColor;
 
   /// Local user's soul-color (outbound bubble tint + delivery tick).
@@ -41,11 +49,26 @@ class MessageBubble extends StatefulWidget {
   /// Show sender name above bubble (group chats).
   final bool showSenderName;
 
-  /// Called when the user completes a swipe-right-to-reply gesture.
+  /// The resolved message this one replies to (for the quoted block), or null.
+  final ChatMessage? repliedTo;
+
+  /// The local operator's short identity (highlights chips we reacted to).
+  final String myIdentity;
+
+  /// Called when the user completes a swipe-to-reply gesture.
   final VoidCallback? onReply;
 
-  /// Called with the chosen emoji when the user long-presses and selects.
+  /// Called with the chosen emoji when the user reacts (tap chip / pick).
   final void Function(String emoji)? onReact;
+
+  /// Called with the new body when the user edits an own message.
+  final void Function(String newBody)? onEdit;
+
+  /// Called when the user taps the quoted-reply block (scroll to original).
+  final VoidCallback? onJumpToReplied;
+
+  /// Called when the user taps the thread affordance.
+  final VoidCallback? onOpenThread;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -53,19 +76,18 @@ class MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<MessageBubble>
     with SingleTickerProviderStateMixin {
-  /// Horizontal drag offset while the user is actively swiping.
   double _dragOffset = 0.0;
-
-  /// Reply icon opacity — fades in as the user approaches the threshold.
-  double get _replyIconOpacity =>
-      (_dragOffset / _kReplyThreshold).clamp(0.0, 1.0);
-
-  /// True once we have fired the haptic/callback for this drag stroke.
   bool _replyTriggered = false;
 
   late AnimationController _snapController;
   late Animation<double> _snapAnimation;
   double _snapStartOffset = 0.0;
+
+  /// Swipe direction: inbound swipes right (+), outbound swipes left (-).
+  double get _dir => widget.message.isOutbound ? -1.0 : 1.0;
+
+  double get _replyIconOpacity =>
+      (_dragOffset.abs() / _kReplyThreshold).clamp(0.0, 1.0);
 
   @override
   void initState() {
@@ -92,11 +114,14 @@ class _MessageBubbleState extends State<MessageBubble>
   }
 
   void _onHorizontalDragUpdate(DragUpdateDetails details) {
-    // Only allow right-swipe (positive dx).
-    final newOffset = (_dragOffset + details.delta.dx).clamp(0.0, _kReplyThreshold * 1.1);
-    setState(() => _dragOffset = newOffset);
+    // Only allow swiping in the reply direction.
+    final raw = _dragOffset + details.delta.dx;
+    final clamped = _dir > 0
+        ? raw.clamp(0.0, _kReplyThreshold * 1.1)
+        : raw.clamp(-_kReplyThreshold * 1.1, 0.0);
+    setState(() => _dragOffset = clamped);
 
-    if (!_replyTriggered && _dragOffset >= _kReplyThreshold) {
+    if (!_replyTriggered && _dragOffset.abs() >= _kReplyThreshold) {
       _replyTriggered = true;
       HapticFeedback.selectionClick();
     }
@@ -105,14 +130,9 @@ class _MessageBubbleState extends State<MessageBubble>
   void _onHorizontalDragEnd(DragEndDetails _) {
     final didTrigger = _replyTriggered;
     _replyTriggered = false;
-
-    // Snap back to zero with spring.
     _snapStartOffset = _dragOffset;
     _snapController.forward(from: 0);
-
-    if (didTrigger) {
-      widget.onReply?.call();
-    }
+    if (didTrigger) widget.onReply?.call();
   }
 
   void _onHorizontalDragCancel() {
@@ -121,31 +141,62 @@ class _MessageBubbleState extends State<MessageBubble>
     _snapController.forward(from: 0);
   }
 
+  bool get _canEdit {
+    if (!widget.message.isOutbound || widget.onEdit == null) return false;
+    // 24h window (server also enforces). Hide the affordance for old messages.
+    return DateTime.now().difference(widget.message.timestamp).inHours < 24;
+  }
+
   void _onLongPress(BuildContext context) {
-    // Find the bubble's position on screen so the picker can anchor to it.
     final box = context.findRenderObject() as RenderBox?;
     if (box == null) return;
+    final anchorRect = box.localToGlobal(Offset.zero) & box.size;
 
-    final topLeft = box.localToGlobal(Offset.zero);
-    final anchorRect = topLeft & box.size;
-
-    showReactionPicker(
+    showMessageActions(
       context: context,
+      message: widget.message,
       anchorRect: anchorRect,
       soulColor: widget.soulColor,
-      onSelect: (emoji) => widget.onReact?.call(emoji),
+      onReply: widget.onReply,
+      onReact: widget.onReact,
+      onEdit: _canEdit ? () => _beginEdit(context) : null,
     );
+  }
+
+  void _onDoubleTap(BuildContext context) {
+    if (_canEdit) _beginEdit(context);
+  }
+
+  Future<void> _beginEdit(BuildContext context) async {
+    final newBody = await showEditDialog(
+      context: context,
+      initial: widget.message.content,
+      soulColor: widget.userSoulColor,
+    );
+    if (newBody != null && newBody.trim().isNotEmpty) {
+      widget.onEdit?.call(newBody.trim());
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final isOut = widget.message.isOutbound;
 
+    final replyIcon = Opacity(
+      opacity: _replyIconOpacity,
+      child: Icon(
+        Icons.reply_rounded,
+        size: 20,
+        color: isOut ? widget.userSoulColor : widget.soulColor,
+      ),
+    );
+
     return GestureDetector(
       onHorizontalDragUpdate: _onHorizontalDragUpdate,
       onHorizontalDragEnd: _onHorizontalDragEnd,
       onHorizontalDragCancel: _onHorizontalDragCancel,
       onLongPress: () => _onLongPress(context),
+      onDoubleTap: () => _onDoubleTap(context),
       child: Transform.translate(
         offset: Offset(_dragOffset, 0),
         child: Padding(
@@ -160,28 +211,15 @@ class _MessageBubbleState extends State<MessageBubble>
                 isOut ? MainAxisAlignment.end : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Reply icon revealed on swipe
               if (!isOut) ...[
-                Opacity(
-                  opacity: _replyIconOpacity,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Icon(
-                      Icons.reply_rounded,
-                      size: 20,
-                      color: widget.soulColor,
-                    ),
-                  ),
-                ),
+                Padding(padding: const EdgeInsets.only(right: 6), child: replyIcon),
               ],
-
               Flexible(
                 child: Column(
                   crossAxisAlignment:
                       isOut ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                   children: [
-                    // Optional sender name (group chats)
-                    if (widget.showSenderName && !isOut) ...[
+                    if (widget.showSenderName && !isOut)
                       Padding(
                         padding: const EdgeInsets.only(left: 4, bottom: 2),
                         child: Text(
@@ -193,40 +231,37 @@ class _MessageBubbleState extends State<MessageBubble>
                           ),
                         ),
                       ),
-                    ],
-
-                    // Bubble
                     _BubbleContent(
                       message: widget.message,
                       soulColor: widget.soulColor,
                       userSoulColor: widget.userSoulColor,
+                      repliedTo: widget.repliedTo,
+                      onJumpToReplied: widget.onJumpToReplied,
+                      onShowHistory: () => showEditHistory(
+                        context: context,
+                        message: widget.message,
+                        soulColor: widget.soulColor,
+                      ),
                     ),
-
-                    // Reactions row
+                    if (widget.message.hasThread)
+                      _ThreadAffordance(
+                        soulColor: isOut ? widget.userSoulColor : widget.soulColor,
+                        onTap: widget.onOpenThread,
+                      ),
                     if (widget.message.reactions.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       _ReactionsRow(
-                        reactions: widget.message.reactions,
+                        message: widget.message,
                         soulColor: widget.soulColor,
+                        myIdentity: widget.myIdentity,
+                        onToggle: widget.onReact,
                       ),
                     ],
                   ],
                 ),
               ),
-
-              // Reply icon on the right side for outbound bubbles
               if (isOut) ...[
-                Opacity(
-                  opacity: _replyIconOpacity,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: Icon(
-                      Icons.reply_rounded,
-                      size: 20,
-                      color: widget.userSoulColor,
-                    ),
-                  ),
-                ),
+                Padding(padding: const EdgeInsets.only(left: 6), child: replyIcon),
               ],
             ],
           ),
@@ -237,26 +272,32 @@ class _MessageBubbleState extends State<MessageBubble>
 }
 
 // ---------------------------------------------------------------------------
-// Bubble content (extracted for clarity)
+// Bubble content
 
 class _BubbleContent extends StatelessWidget {
   const _BubbleContent({
     required this.message,
     required this.soulColor,
     required this.userSoulColor,
+    this.repliedTo,
+    this.onJumpToReplied,
+    this.onShowHistory,
   });
 
   final ChatMessage message;
   final Color soulColor;
   final Color userSoulColor;
+  final ChatMessage? repliedTo;
+  final VoidCallback? onJumpToReplied;
+  final VoidCallback? onShowHistory;
 
   @override
   Widget build(BuildContext context) {
     final isOut = message.isOutbound;
     final tt = Theme.of(context).textTheme;
+    final accent = isOut ? userSoulColor : soulColor;
 
-    // Attachment messages carry a small __ATTACH__ sentinel body. Render a
-    // file-transfer card (with thumbnail + tap-to-download) instead of text.
+    // Attachment messages carry a small __ATTACH__ sentinel body.
     final attachment = AttachmentRef.parse(message.content);
     if (attachment != null) {
       return _AttachmentBubble(
@@ -270,13 +311,7 @@ class _BubbleContent extends StatelessWidget {
       );
     }
 
-    final display = displayTextFor(message.content);
-
-    // Non-displayable (empty / system / raw envelope / control / prompt-echo):
-    // hide entirely so it doesn't clutter the thread.
-    if (display == null) {
-      return const SizedBox.shrink();
-    }
+    final hasReply = message.replyToId != null && message.replyToId!.isNotEmpty;
 
     return Container(
       decoration: BoxDecoration(
@@ -289,45 +324,54 @@ class _BubbleContent extends StatelessWidget {
           bottomLeft: Radius.circular(isOut ? 16 : 4),
           bottomRight: Radius.circular(isOut ? 4 : 16),
         ),
-        // NOTE: a non-uniform Border (e.g. a thicker left accent) combined with
-        // borderRadius throws a rendering exception that aborts painting the
-        // whole bubble — its text included. Keep the border uniform.
         border: Border.all(
-          color: isOut
-              ? userSoulColor.withValues(alpha: 0.3)
-              : soulColor.withValues(alpha: 0.45),
+          color: accent.withValues(alpha: isOut ? 0.3 : 0.45),
           width: 1,
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Explicit, theme-independent text style. Using tt.bodyMedium here
-          // resolved to an invisible style in this subtree (the bubble text
-          // disappeared); a self-contained TextStyle with an explicit light
-          // color renders reliably on the near-black glass bubble.
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              display,
-              style: const TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 15,
-                height: 1.4,
-              ),
+          // Quoted reply (above the body, tappable to scroll to original).
+          if (hasReply)
+            QuotedReply(
+              original: repliedTo,
+              accent: accent,
+              onTap: onJumpToReplied,
             ),
-          ),
+
+          // Body rendered BY content_type (golden rule: unknown -> body).
+          MessageContent(message: message),
+
           const SizedBox(height: 4),
 
-          // Timestamp + delivery row
+          // Timestamp + edited badge + delivery row.
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 DateFormat('h:mm a').format(message.timestamp.toLocal()),
-                style: tt.labelSmall?.copyWith(color: SovereignColors.textTertiary),
+                style: tt.labelSmall
+                    ?.copyWith(color: SovereignColors.textTertiary),
               ),
+              if (message.isEdited) ...[
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: onShowHistory,
+                  behavior: HitTestBehavior.opaque,
+                  child: Text(
+                    'edited',
+                    style: tt.labelSmall?.copyWith(
+                      color: SovereignColors.textTertiary,
+                      fontStyle: FontStyle.italic,
+                      decoration: TextDecoration.underline,
+                      decorationColor: SovereignColors.textTertiary,
+                    ),
+                  ),
+                ),
+              ],
               if (isOut) ...[
                 const SizedBox(width: 4),
                 DeliveryStatus(
@@ -351,7 +395,95 @@ class _BubbleContent extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Attachment bubble — renders a FileTransferBubble inside the glass surface.
+// Inline edit dialog
+
+/// Shows a simple inline edit dialog seeded with [initial]; returns the new
+/// body, or null if cancelled.
+Future<String?> showEditDialog({
+  required BuildContext context,
+  required String initial,
+  required Color soulColor,
+}) {
+  final controller = TextEditingController(text: initial);
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        backgroundColor: SovereignColors.surfaceRaised,
+        title: const Text('Edit message',
+            style: TextStyle(color: SovereignColors.textPrimary, fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: null,
+          style: const TextStyle(color: SovereignColors.textPrimary),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: SovereignColors.surfaceGlass,
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: soulColor.withValues(alpha: 0.3)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: soulColor),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            style: TextButton.styleFrom(foregroundColor: soulColor),
+            child: const Text('Save'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Thread affordance
+
+class _ThreadAffordance extends StatelessWidget {
+  const _ThreadAffordance({required this.soulColor, this.onTap});
+
+  final Color soulColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.forum_outlined, size: 14, color: soulColor),
+            const SizedBox(width: 4),
+            Text(
+              'View thread',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: soulColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Attachment bubble
 
 class _AttachmentBubble extends StatelessWidget {
   const _AttachmentBubble({
@@ -414,8 +546,8 @@ class _AttachmentBubble extends StatelessWidget {
             children: [
               Text(
                 DateFormat('h:mm a').format(timestamp.toLocal()),
-                style:
-                    tt.labelSmall?.copyWith(color: SovereignColors.textTertiary),
+                style: tt.labelSmall
+                    ?.copyWith(color: SovereignColors.textTertiary),
               ),
               if (isOut) ...[
                 const SizedBox(width: 4),
@@ -430,24 +562,36 @@ class _AttachmentBubble extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Reactions row
+// Reactions row (per-sender contract: highlight chips the operator reacted to)
 
 class _ReactionsRow extends StatelessWidget {
   const _ReactionsRow({
-    required this.reactions,
+    required this.message,
     required this.soulColor,
+    required this.myIdentity,
+    this.onToggle,
   });
 
-  final Map<String, int> reactions;
+  final ChatMessage message;
   final Color soulColor;
+  final String myIdentity;
+  final void Function(String emoji)? onToggle;
 
   @override
   Widget build(BuildContext context) {
+    final entries = message.reactions.entries.toList();
     return Wrap(
       spacing: 4,
       runSpacing: 4,
-      children: reactions.entries.map((e) {
-        return _ReactionPill(emoji: e.key, count: e.value, soulColor: soulColor);
+      children: entries.map((e) {
+        final mine = message.reactedBy(e.key, myIdentity);
+        return _ReactionPill(
+          emoji: e.key,
+          count: e.value,
+          soulColor: soulColor,
+          mine: mine,
+          onTap: onToggle == null ? null : () => onToggle!(e.key),
+        );
       }).toList(),
     );
   }
@@ -458,11 +602,15 @@ class _ReactionPill extends StatefulWidget {
     required this.emoji,
     required this.count,
     required this.soulColor,
+    required this.mine,
+    this.onTap,
   });
 
   final String emoji;
   final int count;
   final Color soulColor;
+  final bool mine;
+  final VoidCallback? onTap;
 
   @override
   State<_ReactionPill> createState() => _ReactionPillState();
@@ -503,27 +651,35 @@ class _ReactionPillState extends State<_ReactionPill>
   void _onTap() {
     HapticFeedback.mediumImpact();
     _controller.forward(from: 0);
+    widget.onTap?.call();
   }
 
   @override
   Widget build(BuildContext context) {
+    final alpha = widget.mine ? 0.24 : 0.12;
+    final borderAlpha = widget.mine ? 0.6 : 0.28;
     return GestureDetector(
       onTap: _onTap,
+      behavior: HitTestBehavior.opaque,
       child: ScaleTransition(
         scale: _scale,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
-            color: widget.soulColor.withValues(alpha: 0.12),
+            color: widget.soulColor.withValues(alpha: alpha),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: widget.soulColor.withValues(alpha: 0.28),
-              width: 1,
+              color: widget.soulColor.withValues(alpha: borderAlpha),
+              width: widget.mine ? 1.5 : 1,
             ),
           ),
           child: Text(
             '${widget.emoji} ${widget.count}',
-            style: const TextStyle(fontSize: 12),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: widget.mine ? FontWeight.w700 : FontWeight.w400,
+              color: SovereignColors.textPrimary,
+            ),
           ),
         ),
       ),
