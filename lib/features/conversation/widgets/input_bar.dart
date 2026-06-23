@@ -81,7 +81,9 @@ class _InputBarState extends State<InputBar> {
       _typingActive = false;
       widget.onTyping?.call(false);
     }
-    _focusNode.requestFocus();
+    // Dismiss the soft keyboard after sending (was requestFocus, which kept the
+    // mobile keyboard up). Closes the keyboard on send per operator request.
+    _focusNode.unfocus();
   }
 
   Future<void> _attach() async {
