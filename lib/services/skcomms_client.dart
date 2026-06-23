@@ -37,11 +37,15 @@ class SKCommsClient {
 
   // ── Health ────────────────────────────────────────────────────────────────
 
-  /// GET / — verify the daemon is running.
+  /// GET /health — verify the daemon is running.
+  ///
+  /// Uses /health (a clean 200) not / — the webui root 307-redirects to /app/,
+  /// which made the health check flaky and showed a false "SKComms offline".
   Future<bool> isAlive() async {
     try {
-      final resp = await _dio.get('/');
-      return resp.statusCode == 200;
+      final resp = await _dio.get('/health');
+      final code = resp.statusCode ?? 0;
+      return code >= 200 && code < 400;
     } catch (_) {
       return false;
     }
