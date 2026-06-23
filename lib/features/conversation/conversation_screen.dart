@@ -9,6 +9,7 @@ import '../../models/chat_message.dart';
 import '../../models/call_state.dart';
 import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
+import '../../services/group_call_service.dart';
 import '../calls/call_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
@@ -247,6 +248,48 @@ class ConversationScreen extends ConsumerWidget {
   /// `POST /api/v1/groups/{peerId}/members`, which the backend treats as a
   /// promote-1:1 (no new object id, existing history carried). The new group
   /// then appears in the chat/groups list and we land on the group info screen.
+  /// Start a group A/V call: ask the daemon to mint a member-scoped LiveKit
+  /// token + ring the other members (`POST /api/v1/groups/{id}/call/start`),
+  /// then open the multi-party call screen with the pre-minted token. Works on
+  /// web (same-origin HTTP), not the CLI.
+  Future<void> _startGroupCall(
+    BuildContext context,
+    WidgetRef ref,
+    String groupName,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final svc = ref.read(groupCallServiceProvider);
+    try {
+      // Join an already-active room (no re-ring); otherwise start + ring.
+      GroupCallSession session;
+      try {
+        final live = await svc.participants(peerId);
+        session = live.active > 0
+            ? await svc.joinCall(peerId)
+            : await svc.startCall(peerId, topic: 'Call: $groupName');
+      } catch (_) {
+        // Participants probe failed (SFU unreachable) — fall back to start.
+        session = await svc.startCall(peerId, topic: 'Call: $groupName');
+      }
+      if (!context.mounted) return;
+      context.push(
+        AppRoutes.livekitCall,
+        extra: LiveKitCallArgs(
+          roomName: session.room,
+          identity: session.identity,
+          displayName: groupName,
+          withVideo: true,
+          preMintedToken: session.token,
+          livekitUrl: session.livekitUrl,
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Group call failed: $e')),
+      );
+    }
+  }
+
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final chats = ref.read(chatsProvider);
@@ -422,13 +465,19 @@ class ConversationScreen extends ConsumerWidget {
         Consumer(
           builder: (context, ref, _) => IconButton(
             icon: const Icon(Icons.videocam_outlined),
-            tooltip: 'Video call',
+            tooltip: conversation.isGroup == true
+                ? 'Group video call'
+                : 'Video call',
             onPressed: () {
               final conversations = ref.read(chatsProvider);
               final conv = conversations.firstWhere(
                 (c) => c.peerId == peerId,
                 orElse: () => conversations.first,
               );
+              if (conversation.isGroup == true) {
+                _startGroupCall(context, ref, conv.displayName);
+                return;
+              }
               ref.read(callProvider.notifier).initiateCall(
                     peerId: peerId,
                     peerName: conv.displayName,

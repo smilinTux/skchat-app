@@ -437,59 +437,137 @@ class GroupInfoScreen extends ConsumerWidget {
     // Filter to non-group conversations as potential members.
     final peers = chats.where((c) => !c.isGroup).toList();
 
+    final selected = <String>{};
+
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true, // allow a tall, scrollable sheet
       backgroundColor: SovereignColors.surfaceRaised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetContext) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Add member',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (peers.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text('No peers discovered yet.'),
-                )
-              else
-                ...peers.map((peer) => ListTile(
-                      leading: SoulAvatar(
-                        soulColor: peer.resolvedSoulColor,
-                        initials: peer.resolvedInitials,
-                        isAgent: peer.isAgent,
-                        isOnline: peer.isOnline,
-                        size: 40,
-                      ),
-                      title: Text(peer.displayName),
-                      subtitle: Text(
-                        peer.isAgent ? 'Agent' : 'Human',
-                        style: TextStyle(
-                          color: SovereignColors.textTertiary,
-                          fontSize: 12,
+        final maxH = MediaQuery.of(sheetContext).size.height * 0.8;
+        return StatefulBuilder(
+          builder: (sheetContext, setSheet) {
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxH),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.only(top: 10, bottom: 6),
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: SovereignColors.textTertiary
+                              .withValues(alpha: 0.4),
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      onTap: () {
-                        Navigator.of(sheetContext).pop();
-                        _addMember(context, ref, peer);
-                      },
-                    )),
-              const SizedBox(height: 8),
-            ],
-          ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                      child: Text(
+                        'Add members',
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                      ),
+                    ),
+                    if (peers.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text('No peers discovered yet.'),
+                      )
+                    else
+                      // Scrollable so you can reach every peer, not just the
+                      // top few that fit.
+                      Flexible(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: peers.length,
+                          itemBuilder: (_, i) {
+                            final peer = peers[i];
+                            final isSel = selected.contains(peer.peerId);
+                            return ListTile(
+                              leading: SoulAvatar(
+                                soulColor: peer.resolvedSoulColor,
+                                initials: peer.resolvedInitials,
+                                isAgent: peer.isAgent,
+                                isOnline: peer.isOnline,
+                                size: 40,
+                              ),
+                              title: Text(peer.displayName),
+                              subtitle: Text(
+                                peer.isAgent ? 'Agent' : 'Human',
+                                style: TextStyle(
+                                  color: SovereignColors.textTertiary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              trailing: Icon(
+                                isSel
+                                    ? Icons.check_circle_rounded
+                                    : Icons.circle_outlined,
+                                color: isSel
+                                    ? SovereignColors.soulLumina
+                                    : SovereignColors.textTertiary,
+                              ),
+                              onTap: () => setSheet(() {
+                                if (isSel) {
+                                  selected.remove(peer.peerId);
+                                } else {
+                                  selected.add(peer.peerId);
+                                }
+                              }),
+                            );
+                          },
+                        ),
+                      ),
+                    // The confirm ("go") button — adds everyone selected.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: selected.isEmpty
+                              ? null
+                              : () {
+                                  final chosen = peers
+                                      .where((p) => selected.contains(p.peerId))
+                                      .toList();
+                                  Navigator.of(sheetContext).pop();
+                                  for (final p in chosen) {
+                                    _addMember(context, ref, p);
+                                  }
+                                },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: SovereignColors.soulLumina,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            selected.isEmpty
+                                ? 'Select members to add'
+                                : 'Add ${selected.length} '
+                                    'member${selected.length == 1 ? '' : 's'}',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
     );
