@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -148,9 +149,19 @@ class AgentHeartbeat {
 /// whenever the user switches federation instances.
 final skCapstoneClientProvider = Provider<SKCapstoneClient>((ref) {
   final cfg = ref.watch(backendConfigProvider);
+  // On web, the dashboard (:7778) isn't exposed through tailscale/funnel — only
+  // the webui is. Use the served ORIGIN so /api/board hits the webui same-origin
+  // proxy (→ :7778 server-side), which works on localhost AND the tailscale URL.
+  String dash = cfg.skcapstoneDashboardUrl;
+  if (kIsWeb) {
+    try {
+      final o = Uri.base.origin;
+      if (o.isNotEmpty && o != 'null') dash = o;
+    } catch (_) {/* file: base in tests → keep config default */}
+  }
   return SKCapstoneClient(
     baseUrl: cfg.skcapstoneUrl,
-    dashboardUrl: cfg.skcapstoneDashboardUrl,
+    dashboardUrl: dash,
   );
 });
 
