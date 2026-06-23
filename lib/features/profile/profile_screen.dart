@@ -9,6 +9,7 @@ import '../../services/backend_config.dart';
 import '../../services/daemon_config.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/skcomms_sync.dart';
+import 'widgets/capabilities_section.dart';
 
 // ── Local identity provider ────────────────────────────────────────────────
 // Identity is fetched from the SKComms daemon at /api/v1/identity.
@@ -163,6 +164,12 @@ class ProfileScreen extends ConsumerWidget {
           _SectionLabel(label: 'Network'),
           _DaemonStatusCard(daemon: daemon, transports: transports),
           const SizedBox(height: 20),
+
+          // ── Services & transports (capability discovery) ─────────────
+          // Fetched from {daemonBase}/api/v1/capabilities. Renders nothing
+          // when the endpoint is missing/unreachable, so this only enriches
+          // the daemon-online + transport summary above.
+          const CapabilitiesSection(),
 
           // ── Encryption ──────────────────────────────────────────────
           _SectionLabel(label: 'Encryption'),
