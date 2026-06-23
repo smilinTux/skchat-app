@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
 import '../../services/skcomms_client.dart';
+import '../../services/guest_group_service.dart';
 import '../chats/chats_provider.dart';
 import 'groups_provider.dart';
 
@@ -360,6 +362,28 @@ class GroupInfoScreen extends ConsumerWidget {
       child: Column(
         children: [
           GlassCard(
+            onTap: () => _shareInviteLink(context, ref),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.link_rounded,
+                  color: SovereignColors.soulLumina,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Invite via link / Share link',
+                  style: tt.titleSmall?.copyWith(
+                    color: SovereignColors.soulLumina,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          GlassCard(
             onTap: () => _confirmLeaveGroup(context, ref),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
@@ -379,6 +403,89 @@ class GroupInfoScreen extends ConsumerWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mint a shareable guest invite link for this group and show it to copy.
+  ///
+  /// Calls POST /api/v1/groups/{id}/invite (operator-gated server-side). When
+  /// the guest-links feature is disabled on the server the call 404s — surfaced
+  /// here as a friendly "guests are disabled" message.
+  Future<void> _shareInviteLink(BuildContext context, WidgetRef ref) async {
+    final svc = ref.read(guestInviteServiceProvider);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: SovereignColors.soulLumina),
+      ),
+    );
+    String? link;
+    String? error;
+    try {
+      final res = await svc.createInvite(groupId: groupId);
+      final joinUrl = (res['join_url'] as String?) ?? '';
+      if (joinUrl.isEmpty) {
+        error = 'The server did not return an invite link.';
+      } else {
+        link = svc.fullLink(joinUrl);
+      }
+    } catch (e) {
+      error = 'Could not create an invite link. Guest links may be disabled '
+          'on this server.';
+    }
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // dismiss the spinner
+
+    final tt = Theme.of(context).textTheme;
+    showDialog<void>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: SovereignColors.surfaceRaised,
+        title: const Text('Share invite link'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (error != null)
+              Text(error, style: tt.bodyMedium)
+            else ...[
+              Text(
+                'Anyone with this link can join THIS room as an untrusted '
+                'guest. They can chat, call, and share files here only.',
+                style: tt.bodySmall
+                    ?.copyWith(color: SovereignColors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              SelectableText(
+                link ?? '',
+                style: tt.bodySmall
+                    ?.copyWith(color: SovereignColors.soulLumina),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          if (link != null)
+            TextButton.icon(
+              icon: const Icon(Icons.copy, size: 18),
+              label: const Text('Copy'),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: link!));
+                if (dctx.mounted) Navigator.of(dctx).pop();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Invite link copied')),
+                  );
+                }
+              },
+            ),
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(),
+            child: const Text('Close'),
           ),
         ],
       ),
