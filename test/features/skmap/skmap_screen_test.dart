@@ -6,6 +6,8 @@ import 'package:skchat/features/skmap/geo_unit.dart';
 import 'package:skchat/features/skmap/geo_units_source.dart';
 import 'package:skchat/features/skmap/skmap_providers.dart';
 import 'package:skchat/features/skmap/skmap_screen.dart';
+import 'package:skchat/services/capabilities_service.dart';
+import 'package:skchat/services/module_prefs.dart';
 
 /// A deterministic, non-animating source returning a fixed set of units.
 class _FixedSource implements GeoUnitsSource {
@@ -44,15 +46,26 @@ List<GeoUnit> _mockUnits() {
   ];
 }
 
+/// Module-spine overrides so SkMapScreen's toolbar-module surface (which
+/// reads the capability/prefs chain) doesn't open Hive / fire a network
+/// timer in the test. SkMap now hosts a ToolbarModuleActions in its header.
+List<Override> _spineOverrides() => [
+      geoUnitsSourceProvider.overrideWithValue(_FixedSource(_mockUnits())),
+      nodeCapabilitiesProvider.overrideWith((ref) async => null),
+      modulePrefsProvider.overrideWith(_StubModulePrefs.new),
+    ];
+
+class _StubModulePrefs extends ModulePrefsNotifier {
+  @override
+  ModulePrefs build() => const ModulePrefs(initialized: true);
+}
+
 void main() {
   testWidgets('SkMap renders the map + unit markers from the feed',
       (tester) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [
-          geoUnitsSourceProvider
-              .overrideWithValue(_FixedSource(_mockUnits())),
-        ],
+        overrides: _spineOverrides(),
         child: const MaterialApp(home: SkMapScreen()),
       ),
     );
@@ -74,10 +87,7 @@ void main() {
       (tester) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [
-          geoUnitsSourceProvider
-              .overrideWithValue(_FixedSource(_mockUnits())),
-        ],
+        overrides: _spineOverrides(),
         child: const MaterialApp(home: SkMapScreen()),
       ),
     );

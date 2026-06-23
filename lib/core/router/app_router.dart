@@ -12,6 +12,7 @@ import '../../features/groups/group_info_screen.dart';
 import '../../features/groups/create_group_screen.dart';
 import '../../features/chats/peer_picker_screen.dart';
 import '../../features/profile/qr_login_screen.dart';
+import '../../features/profile/modules_settings_screen.dart';
 import '../../features/calls/outgoing_call_screen.dart';
 import '../../features/calls/incoming_call_screen.dart';
 import '../../features/calls/in_call_screen.dart';
@@ -91,6 +92,9 @@ class AppRoutes {
 
   /// CapAuth QR login screen: /login/qr
   static const qrLogin = '/login/qr';
+
+  /// Modules settings (enable/disable + placement): /modules
+  static const modules = '/modules';
 
   /// Outgoing call screen: /call/outgoing/:peerId
   static const outgoingCall = '/call/outgoing/:peerId';
@@ -255,6 +259,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const RecordingsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.modules,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const ModulesSettingsScreen(),
             ),
           ),
         ],

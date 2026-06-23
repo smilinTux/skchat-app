@@ -239,6 +239,14 @@ class ProfileScreen extends ConsumerWidget {
               child: Column(
                 children: [
                   ListTile(
+                    leading: const Icon(Icons.widgets_outlined),
+                    title: const Text('Modules'),
+                    subtitle: const Text('Enable + place sub-apps'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => context.push(AppRoutes.modules),
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
                     leading: const Icon(Icons.dashboard_outlined),
                     title: const Text('Coordination Board'),
                     trailing: const Icon(Icons.chevron_right_rounded),

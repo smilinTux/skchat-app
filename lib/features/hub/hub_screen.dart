@@ -14,6 +14,7 @@ import '../profile/profile_screen.dart' show localIdentityProvider;
 /// reachable in <= 2 taps (Ops tab -> tile).
 ///
 /// Tiles route to: /cluster, /coord, /recordings, /conf, /groups.
+/// (SkMap moved to the swipe-up app drawer — it is now a registry module.)
 /// Room is intentionally left for a future /facetime tile (added by a parallel
 /// branch) — see [_OpsTile] list below.
 class HubScreen extends ConsumerWidget {
@@ -30,13 +31,6 @@ class HubScreen extends ConsumerWidget {
         icon: Icons.hub_outlined,
         accent: SovereignColors.soulJarvis,
         onTap: () => context.go(AppRoutes.cluster),
-      ),
-      _OpsTile(
-        label: 'SkMap',
-        description: 'Tactical map — live unit positions',
-        icon: Icons.radar_outlined,
-        accent: SovereignColors.soulJarvis,
-        onTap: () => context.go(AppRoutes.skmap),
       ),
       _OpsTile(
         label: 'skos Files',

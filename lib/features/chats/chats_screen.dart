@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
+import '../shell/toolbar_module_actions.dart';
 import 'chats_provider.dart';
 import 'widgets/conversation_tile.dart';
 
@@ -36,6 +37,7 @@ class ChatsScreen extends ConsumerWidget {
       backgroundColor: SovereignColors.surfaceBase,
       title: Text('SKChat', style: tt.displayLarge?.copyWith(fontSize: 24)),
       actions: [
+        const ToolbarModuleActions(),
         IconButton(
           icon: const Icon(Icons.search_rounded),
           tooltip: 'Search',

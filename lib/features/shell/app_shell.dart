@@ -7,6 +7,7 @@ import '../../features/calls/call_provider.dart';
 import '../../features/calls/widgets/pip_overlay.dart';
 import '../../models/call_state.dart';
 import '../../services/skcomms_sync.dart';
+import 'app_drawer_sheet.dart';
 
 /// AppShell wraps all main tab screens with the Sovereign Glass bottom nav bar.
 /// Shows a subtle offline banner when the SKComms daemon is unreachable.
@@ -121,11 +122,51 @@ class AppShell extends ConsumerWidget {
                 ),
               ),
             ),
-          Expanded(child: child),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              // Swipe up anywhere → reveal the app drawer (the user's
+              // swipe-up-from-bottom instinct is honored; see plan §6 thumb
+              // zone). A fast upward fling opens the module drawer.
+              onVerticalDragEnd: (details) {
+                final v = details.primaryVelocity ?? 0;
+                if (v < -350) {
+                  AppDrawerSheet.show(context);
+                }
+              },
+              child: child,
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: GlassNavBar(
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Tappable grip — opens the swipe-up app drawer (discoverability for
+            // the swipe-up gesture).
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => AppDrawerSheet.show(context),
+              onVerticalDragEnd: (d) {
+                if ((d.primaryVelocity ?? 0) < -200) {
+                  AppDrawerSheet.show(context);
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(top: 6, bottom: 2),
+                child: Container(
+                  key: const Key('app-drawer-grip'),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: SovereignColors.textTertiary.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+            Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: List.generate(_tabs.length, (i) {
             final tab = _tabs[i];
@@ -172,6 +213,8 @@ class AppShell extends ConsumerWidget {
               ),
             );
           }),
+            ),
+          ],
         ),
       ),
       ),  // end Scaffold

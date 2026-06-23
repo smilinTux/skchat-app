@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/theme/theme.dart';
+import '../shell/toolbar_module_actions.dart';
 import 'geo_unit.dart';
 import 'skmap_providers.dart';
 
@@ -183,6 +184,7 @@ class _SkMapScreenState extends ConsumerState<SkMapScreen> {
                 ],
               ),
             ),
+            const ToolbarModuleActions(),
             if (async.isLoading && units.isNotEmpty)
               const SizedBox(
                 width: 14,

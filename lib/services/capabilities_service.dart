@@ -89,29 +89,64 @@ class NodeCapabilities {
     this.nodeId,
     this.label,
     this.host,
+    this.api,
     this.transports = const [],
     this.services = const [],
+    this.moduleHints = const [],
   });
 
   final String? nodeId;
   final String? label;
   final String? host;
+
+  /// Daemon API version (top-level `api` integer). Null on older daemons that
+  /// don't advertise it — module `minDaemonApi` gating treats null as "unknown"
+  /// and only blocks modules that explicitly require a floor > 0.
+  final int? api;
+
   final List<TransportCapability> transports;
   final List<ServiceCapability> services;
+
+  /// Operator policy hint: module ids the *node* wants surfaced in this
+  /// deployment (the additive `modules` block). Empty on older daemons — the
+  /// app falls back to its full declared registry. The client still applies
+  /// capability-gating on top, so this is a coarse "ship these" filter, not a
+  /// security boundary.
+  final List<String> moduleHints;
 
   bool get isEmpty => transports.isEmpty && services.isEmpty;
 
   factory NodeCapabilities.fromJson(Map<String, dynamic> json) {
     final node = (json['node'] as Map?)?.cast<String, dynamic>() ?? const {};
+    // `modules` may be a list of ids or a list of {id: ...} maps; tolerate both.
+    final moduleHints = <String>[];
+    final modulesRaw = json['modules'];
+    if (modulesRaw is List) {
+      for (final m in modulesRaw) {
+        if (m is String) {
+          moduleHints.add(m);
+        } else if (m is Map && m['id'] != null) {
+          moduleHints.add(m['id'].toString());
+        }
+      }
+    } else if (modulesRaw is Map && modulesRaw['ids'] is List) {
+      for (final m in (modulesRaw['ids'] as List)) {
+        moduleHints.add(m.toString());
+      }
+    }
     return NodeCapabilities(
       nodeId: node['id'] as String?,
       label: node['label'] as String?,
       host: node['host'] as String?,
+      api: (json['api'] is int)
+          ? json['api'] as int
+          : int.tryParse(json['api']?.toString() ?? ''),
       transports: _mapList(json['transports'])
           .map(TransportCapability.fromJson)
           .toList(),
       services:
           _mapList(json['services']).map(ServiceCapability.fromJson).toList(),
+      moduleHints: moduleHints,
     );
   }
 }
