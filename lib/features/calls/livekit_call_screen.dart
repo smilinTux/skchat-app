@@ -43,6 +43,7 @@ class LiveKitCallState {
     required this.isCameraEnabled,
     required this.isConnected,
     this.isRecording = false,
+    this.isScreenSharing = false,
     this.error,
   });
 
@@ -55,6 +56,9 @@ class LiveKitCallState {
 
   /// True while a server-side recording is active for this room.
   final bool isRecording;
+
+  /// True while the local participant is publishing a screen-share track.
+  final bool isScreenSharing;
   final String? error;
 
   LiveKitCallState copyWith({
@@ -63,6 +67,7 @@ class LiveKitCallState {
     bool? isCameraEnabled,
     bool? isConnected,
     bool? isRecording,
+    bool? isScreenSharing,
     String? error,
   }) {
     return LiveKitCallState(
@@ -73,6 +78,7 @@ class LiveKitCallState {
       isCameraEnabled: isCameraEnabled ?? this.isCameraEnabled,
       isConnected: isConnected ?? this.isConnected,
       isRecording: isRecording ?? this.isRecording,
+      isScreenSharing: isScreenSharing ?? this.isScreenSharing,
       error: error,
     );
   }
@@ -198,6 +204,25 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
     final next = !state!.isCameraEnabled;
     await svc.setCameraEnabled(next);
     state = state!.copyWith(isCameraEnabled: next);
+  }
+
+  /// Start / stop sharing the local screen. On web this calls
+  /// `getDisplayMedia` via the LiveKit client (which surfaces the browser's
+  /// screen-picker prompt) and publishes a screen-share video track. Optimistic
+  /// flip so the toggle responds immediately; reverts on a publish failure
+  /// (e.g. the user cancels the picker).
+  Future<void> toggleScreenShare() async {
+    if (state == null) return;
+    final svc = ref.read(liveKitCallServiceProvider);
+    final next = !state!.isScreenSharing;
+    state = state!.copyWith(isScreenSharing: next);
+    try {
+      await svc.setScreenShareEnabled(next);
+    } catch (e) {
+      if (state != null) {
+        state = state!.copyWith(isScreenSharing: !next, error: e.toString());
+      }
+    }
   }
 
   /// Start / stop a server-side recording of this room via the recordings
@@ -740,17 +765,25 @@ class _ParticipantTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final soul = _soulColorFor(snapshot.identity);
     final videoTrack = _resolveVideoTrack();
+    // Active-speaker highlight: a brighter, thicker soul-color ring while the
+    // participant is speaking (LiveKit audio-level detection).
+    final speaking = snapshot.isSpeaking;
 
     return Container(
       margin: fullScreen ? EdgeInsets.zero : const EdgeInsets.all(1),
       decoration: BoxDecoration(
         color: SovereignColors.surfaceCard,
-        border: fullScreen
-            ? null
-            : Border.all(
-                color: soul.withValues(alpha: 0.25),
-                width: 1.5,
-              ),
+        border: Border.all(
+          color: speaking
+              ? soul
+              : (fullScreen
+                  ? Colors.transparent
+                  : soul.withValues(alpha: 0.25)),
+          width: speaking ? 3 : (fullScreen ? 0 : 1.5),
+        ),
+        boxShadow: speaking
+            ? [BoxShadow(color: soul.withValues(alpha: 0.5), blurRadius: 12)]
+            : null,
       ),
       child: Stack(
         fit: fullScreen ? StackFit.expand : StackFit.passthrough,
@@ -851,20 +884,28 @@ class _ParticipantTile extends StatelessWidget {
     );
   }
 
-  /// Find the camera [VideoTrack] for this snapshot in the live [Room].
+  /// Find the best [VideoTrack] for this snapshot in the live [Room].
+  ///
+  /// Prefers a published screen-share track (so a shared screen takes over the
+  /// tile), falling back to the camera track. Returns null when neither is
+  /// published (the avatar fallback then renders).
   VideoTrack? _resolveVideoTrack() {
-    if (room == null || !snapshot.isCameraEnabled) return null;
-    if (snapshot.isLocal) {
-      final local = room!.localParticipant;
-      if (local == null) return null;
-      final pub = local.getTrackPublicationBySource(TrackSource.camera);
-      return pub?.track is VideoTrack ? pub!.track as VideoTrack : null;
+    if (room == null) return null;
+    final participant = snapshot.isLocal
+        ? room!.localParticipant as Participant?
+        : room!.remoteParticipants[snapshot.identity];
+    if (participant == null) return null;
+
+    // Screen share first.
+    final screen =
+        participant.getTrackPublicationBySource(TrackSource.screenShareVideo);
+    if (screen?.track is VideoTrack && (screen!.subscribed || snapshot.isLocal)) {
+      return screen.track as VideoTrack;
     }
-    // Remote participant.
-    final remote = room!.remoteParticipants[snapshot.identity];
-    if (remote == null) return null;
-    final pub = remote.getTrackPublicationBySource(TrackSource.camera);
-    return pub?.track is VideoTrack ? pub!.track as VideoTrack : null;
+    // Then camera (only if the snapshot says the camera is on).
+    if (!snapshot.isCameraEnabled) return null;
+    final cam = participant.getTrackPublicationBySource(TrackSource.camera);
+    return cam?.track is VideoTrack ? cam!.track as VideoTrack : null;
   }
 }
 
@@ -973,6 +1014,17 @@ class _LiveKitControlBar extends ConsumerWidget {
             active: !callState.isCameraEnabled,
             activeColor: SovereignColors.accentWarning,
             onTap: notifier.toggleCamera,
+          ),
+
+          // Screen-share toggle — publishes a getDisplayMedia track (web).
+          _LKControlButton(
+            icon: callState.isScreenSharing
+                ? Icons.stop_screen_share_rounded
+                : Icons.screen_share_rounded,
+            label: callState.isScreenSharing ? 'Stop share' : 'Share',
+            active: callState.isScreenSharing,
+            activeColor: SovereignColors.soulLumina,
+            onTap: notifier.toggleScreenShare,
           ),
 
           // Record toggle — drives POST /livekit/record/start|stop.
