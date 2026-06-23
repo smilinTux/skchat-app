@@ -96,8 +96,12 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
       } catch (_) {/* peers unavailable — conversations alone is fine */}
 
       if (conversations.isNotEmpty) {
-        // Keep agents (Lumina) at the top, then by recency.
+        // Lumina pinned first (the operator's companion), then other agents,
+        // then everyone by recency.
         conversations.sort((a, b) {
+          final al = a.peerId.toLowerCase().contains('lumina');
+          final bl = b.peerId.toLowerCase().contains('lumina');
+          if (al != bl) return al ? -1 : 1;
           if (a.isAgent != b.isAgent) return a.isAgent ? -1 : 1;
           return b.lastMessageTime.compareTo(a.lastMessageTime);
         });
