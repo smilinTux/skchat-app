@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import '../../../core/theme/theme.dart';
 import '../../../core/chat_text.dart';
 import '../../../models/chat_message.dart';
@@ -59,9 +60,11 @@ class MessageContent extends StatelessWidget {
       case 'plain':
       case 'markdown':
       case 'md':
-        // Markdown is rendered as plain text for now (no markdown dep wired);
-        // the body is already the human-readable form.
-        return _PlainBody(text: _bodyText(), color: textColor);
+        // Render Markdown — agent (Lumina) replies are LLM output and almost
+        // always Markdown (bold, headers, lists, code, links, tables). Plain
+        // text with no markdown markers renders as-is, so routing text/plain
+        // through here is safe and fixes raw `**` / `#` showing in bubbles.
+        return _MarkdownBody(text: _bodyText(), color: textColor);
       default:
         // GOLDEN RULE: unknown content_type -> render the body fallback, with a
         // subtle chip noting the type so it's clear this is a forward-compat
@@ -95,6 +98,26 @@ class _PlainBody extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: Text(
+        text,
+        style: TextStyle(color: color, fontSize: 15, height: 1.4),
+      ),
+    );
+  }
+}
+
+/// Renders Markdown (bold/italic/headers/lists/code/links/tables) for chat
+/// bubbles — used for text + markdown messages so Lumina's LLM output renders
+/// instead of showing raw `**`/`#`. Selectable; links open externally.
+class _MarkdownBody extends StatelessWidget {
+  const _MarkdownBody({required this.text, required this.color});
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: GptMarkdown(
         text,
         style: TextStyle(color: color, fontSize: 15, height: 1.4),
       ),

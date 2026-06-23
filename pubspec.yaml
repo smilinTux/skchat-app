@@ -75,6 +75,7 @@ dependencies:
   flutter_map: ^8.1.0
   # Lat/Lon value type used by flutter_map markers + camera.
   latlong2: ^0.9.1
+  gpt_markdown: ^1.1.7
 
 dev_dependencies:
   flutter_test:
