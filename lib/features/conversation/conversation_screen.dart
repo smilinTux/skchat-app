@@ -16,6 +16,7 @@ import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
 import '../identity/identity_card_screen.dart';
 import '../../services/skcomms_sync.dart';
+import '../../services/pq_conversation_service.dart';
 import '../../core/chat_text.dart';
 import 'conversation_provider.dart';
 import 'reply_state_provider.dart';
@@ -145,6 +146,9 @@ class ConversationScreen extends ConsumerWidget {
                         inReplyTo: reply?.id,
                         threadId: reply?.threadId,
                       );
+              // PQC Q5: sealing happened inside sendMessage → re-read the PQ
+              // self-report so the 🔐 badge appears on the very first hybrid send.
+              ref.invalidate(conversationPqStateProvider(peerId));
               if (result != null &&
                   (result.echoedMessage != null || result.reply != null)) {
                 await ref

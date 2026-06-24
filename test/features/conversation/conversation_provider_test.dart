@@ -8,6 +8,9 @@ import 'package:skchat/features/conversation/conversation_provider.dart';
 import 'package:skchat/models/chat_message.dart';
 import 'package:skchat/models/conversation.dart';
 import 'package:skchat/services/skcomms_client.dart';
+import 'package:skchat/services/daemon_config.dart';
+import 'package:skchat/services/pq_conversation_service.dart';
+import 'package:skchat/services/pq_prekey_service.dart';
 
 class MockMessageRepository extends Mock implements MessageRepository {}
 
@@ -16,7 +19,28 @@ class MockConversationRepository extends Mock
 
 class MockSKCommsClient extends Mock implements SKCommsClient {}
 
+/// A Hive-free [DaemonConfigNotifier] so the conversation provider's daemon
+/// dependency doesn't fire the real `_loadPersisted()` (which opens a Hive box
+/// asynchronously and would leak into this unit test).
+class _StubDaemonConfig extends DaemonConfigNotifier {
+  @override
+  String build() => 'http://localhost:9384';
+}
+
+class _StubPrekeyService implements PqPrekeyService {
+  @override
+  Future<bool> ensureKeyPair() async => false;
+  @override
+  Future<PrekeyBundle> fetchPeer(String peer, {bool force = false}) async =>
+      const PrekeyBundle();
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late MockMessageRepository mockMsgRepo;
   late MockConversationRepository mockConvoRepo;
   late MockSKCommsClient mockClient;
@@ -41,6 +65,9 @@ void main() {
     mockMsgRepo = MockMessageRepository();
     mockConvoRepo = MockConversationRepository();
     mockClient = MockSKCommsClient();
+    // Hive is intentionally NOT initialized here: the daemon-config and PQ
+    // providers are overridden below so nothing in this unit test touches a
+    // real Hive box (the PQ service's box-open guard falls back to in-memory).
   });
 
   ProviderContainer createContainer() {
@@ -49,6 +76,15 @@ void main() {
         messageRepositoryProvider.overrideWithValue(mockMsgRepo),
         conversationRepositoryProvider.overrideWithValue(mockConvoRepo),
         skcommsClientProvider.overrideWithValue(mockClient),
+        // Isolate the PQ chain so the provider's open-time priming does not
+        // build the Hive-backed daemon-config provider in this unit test.
+        pqConversationServiceProvider.overrideWithValue(
+          PqConversationService(
+            prekeys: _StubPrekeyService(),
+            localShort: 'chef',
+          ),
+        ),
+        daemonUrlProvider.overrideWith(_StubDaemonConfig.new),
       ],
     );
   }
