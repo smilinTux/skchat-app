@@ -9,6 +9,7 @@ import 'core/providers/theme_provider.dart';
 import 'data/hive_adapters.dart';
 import 'services/skcomms_sync.dart';
 import 'services/identity_service.dart';
+import 'services/pq_prekey_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,6 +59,10 @@ class SKChatApp extends ConsumerWidget {
 
     // Eagerly load the local PGP identity from secure storage.
     ref.watch(identityKeyPairProvider);
+
+    // PQC Q5: generate (once) + publish this device's hybrid prekey so DMs go
+    // hybrid post-quantum. Best-effort; no-op when no PQ backend is available.
+    ref.watch(pqBootstrapProvider);
 
     return MaterialApp.router(
       title: 'SKChat',

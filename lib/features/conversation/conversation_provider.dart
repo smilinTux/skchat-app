@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/message_repository.dart';
+import '../../services/pq_conversation_service.dart';
+import '../../services/pq_dm_codec.dart';
 import '../../models/chat_message.dart';
 import '../../models/control_signal.dart';
 import '../../models/conversation.dart';
@@ -114,10 +116,21 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           // Only include messages that belong to this conversation.
           if (msgPeerId != peerShort) continue;
 
+          // PQC Q5: open an inbound hybrid-sealed token (native CLI path). Our
+          // own outbound token isn't re-decryptable here (addressed to the peer)
+          // — the optimistic plaintext is already in state, so skip it.
+          var cliBody = m.content;
+          if (PqDmCodec.isHybridToken(cliBody)) {
+            if (isOutbound) continue;
+            final pq = ref.read(pqConversationServiceProvider);
+            cliBody = await pq.openIncoming(msgPeerId, cliBody);
+            ref.invalidate(conversationPqStateProvider(msgPeerId));
+          }
+
           // Reaction sentinel (__REACT__) — fold into the target message's
           // reactions map instead of rendering. Skip our own outbound echoes
           // (we applied them optimistically) and already-applied ones.
-          final react = ReactionSignal.parse(m.content);
+          final react = ReactionSignal.parse(cliBody);
           if (react != null) {
             if (!isOutbound && _appliedControlIds.add(m.id)) {
               _applyReaction(react, fallbackSender: senderShort);
@@ -126,7 +139,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           }
 
           // Edit sentinel (__EDIT__) — replace the target's body + mark edited.
-          final edit = EditSignal.parse(m.content);
+          final edit = EditSignal.parse(cliBody);
           if (edit != null) {
             if (!isOutbound && _appliedControlIds.add(m.id)) {
               _applyEdit(edit, at: m.timestamp);
@@ -135,7 +148,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           }
 
           // Receipt sentinel (__RECEIPT__) — fold into delivered/read lists.
-          final receipt = ReceiptSignal.parse(m.content);
+          final receipt = ReceiptSignal.parse(cliBody);
           if (receipt != null) {
             if (!isOutbound && _appliedControlIds.add(m.id)) {
               _applyReceipt(receipt, fallbackSender: senderShort);
@@ -145,7 +158,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
           // Typing sentinel (__TYPING__) — ephemeral; flip the peer's
           // "is composing" flag. Never persisted or shown. Ignore our own.
-          final typing = TypingSignal.parse(m.content);
+          final typing = TypingSignal.parse(cliBody);
           if (typing != null) {
             if (!isOutbound) _handleIncomingTyping(msgPeerId, typing);
             continue;
@@ -154,15 +167,15 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           if (existing.contains(m.id)) continue;
           // Skip non-displayable traffic (control envelopes, prompt-echoes,
           // delivery-receipt UUIDs) so the thread stays clean.
-          if (displayTextFor(m.content) == null) continue;
+          if (displayTextFor(cliBody) == null) continue;
 
-          final sig = '$isOutbound|${m.content}';
+          final sig = '$isOutbound|$cliBody';
           if (!seenSig.add(sig)) continue; // duplicate content+direction
 
           fresh.add(ChatMessage(
             id: m.id,
             peerId: msgPeerId,
-            content: m.content,
+            content: cliBody,
             timestamp: m.timestamp,
             isOutbound: isOutbound,
             conversationId: peerShort,
@@ -236,7 +249,23 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           parsed.sender != null ? normalizePeerKey(parsed.sender!) : '';
       // Outbound iff WE authored it; otherwise it's the peer's (inbound).
       final isOutbound = localShort != null && senderShort == localShort;
-      final body = parsed.content;
+      var body = parsed.content;
+
+      // PQC Q5: an inbound `pqdm1:` token is a hybrid-sealed DM — open it with
+      // this device's hybrid private key (flips the convo `hybrid-pq`). Our own
+      // outbound copy is stored sealed too; we can't decapsulate a ciphertext
+      // addressed to the peer, so render the optimistic plaintext we already
+      // hold (deduped by content) and skip re-decrypting our own token.
+      if (PqDmCodec.isHybridToken(body)) {
+        if (isOutbound) {
+          // We authored it; the cleartext is already in state (optimistic
+          // bubble). Don't render the opaque token a second time.
+          continue;
+        }
+        final pq = ref.read(pqConversationServiceProvider);
+        body = await pq.openIncoming(peerShort, body);
+        ref.invalidate(conversationPqStateProvider(peerShort));
+      }
 
       // Control sentinels — fold into target state instead of rendering.
       final react = ReactionSignal.parse(body);
