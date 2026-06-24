@@ -7,6 +7,7 @@ import '../models/control_signal.dart';
 import '../models/conversation.dart';
 import '../features/chats/chats_provider.dart';
 import 'daemon_service.dart';
+import 'pq_conversation_service.dart';
 import 'skcomms_client.dart';
 
 /// Daemon connection status.
@@ -193,11 +194,19 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     }
 
     // Fallback (and the sole path on web): SKComms HTTP contract send.
+    //
+    // PQC Q5: if the peer advertises a hybrid prekey AND this device has a
+    // keypair, seal the body into a `pqdm1:` token (hybrid-pq). Otherwise the
+    // body is returned unchanged (classical path, byte-for-byte). Control
+    // sentinels are never sealed (sealOutgoing passes `__…` through).
+    final pq = ref.read(pqConversationServiceProvider);
+    final wireContent = await pq.sealOutgoing(peerId, content);
+
     final client = ref.read(skcommsClientProvider);
     try {
       final result = await client.sendMessage(
         recipient: peerId,
-        message: content,
+        message: wireContent,
         threadId: threadId,
         inReplyTo: inReplyTo,
         contentType: contentType,

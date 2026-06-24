@@ -25,6 +25,7 @@ import 'widgets/reply_preview.dart';
 import 'widgets/thread_view.dart';
 import 'widgets/conversation_subviews.dart';
 import 'widgets/typing_indicator.dart';
+import 'widgets/post_quantum_badge.dart';
 import 'widgets/input_bar.dart';
 import 'message_dedup.dart';
 import 'location/location_geo.dart';
@@ -594,6 +595,10 @@ class ConversationScreen extends ConsumerWidget {
         ),
       ),
       actions: [
+        if (conversation.isGroup != true) ...[
+          PostQuantumBadge(peerId: peerId),
+          const SizedBox(width: 4),
+        ],
         const EncryptBadge(size: 16),
         const SizedBox(width: 4),
         // Group info (groups) OR "add people" → promote a 1:1 to a group.

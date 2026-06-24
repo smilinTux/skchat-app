@@ -45,6 +45,17 @@ dependencies:
   # Cryptography — pure-Dart RSA / AES primitives
   pointycastle: ^3.7.3
 
+  # Post-quantum hybrid KEM (X25519 + ML-KEM-768). Web = @noble/post-quantum
+  # via JS-interop (globalThis.skPqc); native = liboqs FFI (mobile follow-up).
+  # PqDmCodec uses this to seal/open `pqdm1:` hybrid DM blobs (PQC-MIGRATION Q5).
+  sk_pqc:
+    git:
+      url: https://github.com/smilinTux/sk_pqc
+
+  # HKDF-SHA256 + AES-256-GCM for the PqDmCodec wrap (mirrors skcomms/pqdm.py).
+  # Same package sk_pqc itself uses for the X25519 leg + HKDF combiner.
+  cryptography: ^2.7.0
+
   # ASN1 encoding/decoding for DER key serialization
   asn1lib: ^1.5.0
 
@@ -91,6 +102,13 @@ dev_dependencies:
   
   # Linting
   flutter_lints: ^6.0.0
+
+# Build against the local sk_pqc checkout so the build is hermetic and uses the
+# exact audited code. The published dependency above (git) is the contract; this
+# override is dev/build convenience. Remove to pin the GitHub ref in CI.
+dependency_overrides:
+  sk_pqc:
+    path: ../sk_pqc
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
