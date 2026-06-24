@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/router/app_router.dart';
+import '../../core/chat_text.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
+import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/guest_group_service.dart';
 import '../chats/chats_provider.dart';
@@ -117,6 +120,13 @@ class GroupInfoScreen extends ConsumerWidget {
     final membersAsync = ref.watch(groupMembersProvider(groupId));
     final tt = Theme.of(context).textTheme;
 
+    // Am I (the operator) an admin of this group? Only an admin sees the
+    // destructive "Delete group" action; everyone else gets "Leave group".
+    // The operator is admin when the group's admin member resolves to my local
+    // identity (the creator always counts). Until members load we treat the
+    // operator as a possible admin only after data arrives (conservative).
+    final iAmAdmin = _isOperatorAdmin(ref, membersAsync.valueOrNull);
+
     if (group == null) {
       return Scaffold(
         backgroundColor: SovereignColors.surfaceBase,
@@ -159,7 +169,8 @@ class GroupInfoScreen extends ConsumerWidget {
             ),
           ),
           SliverToBoxAdapter(child: _buildAddMemberButton(context, ref, tt)),
-          SliverToBoxAdapter(child: _buildActions(context, ref, tt)),
+          SliverToBoxAdapter(
+              child: _buildActions(context, ref, tt, isAdmin: iAmAdmin)),
           const SliverToBoxAdapter(child: SizedBox(height: 40)),
         ],
       ),
@@ -356,7 +367,29 @@ class GroupInfoScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildActions(BuildContext context, WidgetRef ref, TextTheme tt) {
+  /// True when the local operator is an admin of this group (so the destructive
+  /// "Delete group" action is offered). The operator is admin when the group's
+  /// admin member resolves to my local identity — the creator always does.
+  /// Returns false until members have loaded (conservative: no delete shown).
+  bool _isOperatorAdmin(WidgetRef ref, List<GroupMemberInfo>? members) {
+    if (members == null || members.isEmpty) return false;
+    final meRaw = ref.read(daemonServiceProvider).localIdentity ?? '';
+    final me = normalizePeerKey(meRaw);
+    for (final m in members) {
+      if (m.role == MemberRole.admin &&
+          normalizePeerKey(m.identityUri) == me) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Widget _buildActions(
+    BuildContext context,
+    WidgetRef ref,
+    TextTheme tt, {
+    required bool isAdmin,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
@@ -383,6 +416,7 @@ class GroupInfoScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 12),
+          // Non-admins leave; admins (the creator) can delete the whole group.
           GlassCard(
             onTap: () => _confirmLeaveGroup(context, ref),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -404,6 +438,32 @@ class GroupInfoScreen extends ConsumerWidget {
               ],
             ),
           ),
+          if (isAdmin) ...[
+            const SizedBox(height: 12),
+            GlassCard(
+              key: const Key('delete-group-action'),
+              onTap: () => _confirmDeleteGroup(context, ref),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.delete_forever_rounded,
+                    color: SovereignColors.accentDanger,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Delete group',
+                    style: tt.titleSmall?.copyWith(
+                      color: SovereignColors.accentDanger,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -884,6 +944,68 @@ class GroupInfoScreen extends ConsumerWidget {
               if (context.mounted) context.go('/groups');
             },
             child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Admin-only: delete the WHOLE group. Confirms, calls DELETE
+  /// /api/v1/groups/{id} (server re-enforces the admin gate → 403 otherwise),
+  /// removes it from the local Groups list, and navigates back to the Groups
+  /// list. A 403 (not actually admin) surfaces a clear message and keeps the
+  /// group.
+  void _confirmDeleteGroup(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: SovereignColors.surfaceRaised,
+        title: const Text('Delete group'),
+        content: const Text(
+          'This permanently deletes the group for everyone and removes its '
+          'message thread. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('delete-group-confirm'),
+            style: FilledButton.styleFrom(
+              backgroundColor: SovereignColors.accentDanger,
+            ),
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              final client = ref.read(skcommsClientProvider);
+              final messenger = ScaffoldMessenger.of(context);
+              bool deletedServerSide = true;
+              String? errorMsg;
+              try {
+                await client.deleteGroup(groupId);
+              } on Object catch (e) {
+                deletedServerSide = false;
+                // A 403 means we are not actually an admin — keep the group.
+                final s = e.toString();
+                if (s.contains('403')) {
+                  errorMsg = 'Only an admin can delete this group.';
+                }
+              }
+              if (errorMsg != null) {
+                messenger.showSnackBar(SnackBar(content: Text(errorMsg)));
+                return;
+              }
+              // Remove from the local list (covers the daemon-offline path too)
+              // and return to the Groups list with a working back path.
+              await ref.read(groupsProvider.notifier).removeGroup(groupId);
+              if (!deletedServerSide) {
+                messenger.showSnackBar(const SnackBar(
+                  content: Text('Removed locally (daemon offline).'),
+                ));
+              }
+              if (context.mounted) context.go(AppRoutes.groups);
+            },
+            child: const Text('Delete'),
           ),
         ],
       ),

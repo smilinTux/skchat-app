@@ -6,16 +6,23 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
 import '../../services/skcomms_client.dart';
-import '../chats/peer_picker_provider.dart';
+import '../chats/chats_provider.dart';
 import 'groups_provider.dart';
 
 /// Full-screen "Create Group" flow.
 ///
 /// Steps:
 ///   1. Enter name + description.
-///   2. Pick initial members from known peers (optional).
+///   2. Pick initial members from your real conversation peers (optional).
 ///   3. Submit → calls POST /api/v1/groups via [SKCommsClient].
-///   4. On success: shows AES-256-GCM key distribution info.
+///   4. On success: shows AES-256-GCM key distribution info, then navigates
+///      cleanly to the Groups list (the new group is there + has a back path).
+///
+/// Member source: the SAME conversation peers shown on the Chats screen
+/// ([chatsProvider], minus groups). This is every real person/agent you can
+/// message — previously the picker only used `getPeers()` (discovery), which
+/// hard-failed when the daemon was momentarily unreachable and excluded real
+/// contacts that only had a conversation (not a live discovery record).
 class CreateGroupScreen extends ConsumerStatefulWidget {
   const CreateGroupScreen({super.key});
 
@@ -39,10 +46,19 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-    final peersAsync = ref.watch(peerPickerProvider);
+    // Real conversation peers (humans + agents), excluding existing groups.
+    final candidates =
+        ref.watch(chatsProvider).where((c) => !c.isGroup).toList();
+    // Keyboard inset — pad the scroll view so the member tiles at the bottom
+    // are never hidden behind the on-screen keyboard (the operator-reported
+    // "member selection is cut off"). resizeToAvoidBottomInset stays true so
+    // the Scaffold also shrinks; the extra padding guarantees the LAST tile
+    // scrolls fully into view above the keyboard.
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         backgroundColor: SovereignColors.surfaceBase,
         title: Text(
@@ -67,6 +83,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                   ),
                 )
               : TextButton(
+                  key: const Key('create-group-submit'),
                   onPressed: _canSubmit ? _submit : null,
                   child: Text(
                     'Create',
@@ -82,13 +99,16 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: 40),
+        // Dismiss the keyboard on a drag so the user can scroll the whole
+        // member list freely.
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.only(bottom: 40 + bottomInset),
         children: [
           _buildGroupAvatar(tt),
           _buildNameField(tt),
           _buildDescField(tt),
           _buildEncryptionInfo(tt),
-          _buildMembersSection(peersAsync, tt),
+          _buildMembersSection(candidates, tt),
         ],
       ),
     );
@@ -221,8 +241,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
     );
   }
 
-  Widget _buildMembersSection(
-      AsyncValue<List<PeerInfo>> peersAsync, TextTheme tt) {
+  Widget _buildMembersSection(List<Conversation> candidates, TextTheme tt) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -262,89 +281,54 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
             ],
           ),
         ),
-        peersAsync.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(
-              child: CircularProgressIndicator(
-                color: SovereignColors.soulLumina,
-                strokeWidth: 2,
+        if (candidates.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'No contacts yet. You can add members after creation.',
+              style: tt.bodySmall?.copyWith(
+                color: SovereignColors.textSecondary,
               ),
             ),
+          )
+        else
+          // A plain Column (NOT a nested scrollable) so the parent ListView
+          // owns scrolling and every tile is reachable — combined with the
+          // keyboard-inset bottom padding this fixes the "member list cut off".
+          Column(
+            children: candidates
+                .map((peer) => _buildPeerCheckTile(peer, tt))
+                .toList(),
           ),
-          error: (_, __) => Padding(
-            padding: const EdgeInsets.all(16),
-            child: GlassCard(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.cloud_off_rounded,
-                    color: SovereignColors.textTertiary,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Daemon offline — you can add members after creation.',
-                      style: tt.bodySmall?.copyWith(
-                        color: SovereignColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          data: (peers) => peers.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    'No peers discovered yet. You can add members after creation.',
-                    style: tt.bodySmall?.copyWith(
-                      color: SovereignColors.textSecondary,
-                    ),
-                  ),
-                )
-              : Column(
-                  children: peers
-                      .map((peer) => _buildPeerCheckTile(peer, tt))
-                      .toList(),
-                ),
-        ),
       ],
     );
   }
 
-  Widget _buildPeerCheckTile(PeerInfo peer, TextTheme tt) {
-    final isSelected = _selectedPeerIds.contains(peer.name);
-    final isOnline = PeerPickerNotifier.isOnline(peer);
-    final soulColor = SovereignColors.fromFingerprint(
-      peer.fingerprint ?? peer.name,
-    );
-    final initials =
-        peer.name.isNotEmpty ? peer.name[0].toUpperCase() : '?';
+  Widget _buildPeerCheckTile(Conversation peer, TextTheme tt) {
+    final isSelected = _selectedPeerIds.contains(peer.peerId);
 
     return GlassCard(
+      key: Key('member-tile-${peer.peerId}'),
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       borderRadius: 14,
       onTap: () {
         setState(() {
           if (isSelected) {
-            _selectedPeerIds.remove(peer.name);
+            _selectedPeerIds.remove(peer.peerId);
           } else {
-            _selectedPeerIds.add(peer.name);
+            _selectedPeerIds.add(peer.peerId);
           }
         });
       },
       child: Row(
         children: [
           SoulAvatar(
-            soulColor: soulColor,
-            initials: initials,
+            soulColor: peer.resolvedSoulColor,
+            initials: peer.resolvedInitials,
             size: 44,
-            isOnline: isOnline,
+            isAgent: peer.isAgent,
+            isOnline: peer.isOnline,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -352,15 +336,13 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  peer.name,
+                  peer.displayName,
                   style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                 ),
                 Text(
-                  isOnline ? 'Online' : 'Offline',
+                  peer.isAgent ? 'Agent' : 'Human',
                   style: tt.bodySmall?.copyWith(
-                    color: isOnline
-                        ? SovereignColors.accentEncrypt
-                        : SovereignColors.textTertiary,
+                    color: SovereignColors.textTertiary,
                     fontSize: 12,
                   ),
                 ),
@@ -397,13 +379,17 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
     final name = _nameController.text.trim();
     if (name.isEmpty) return;
 
+    // Drop focus so the keyboard retracts before any navigation/modal.
+    FocusScope.of(context).unfocus();
     setState(() => _isSubmitting = true);
 
     final client = ref.read(skcommsClientProvider);
     final notifier = ref.read(groupsProvider.notifier);
 
+    String? createdGroupId;
+    CreateGroupResult? result;
     try {
-      final result = await client.createGroup(
+      result = await client.createGroup(
         name: name,
         description: _descController.text.trim().isNotEmpty
             ? _descController.text.trim()
@@ -411,7 +397,8 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         memberUris: _selectedPeerIds.toList(),
       );
 
-      final group = Conversation(
+      createdGroupId = result.groupId;
+      await notifier.addGroup(Conversation(
         peerId: result.groupId,
         displayName: result.name,
         lastMessage: 'Group created',
@@ -419,20 +406,12 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         isGroup: true,
         memberCount: result.memberCount,
         lastDeliveryStatus: 'delivered',
-      );
-      await notifier.addGroup(group);
-
-      if (mounted) {
-        await _showKeyDistributionSheet(result);
-        if (mounted) {
-          context.go(AppRoutes.groupInfoPath(result.groupId));
-        }
-      }
+      ));
     } on Object catch (e) {
-      // Daemon offline or API error — create locally and let user proceed.
-      final groupId = 'group-${DateTime.now().millisecondsSinceEpoch}';
+      // Daemon offline or API error — create locally and let the user proceed.
+      createdGroupId = 'group-${DateTime.now().millisecondsSinceEpoch}';
       await notifier.addGroup(Conversation(
-        peerId: groupId,
+        peerId: createdGroupId,
         displayName: name,
         lastMessage: 'Group created',
         lastMessageTime: DateTime.now(),
@@ -440,7 +419,6 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         memberCount: _selectedPeerIds.length + 1,
         lastDeliveryStatus: 'delivered',
       ));
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -448,11 +426,34 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
             backgroundColor: SovereignColors.surfaceRaised,
           ),
         );
-        context.go(AppRoutes.groupInfoPath(groupId));
       }
     } finally {
+      // Always clear the spinner BEFORE navigating away — leaving _isSubmitting
+      // true was the "spins forever" hang the operator hit (the screen never
+      // settled because navigation raced the setState in finally).
       if (mounted) setState(() => _isSubmitting = false);
     }
+
+    // Show the key-distribution sheet for a real (server-side) group, then
+    // navigate. The await completes the moment the sheet is dismissed.
+    if (result != null && mounted) {
+      await _showKeyDistributionSheet(result);
+    }
+
+    // Navigate CLEANLY to the Groups list. context.go replaces the stack so the
+    // back button from here returns to the Groups list (no dead-end), and the
+    // new group is visible at the top. Tapping it opens the conversation; its
+    // group-info/manage affordance is one long-press / info tap away.
+    if (mounted) {
+      _navigateToGroups(createdGroupId);
+    }
+  }
+
+  /// Resolve to the Groups list. We deliberately route to the LIST (not the
+  /// group-info screen) so there is no members-fetch spinner to hang on and the
+  /// new group is immediately visible + tappable with a working back path.
+  void _navigateToGroups(String? groupId) {
+    context.go(AppRoutes.groups);
   }
 
   Future<void> _showKeyDistributionSheet(CreateGroupResult result) async {
