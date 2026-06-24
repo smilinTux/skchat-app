@@ -75,8 +75,11 @@ class PqPrekeyService {
         _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl,
-              connectTimeout: const Duration(seconds: 5),
-              receiveTimeout: const Duration(seconds: 8),
+              // Generous timeouts: the webui can be busy during the load burst,
+              // and a 5s connect timeout was making the prekey fetch fail →
+              // silently downgrading the conversation to classical.
+              connectTimeout: const Duration(seconds: 20),
+              receiveTimeout: const Duration(seconds: 20),
               headers: {'Content-Type': 'application/json'},
             ));
 
@@ -189,10 +192,10 @@ class PqPrekeyService {
       final bundle = PrekeyBundle.fromJson(bundleMap);
       _peerCache[key] = bundle;
       return bundle;
-    } catch (_) {
-      const classical = PrekeyBundle();
-      _peerCache[key] = classical;
-      return classical;
+    } catch (e) {
+      // Do NOT cache a failed fetch — a transient timeout must not permanently
+      // pin the conversation to classical. The next send retries the fetch.
+      return const PrekeyBundle();
     }
   }
 
