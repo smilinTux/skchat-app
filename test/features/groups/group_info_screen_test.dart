@@ -1,5 +1,68 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:skchat/data/conversation_repository.dart';
 import 'package:skchat/features/groups/group_info_screen.dart';
+import 'package:skchat/features/groups/groups_provider.dart';
+import 'package:skchat/models/conversation.dart';
+import 'package:skchat/services/daemon_service.dart';
+import 'package:skchat/services/skcomms_client.dart';
+
+class _MockClient extends Mock implements SKCommsClient {}
+
+class _MockRepo extends Mock implements ConversationRepository {}
+
+/// GroupsNotifier seeded with one group so the info screen finds it.
+class _FakeGroupsNotifier extends GroupsNotifier {
+  _FakeGroupsNotifier(this._seed);
+  final List<Conversation> _seed;
+  @override
+  List<Conversation> build() => _seed;
+}
+
+Conversation _group(String id) => Conversation(
+      peerId: id,
+      displayName: 'Penguins',
+      lastMessage: '',
+      lastMessageTime: DateTime(2026),
+      isGroup: true,
+      memberCount: 2,
+    );
+
+Widget _wrapInfo({
+  required _MockClient client,
+  required _MockRepo repo,
+  required List<GroupMemberInfo> members,
+  String groupId = 'g-1',
+}) {
+  final router = GoRouter(
+    initialLocation: '/groups/$groupId/info',
+    routes: [
+      GoRoute(
+        path: '/groups',
+        builder: (_, __) => const Scaffold(body: Text('GROUPS LIST')),
+      ),
+      GoRoute(
+        path: '/groups/:id/info',
+        builder: (_, __) => GroupInfoScreen(groupId: groupId),
+      ),
+    ],
+  );
+  return ProviderScope(
+    overrides: [
+      skcommsClientProvider.overrideWithValue(client),
+      conversationRepositoryProvider.overrideWithValue(repo),
+      // Fixed local identity so the admin gate is deterministic (no Hive).
+      daemonServiceProvider
+          .overrideWithValue(DaemonService(identity: 'chef@skworld.io')),
+      groupsProvider.overrideWith(() => _FakeGroupsNotifier([_group(groupId)])),
+      groupMembersProvider(groupId).overrideWith((ref) async => members),
+    ],
+    child: MaterialApp.router(routerConfig: router),
+  );
+}
 
 void main() {
   group('GroupMemberInfo', () {
@@ -111,6 +174,102 @@ void main() {
   group('groupMembersProvider', () {
     test('provider is accessible', () {
       expect(groupMembersProvider, isNotNull);
+    });
+  });
+
+  group('Delete group (admin gating)', () {
+    late _MockClient client;
+    late _MockRepo repo;
+
+    setUpAll(() {
+      registerFallbackValue(_group('x'));
+    });
+
+    setUp(() {
+      client = _MockClient();
+      repo = _MockRepo();
+      when(() => repo.save(any())).thenAnswer((_) async {});
+      when(() => repo.delete(any())).thenAnswer((_) async {});
+      when(() => client.deleteGroup(any())).thenAnswer((_) async {});
+    });
+
+    testWidgets('admin (creator) sees Delete group', (tester) async {
+      // Local identity defaults to chef@skworld.io → admin member is "chef".
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'lumina@skworld.io',
+            displayName: 'Lumina',
+            role: MemberRole.member,
+          ),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('delete-group-action')), findsOneWidget);
+      expect(find.text('Delete group'), findsOneWidget);
+    });
+
+    testWidgets('non-admin does NOT see Delete group (only Leave)',
+        (tester) async {
+      // The operator (chef) is only a plain member here → no delete affordance.
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'lumina@skworld.io',
+            displayName: 'Lumina',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.member,
+          ),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('delete-group-action')), findsNothing);
+      expect(find.text('Leave group'), findsOneWidget);
+    });
+
+    testWidgets('confirming Delete calls the API + navigates to Groups list',
+        (tester) async {
+      // Taller surface so the actions (Delete) sit on screen in the scroll view.
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const Key('delete-group-action')));
+      await tester.tap(find.byKey(const Key('delete-group-action')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('delete-group-confirm')));
+      await tester.pumpAndSettle();
+
+      verify(() => client.deleteGroup('g-1')).called(1);
+      expect(find.text('GROUPS LIST'), findsOneWidget);
     });
   });
 }

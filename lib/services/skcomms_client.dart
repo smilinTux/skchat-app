@@ -230,6 +230,14 @@ class SKCommsClient {
     await _dio.delete('/api/v1/groups/$groupId/members/self');
   }
 
+  /// DELETE /api/v1/groups/:groupId — delete a whole group (admin-only).
+  ///
+  /// The server gates this to an admin (the creator); a non-admin caller gets
+  /// a 403. Throws on any non-2xx so the caller can surface "not allowed".
+  Future<void> deleteGroup(String groupId) async {
+    await _dio.delete('/api/v1/groups/$groupId');
+  }
+
   // ── Presence ──────────────────────────────────────────────────────────────
 
   /// POST /api/v1/presence — broadcast presence status.

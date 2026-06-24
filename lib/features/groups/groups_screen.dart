@@ -82,9 +82,18 @@ class GroupsScreen extends ConsumerWidget {
               color: SovereignColors.textSecondary,
             ),
           ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: () => context.push(AppRoutes.createGroup),
+            icon: const Icon(Icons.group_add_rounded, size: 18),
+            label: const Text('New group'),
+            style: FilledButton.styleFrom(
+              backgroundColor: SovereignColors.soulLumina,
+              foregroundColor: Colors.black,
+            ),
+          ),
         ],
       ),
     );
   }
-
 }
