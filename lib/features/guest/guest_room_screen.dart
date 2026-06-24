@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,6 +35,7 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
   late List<Map<String, dynamic>> _messages;
   bool _sending = false;
   bool _uploading = false;
+  Timer? _pollTimer;
 
   GuestGroupService get _svc => ref.read(guestGroupServiceProvider);
   String get _token => widget.join.sessionToken;
@@ -42,10 +45,16 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
     super.initState();
     _messages = List.of(widget.join.messages);
     _refresh();
+    // Poll the room so the guest sees NEW messages from the operator/members
+    // (previously refreshed only once on join → sovereign→guest posts never
+    // appeared). The server returns the full thread; this reconciles it.
+    _pollTimer =
+        Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _composeCtl.dispose();
     _scrollCtl.dispose();
     super.dispose();
