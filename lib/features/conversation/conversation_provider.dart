@@ -36,6 +36,12 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   @override
   List<ChatMessage> build(String peerId) {
     _loadPersistedThenDaemon(peerId);
+    // PQC Q5: prefetch the peer's hybrid prekey + prime the own-outbound
+    // plaintext cache the moment the conversation OPENS, so (a) sealing at send
+    // time uses a cached bundle and doesn't race a busy webui (BUG 2), and (b)
+    // the first history poll can resolve our own sent tokens to plaintext
+    // synchronously (BUG 1). If the peer is hybrid the badge can show up front.
+    _primePqForConversation(peerId);
     // This provider is the SINGLE source of conversation messages: it polls the
     // full thread (`skchat history`, both directions) on a timer. skcomms_sync
     // no longer dispatches chat messages here (that caused multi-path dups /
@@ -49,6 +55,17 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       _typingClearTimer?.cancel();
     });
     return [];
+  }
+
+  /// Prefetch the peer's prekey bundle + hydrate the own-outbound plaintext
+  /// cache on conversation open, then invalidate the PQ badge so the header
+  /// re-reads the (possibly now hybrid) self-report.
+  Future<void> _primePqForConversation(String peerId) async {
+    final pq = ref.read(pqConversationServiceProvider);
+    final peerShort = normalizePeerKey(peerId);
+    await pq.primeOutboundCache();
+    await pq.prefetchPeer(peerShort);
+    ref.invalidate(conversationPqStateProvider(peerShort));
   }
 
   /// Remove duplicates: same id, or same content+direction within 10s.
@@ -81,6 +98,31 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     await _fetchFromDaemon(peerId);
   }
 
+  /// Resolve a `pqdm1:` token to display text + the direction it should render.
+  ///
+  /// PQC Q5 (BUG 1): an own-outbound hybrid DM is sealed to the PEER's key, so
+  /// this device cannot decapsulate it. We therefore FIRST ask the PQ service
+  /// whether this exact token is one WE sealed (`recallOutbound`) — a hit means
+  /// "render the remembered plaintext as OUTBOUND", regardless of how
+  /// directionality was computed (which is unreliable when the local identity
+  /// hasn't resolved yet). Only a miss is treated as a peer message to open with
+  /// our private key. Returns `(text, isOutbound)`; `text == null` means drop.
+  Future<({String? text, bool isOutbound})> _resolvePqToken(
+    String token,
+    String peerShort, {
+    required bool isOutboundGuess,
+  }) async {
+    final pq = ref.read(pqConversationServiceProvider);
+    final mine = await pq.recallOutbound(token);
+    if (mine != null) {
+      ref.invalidate(conversationPqStateProvider(peerShort));
+      return (text: mine, isOutbound: true);
+    }
+    final opened = await pq.openIncoming(peerShort, token);
+    ref.invalidate(conversationPqStateProvider(peerShort));
+    return (text: opened, isOutbound: isOutboundGuess);
+  }
+
   /// Fetch conversation history from the skchat local store via CLI.
   ///
   /// Calls `skchat history <peer> --json` and filters messages by [peerId].
@@ -109,22 +151,26 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
         for (final m in cliMessages) {
           final senderShort = normalizePeerKey(m.sender);
-          final isOutbound =
+          var isOutbound =
               localShort != null && senderShort == localShort;
           final msgPeerId =
               isOutbound ? normalizePeerKey(m.recipient) : senderShort;
           // Only include messages that belong to this conversation.
           if (msgPeerId != peerShort) continue;
 
-          // PQC Q5: open an inbound hybrid-sealed token (native CLI path). Our
-          // own outbound token isn't re-decryptable here (addressed to the peer)
-          // — the optimistic plaintext is already in state, so skip it.
+          // PQC Q5: resolve a `pqdm1:` token. Own-outbound (sealed to the peer)
+          // renders the remembered plaintext as OUTBOUND; an inbound token is
+          // opened with our key. Never shown as ciphertext.
           var cliBody = m.content;
           if (PqDmCodec.isHybridToken(cliBody)) {
-            if (isOutbound) continue;
-            final pq = ref.read(pqConversationServiceProvider);
-            cliBody = await pq.openIncoming(msgPeerId, cliBody);
-            ref.invalidate(conversationPqStateProvider(msgPeerId));
+            final r = await _resolvePqToken(
+              cliBody,
+              peerShort,
+              isOutboundGuess: isOutbound,
+            );
+            if (r.text == null) continue;
+            cliBody = r.text!;
+            isOutbound = r.isOutbound;
           }
 
           // Reaction sentinel (__REACT__) — fold into the target message's
@@ -248,23 +294,23 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       final senderShort =
           parsed.sender != null ? normalizePeerKey(parsed.sender!) : '';
       // Outbound iff WE authored it; otherwise it's the peer's (inbound).
-      final isOutbound = localShort != null && senderShort == localShort;
+      var isOutbound = localShort != null && senderShort == localShort;
       var body = parsed.content;
 
       // PQC Q5: an inbound `pqdm1:` token is a hybrid-sealed DM — open it with
       // this device's hybrid private key (flips the convo `hybrid-pq`). Our own
-      // outbound copy is stored sealed too; we can't decapsulate a ciphertext
-      // addressed to the peer, so render the optimistic plaintext we already
-      // hold (deduped by content) and skip re-decrypting our own token.
+      // OUTBOUND copy is stored sealed to the PEER's key (not decapsulatable
+      // here), so we first ask `recallOutbound` for the remembered plaintext and
+      // render it as outbound — never as ciphertext, deduped by content.
       if (PqDmCodec.isHybridToken(body)) {
-        if (isOutbound) {
-          // We authored it; the cleartext is already in state (optimistic
-          // bubble). Don't render the opaque token a second time.
-          continue;
-        }
-        final pq = ref.read(pqConversationServiceProvider);
-        body = await pq.openIncoming(peerShort, body);
-        ref.invalidate(conversationPqStateProvider(peerShort));
+        final r = await _resolvePqToken(
+          body,
+          peerShort,
+          isOutboundGuess: isOutbound,
+        );
+        if (r.text == null) continue;
+        body = r.text!;
+        isOutbound = r.isOutbound;
       }
 
       // Control sentinels — fold into target state instead of rendering.
@@ -302,6 +348,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
       fresh.add(parsed.copyWith(
         peerId: peerShort,
+        content: body,
         isOutbound: isOutbound,
         conversationId: peerShort,
         deliveryStatus: isOutbound ? 'sent' : 'delivered',
