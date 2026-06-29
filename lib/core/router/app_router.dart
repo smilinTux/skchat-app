@@ -20,6 +20,7 @@ import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
 import '../../features/recordings/recordings_screen.dart';
+import '../../features/requests/requests_screen.dart';
 import '../../features/spaces/space_models.dart';
 import '../../features/conf/conf_screen.dart';
 import '../../features/facetime/facetime_screen.dart';
@@ -50,6 +51,9 @@ class AppRoutes {
 
   /// Recordings browser (call/space recordings): /recordings
   static const recordings = '/recordings';
+
+  /// Contact Requests — first-contact consent review (gate 5): /requests
+  static const requests = '/requests';
 
   /// Coordination board: /coord
   static const coord = '/coord';
@@ -268,6 +272,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const RecordingsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.requests,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const RequestsScreen(),
             ),
           ),
           GoRoute(

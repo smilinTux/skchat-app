@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
+import '../../services/consent_service.dart';
 import '../conf/conf_screen.dart' show ConfArgs;
 import '../profile/profile_screen.dart' show localIdentityProvider;
 
@@ -23,6 +24,7 @@ class HubScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final identity = ref.watch(localIdentityProvider);
+    final pendingRequests = ref.watch(consentPendingCountProvider);
 
     final tiles = <_OpsTile>[
       _OpsTile(
@@ -85,6 +87,17 @@ class HubScreen extends ConsumerWidget {
         icon: Icons.group_outlined,
         accent: SovereignColors.soulChef,
         onTap: () => context.go(AppRoutes.groups),
+      ),
+      _OpsTile(
+        label: 'Contact Requests',
+        description: pendingRequests > 0
+            ? '$pendingRequests pending first-contact '
+                '${pendingRequests == 1 ? 'request' : 'requests'}'
+            : 'Review first-contact requests',
+        icon: Icons.person_add_alt_1_outlined,
+        accent: SovereignColors.soulLumina,
+        badge: pendingRequests,
+        onTap: () => context.go(AppRoutes.requests),
       ),
     ];
 
@@ -149,6 +162,7 @@ class _OpsTile extends StatelessWidget {
     required this.icon,
     required this.accent,
     required this.onTap,
+    this.badge = 0,
   });
 
   final String label;
@@ -156,6 +170,9 @@ class _OpsTile extends StatelessWidget {
   final IconData icon;
   final Color accent;
   final VoidCallback onTap;
+
+  /// Unread/pending count rendered as a pill before the chevron (hidden at 0).
+  final int badge;
 
   @override
   Widget build(BuildContext context) {
@@ -196,6 +213,23 @@ class _OpsTile extends StatelessWidget {
               ],
             ),
           ),
+          if (badge > 0) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: accent,
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Text(
+                badge > 99 ? '99+' : '$badge',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: SovereignColors.surfaceBase,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           const Icon(
             Icons.chevron_right_rounded,
             color: SovereignColors.textTertiary,
