@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-03
+
 ### Fixed
 - **LiveKit data-channel receive path**: `LiveKitCallService._dataCtl` was declared and
   consumed by `LaneService` but never fed — Spaces lanes (in-call chat, whiteboard, docs)
