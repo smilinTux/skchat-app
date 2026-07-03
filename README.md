@@ -1,8 +1,10 @@
 # skchat-app — Sovereign Chat in Your Hand 📱
 
-> **Your messages. Your calls. Your AI. On your hardware — in one app.**
-> A Flutter chat client that talks straight to the agent stack running on boxes you
-> own. No SaaS backend, no account, no relay you don't control.
+> **Purpose:** a cross-platform Flutter chat/voice/video client that talks straight
+> to the agent stack on boxes you own — no SaaS backend, no account, no relay you
+> don't control. **Maturity: `T0 — Classical` (app layer)** — it renders, signs,
+> and *delegates* crypto to `sk_pqc`/`skcomms`/`skchat`; call-media is DTLS-SRTP.
+> Active phase · SemVer `1.0.0+1`. Full SOP: [`SOP.md`](./SOP.md).
 
 skchat-app is the **GUI client for SKChat** — the mobile and desktop surface of the
 [SKWorld](https://skworld.io) sovereign communication layer. It is **not** another
@@ -172,9 +174,21 @@ flowchart TD
 
 ---
 
+## Related projects / See also
+
+- **skchat** — the SKChat daemon + web-UI (transport, signaling, Spaces API, LiveKit token mint): https://github.com/smilinTux/skchat
+- **skcomms** — sovereign multi-channel comms + encrypted P2P transport (`pqdm.py` DM sealing this app mirrors): https://github.com/smilinTux/skcomms
+- **capauth** — PGP sovereign identity + QR pairing (the identity authority this app delegates to): https://github.com/smilinTux/capauth
+- **sk-standards** — cross-repo crypto / doc-SOP / data-flow / version standards this repo follows: https://github.com/smilinTux/sk-standards
+
 ## License
 
-**GPL-3.0-or-later** — Communication is a right, not a product.
+> ⚠️ **LICENSE FILE MISSING.** This README references **GPL-3.0-or-later**, but no
+> `LICENSE` file is present in the repository. This is **flagged for Chef** — add the
+> canonical GPL-3.0 text (or the intended license) before public release; do not
+> assume the badge above is authoritative until the file exists.
+
+**Intended: GPL-3.0-or-later** — Communication is a right, not a product.
 Copyright (C) 2026 smilinTux Team + Lumina.
 
 ---

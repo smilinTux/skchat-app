@@ -143,6 +143,13 @@ class LiveKitCallService {
   Room? _room;
   LocalParticipant? _localParticipant;
 
+  /// Room event subscription — carries the data-channel receive-wire that
+  /// feeds [_dataCtl] (and therefore [dataChannel] / the lane substrate).
+  /// Without this, [sendData] publishes fine but inbound lane events (in-call
+  /// chat, whiteboard, etc.) never arrive. Created in [_bindRoomListeners],
+  /// torn down in [dispose].
+  EventsListener<RoomEvent>? _roomEvents;
+
   final _participantsCtl =
       StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
   final _dataCtl = StreamController<
@@ -354,6 +361,20 @@ class LiveKitCallService {
 
   void _bindRoomListeners() {
     _room!.addListener(_onRoomChanged);
+
+    // Data-channel receive-wire: forward every DataReceivedEvent into
+    // [_dataCtl] so [dataChannel] (and the lane substrate that maps over it)
+    // actually receives peer-published lane events. `participant` is null when
+    // the data originates from the server API, hence the empty-string fallback.
+    _roomEvents = _room!.createListener()
+      ..on<DataReceivedEvent>((event) {
+        if (_dataCtl.isClosed) return;
+        _dataCtl.add((
+          topic: event.topic ?? '',
+          payload: event.data,
+          senderIdentity: event.participant?.identity ?? '',
+        ));
+      });
   }
 
   void _onRoomChanged() {
@@ -400,6 +421,8 @@ class LiveKitCallService {
   /// Disconnect from the room and release all resources.
   Future<void> dispose() async {
     _room?.removeListener(_onRoomChanged);
+    await _roomEvents?.dispose();
+    _roomEvents = null;
     await _room?.disconnect();
     await _room?.dispose();
     _room = null;
