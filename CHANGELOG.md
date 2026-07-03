@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-03
+
+### Added
+- GPL-3.0-or-later `LICENSE` file (matches the README license claim).
+
 ## [1.1.0] - 2026-07-03
 
 ### Fixed
