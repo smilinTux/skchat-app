@@ -35,6 +35,7 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
   late List<Map<String, dynamic>> _messages;
   bool _sending = false;
   bool _uploading = false;
+  bool _callConnecting = false;
   Timer? _pollTimer;
 
   GuestGroupService get _svc => ref.read(guestGroupServiceProvider);
@@ -140,37 +141,45 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
   }
 
   Future<void> _joinCall() async {
-    String? token = widget.join.callToken;
-    String? url = widget.join.callUrl;
-    if (token == null || url == null) {
-      // (Re)mint a fresh call token for the bound room.
-      try {
+    if (_callConnecting) return;
+    setState(() => _callConnecting = true);
+    try {
+      String? token = widget.join.callToken;
+      String? url = widget.join.callUrl;
+      String? room = widget.join.callRoom;
+      if (token == null || url == null) {
+        // (Re)mint a fresh call token for the bound room via /api/v1/guest/call.
         final res = await _svc.callToken(_token);
         if (res['available'] == true) {
           token = res['token'] as String?;
           url = res['lk_url'] as String?;
+          room = (res['room'] as String?) ?? room;
         }
-      } catch (_) {}
-    }
-    if (token == null || url == null) {
-      _snack('The call is not available right now.');
-      return;
-    }
-    if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LiveKitCallScreen(
-          args: LiveKitCallArgs(
-            roomName: widget.join.callRoom ?? widget.join.groupId,
-            identity: widget.join.guestId,
-            displayName: widget.join.displayName,
-            withVideo: true,
-            preMintedToken: token,
-            livekitUrl: url,
+      }
+      if (token == null || url == null) {
+        _snack('The call is not available right now.');
+        return;
+      }
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LiveKitCallScreen(
+            args: LiveKitCallArgs(
+              roomName: room ?? widget.join.groupId,
+              identity: widget.join.guestId,
+              displayName: widget.join.displayName,
+              withVideo: true,
+              preMintedToken: token,
+              livekitUrl: url,
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } catch (_) {
+      _snack('Could not start the call.');
+    } finally {
+      if (mounted) setState(() => _callConnecting = false);
+    }
   }
 
   void _snack(String m) {
@@ -199,8 +208,14 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
         actions: [
           IconButton(
             tooltip: 'Join call',
-            icon: const Icon(Icons.videocam_outlined),
-            onPressed: _joinCall,
+            icon: _callConnecting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.videocam_outlined),
+            onPressed: _callConnecting ? null : _joinCall,
           ),
         ],
       ),
@@ -226,8 +241,10 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
             controller: _composeCtl,
             sending: _sending,
             uploading: _uploading,
+            calling: _callConnecting,
             onSend: _send,
             onAttach: _attach,
+            onCall: _joinCall,
           ),
         ],
       ),
@@ -389,15 +406,19 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.sending,
     required this.uploading,
+    required this.calling,
     required this.onSend,
     required this.onAttach,
+    required this.onCall,
   });
 
   final TextEditingController controller;
   final bool sending;
   final bool uploading;
+  final bool calling;
   final VoidCallback onSend;
   final VoidCallback onAttach;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) {
@@ -417,6 +438,18 @@ class _Composer extends StatelessWidget {
                   : const Icon(Icons.add),
               onPressed: uploading ? null : onAttach,
               tooltip: 'Attach file',
+            ),
+            IconButton(
+              icon: calling
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.call_outlined),
+              color: SovereignColors.soulLumina,
+              onPressed: calling ? null : onCall,
+              tooltip: 'Start call',
             ),
             Expanded(
               child: TextField(

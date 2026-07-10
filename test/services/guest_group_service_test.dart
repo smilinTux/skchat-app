@@ -177,6 +177,44 @@ void main() {
     expect(svc.fileUrl("t123"), "https://test.local/api/v1/guest/file/t123");
   });
 
+  test("callToken POSTs /guest/call with the bearer token and parses the room",
+      () async {
+    adapter.routes["/api/v1/guest/call"] = {
+      "available": true,
+      "room": "gcall-xyz",
+      "token": "LK-CALL-JWT",
+      "lk_url": "wss://sfu.test",
+      "identity": "guest:alice#deadbeefdeadbeef",
+      "ttl_seconds": 3600,
+    };
+
+    final res = await svc.callToken("SESSION-JWT");
+
+    // The request bears the guest session token and hits the mint route.
+    final req = adapter.requests.single;
+    expect(req.method, "POST");
+    expect(req.uri.path, "/api/v1/guest/call");
+    expect(req.headers["Authorization"], "Bearer SESSION-JWT");
+
+    // The freshly minted LiveKit bootstrap is returned verbatim.
+    expect(res["available"], true);
+    expect(res["room"], "gcall-xyz");
+    expect(res["token"], "LK-CALL-JWT");
+    expect(res["lk_url"], "wss://sfu.test");
+  });
+
+  test("callToken surfaces the not-available degrade shape", () async {
+    // LiveKit creds absent server-side -> {available:false}. The caller uses
+    // this to show the 'call not available' state instead of navigating.
+    adapter.routes["/api/v1/guest/call"] = {
+      "available": false,
+      "room": "gcall-xyz",
+    };
+    final res = await svc.callToken("SESSION-JWT");
+    expect(res["available"], false);
+    expect(res["token"], isNull);
+  });
+
   test("returning guest is recognised via cached identity (auto-join path)",
       () async {
     final cachedId = _FakeIdentity(cached: true);
