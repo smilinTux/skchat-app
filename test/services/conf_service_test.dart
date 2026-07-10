@@ -33,6 +33,33 @@ class _CannedAdapter implements HttpClientAdapter {
   }
 }
 
+/// Adapter that always answers with a fixed [status] + [body], for exercising
+/// the non-2xx paths (e.g. a host denial → HTTP 403).
+class _StatusAdapter implements HttpClientAdapter {
+  _StatusAdapter(this.status, this.body);
+
+  final int status;
+  final Object? body;
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString(
+      jsonEncode(body),
+      status,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
+  }
+}
+
 void main() {
   late _CannedAdapter adapter;
   late Dio dio;
@@ -119,18 +146,20 @@ void main() {
     expect(adapter.lastRequest?.method, "GET");
   });
 
-  test("waitingList parses guests from either key", () async {
+  test("waitingList parses guests from display or name", () async {
     adapter.routes["/conf/r1/waiting"] = {
       "waiting": [
-        {"identity": "g1", "name": "Guest One"},
-        {"identity": "g2"},
+        {"identity": "g1", "display": "Guest One"},
+        {"identity": "g2", "name": "Legacy Two"},
+        {"identity": "g3"},
       ],
     };
 
     final list = await svc.waitingList("r1");
-    expect(list, hasLength(2));
-    expect(list.first.name, "Guest One");
-    expect(list[1].name, "");
+    expect(list, hasLength(3));
+    expect(list.first.name, "Guest One"); // server "display"
+    expect(list[1].name, "Legacy Two"); // older "name" fallback
+    expect(list[2].name, "");
     expect(adapter.lastRequest?.method, "GET");
   });
 
@@ -164,13 +193,48 @@ void main() {
     expect((adapter.lastRequest?.data as Map)["agent"], "lumina");
   });
 
-  test("enterWaiting posts the guest identity", () async {
-    adapter.routes["/conf/r1/waiting"] = {"ok": true};
-    await svc.enterWaiting("r1", identity: "g1", name: "Guest One");
+  test("enterWaiting posts identity + display and parses admitted", () async {
+    adapter.routes["/conf/r1/waiting"] = {
+      "admitted": true,
+      "identity": "g1",
+      "auto_admitted": true,
+    };
+    final status =
+        await svc.enterWaiting("r1", identity: "g1", display: "Guest One");
     expect(adapter.lastRequest?.method, "POST");
     final sent = adapter.lastRequest?.data as Map;
     expect(sent["identity"], "g1");
-    expect(sent["name"], "Guest One");
+    expect(sent["display"], "Guest One"); // server reads "display"
+    expect(status.admitted, isTrue);
+    expect(status.autoAdmitted, isTrue);
+    expect(status.denied, isFalse);
+  });
+
+  test("enterWaiting parses a pending lobby response", () async {
+    adapter.routes["/conf/r1/waiting"] = {
+      "admitted": false,
+      "identity": "g1",
+      "position": 2,
+      "message": "Waiting for host to admit you",
+    };
+    final status = await svc.enterWaiting("r1", identity: "g1");
+    expect(status.admitted, isFalse);
+    expect(status.denied, isFalse);
+    expect(status.position, 2);
+    expect(status.message, "Waiting for host to admit you");
+    // display defaults to the local part of the identity.
+    expect((adapter.lastRequest?.data as Map)["display"], "g1");
+  });
+
+  test("enterWaiting maps a 403 to a denied status", () async {
+    final deniedDio = Dio()
+      ..httpClientAdapter = _StatusAdapter(403, {"detail": "denied"});
+    final deniedSvc =
+        ConfService(dio: deniedDio, webuiBaseUrl: "https://test.local");
+    final status = await deniedSvc.enterWaiting("r1", identity: "g1");
+    expect(status.denied, isTrue);
+    expect(status.admitted, isFalse);
+    expect(status.message, WaitingStatus.denyMessage);
   });
 
   test("end posts to the conf end route", () async {

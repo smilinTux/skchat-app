@@ -58,6 +58,8 @@ class ConfState {
     required this.isCameraEnabled,
     required this.isScreenSharing,
     required this.isHost,
+    this.isPending = false,
+    this.pendingMessage = "",
     this.title = "",
     this.error,
   });
@@ -70,6 +72,12 @@ class ConfState {
   final bool isCameraEnabled;
   final bool isScreenSharing;
   final bool isHost;
+
+  /// True while a guest is sitting in the lobby awaiting host admission.
+  final bool isPending;
+
+  /// Human-readable lobby status shown to a pending guest.
+  final String pendingMessage;
   final String title;
   final String? error;
 
@@ -93,6 +101,8 @@ class ConfState {
     bool? isCameraEnabled,
     bool? isScreenSharing,
     bool? isHost,
+    bool? isPending,
+    String? pendingMessage,
     String? title,
     Object? error = _sentinel,
   }) {
@@ -105,6 +115,8 @@ class ConfState {
       isCameraEnabled: isCameraEnabled ?? this.isCameraEnabled,
       isScreenSharing: isScreenSharing ?? this.isScreenSharing,
       isHost: isHost ?? this.isHost,
+      isPending: isPending ?? this.isPending,
+      pendingMessage: pendingMessage ?? this.pendingMessage,
       title: title ?? this.title,
       error: identical(error, _sentinel) ? this.error : error as String?,
     );
@@ -119,6 +131,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
   StreamSubscription<ConnectionState>? _connSub;
   Timer? _waitingPoll;
+  Timer? _admissionPoll;
 
   @override
   ConfState build(ConfArgs arg) {
@@ -127,13 +140,17 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   }
 
   /// Create (if needed), mint a token, and join the LiveKit media room.
+  ///
+  /// A guest first knocks on the lobby (POST /conf/{room}/waiting). Tailnet
+  /// callers are auto-admitted and flow straight through; an off-net guest sits
+  /// in [ConfState.isPending] until the host admits them (polled here) or
+  /// denies them (surfaced as an error). The host never waits.
   Future<void> connect() async {
     final conf = ref.read(confServiceProvider);
-    final lk = ref.read(liveKitCallServiceProvider);
 
     try {
       var room = arg.room;
-      // 1. Create the conference if no room id was supplied.
+      // 1. Create the conference if no room id was supplied (host path).
       if (room == null || room.isEmpty) {
         final created = await conf.create(
           hostFqid: arg.hostFqid ?? arg.identity,
@@ -143,45 +160,116 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
         state = state.copyWith(room: room, title: created.title);
       }
 
-      // 2. Mint a role-scoped token.
-      final tok = await conf.token(
-        room,
-        identity: arg.identity,
-        name: arg.name,
-        role: arg.role,
-      );
-      state = state.copyWith(
-        room: tok.room.isNotEmpty ? tok.room : room,
-        isHost: tok.isHost,
-        title: tok.title.isNotEmpty ? tok.title : state.title,
-      );
-
-      // 3. Wire media streams.
-      _partSub = lk.participants.listen((list) {
-        state = state.copyWith(participants: list);
-      });
-      _connSub = lk.connectionState.listen((cs) {
-        state = state.copyWith(isConnected: cs == ConnectionState.connected);
-      });
-
-      // 4. Join the LiveKit room with the role-scoped token.
-      await lk.connectWithToken(wsUrl: tok.url, token: tok.token);
-      // Host goes live on mic immediately.
-      if (tok.isHost) {
-        await lk.setMicEnabled(true);
+      // 2. Guests knock on the lobby first.
+      if (!arg.wantsHost) {
+        final status = await conf.enterWaiting(
+          room,
+          identity: arg.identity,
+          display: arg.name,
+        );
+        if (status.denied) {
+          state = state.copyWith(
+            isPending: false,
+            error: status.message.isNotEmpty
+                ? status.message
+                : WaitingStatus.denyMessage,
+          );
+          return;
+        }
+        if (!status.admitted) {
+          // Sit in the lobby and poll for admission.
+          state = state.copyWith(
+            isPending: true,
+            pendingMessage: status.message.isNotEmpty
+                ? status.message
+                : "Your request is pending the host's approval",
+          );
+          _startAdmissionPoll(room);
+          return;
+        }
       }
-      state = state.copyWith(
-        participants: lk.currentParticipants,
-        isConnected: true,
-        isMicEnabled: tok.isHost,
-      );
 
-      // 5. Host polls the waiting room.
-      if (tok.isHost) {
-        _startWaitingPoll();
-      }
+      // 3. Admitted (or host): join media.
+      await _joinMedia(room);
     } on Object catch (e) {
       state = state.copyWith(error: e.toString());
+    }
+  }
+
+  /// Mint a role-scoped token and join the LiveKit media room for [room].
+  Future<void> _joinMedia(String room) async {
+    final conf = ref.read(confServiceProvider);
+    final lk = ref.read(liveKitCallServiceProvider);
+
+    final tok = await conf.token(
+      room,
+      identity: arg.identity,
+      name: arg.name,
+      role: arg.role,
+    );
+    state = state.copyWith(
+      room: tok.room.isNotEmpty ? tok.room : room,
+      isHost: tok.isHost,
+      isPending: false,
+      title: tok.title.isNotEmpty ? tok.title : state.title,
+    );
+
+    // Wire media streams.
+    _partSub = lk.participants.listen((list) {
+      state = state.copyWith(participants: list);
+    });
+    _connSub = lk.connectionState.listen((cs) {
+      state = state.copyWith(isConnected: cs == ConnectionState.connected);
+    });
+
+    // Join the LiveKit room with the role-scoped token.
+    await lk.connectWithToken(wsUrl: tok.url, token: tok.token);
+    // Host goes live on mic immediately.
+    if (tok.isHost) {
+      await lk.setMicEnabled(true);
+    }
+    state = state.copyWith(
+      participants: lk.currentParticipants,
+      isConnected: true,
+      isMicEnabled: tok.isHost,
+    );
+
+    // Host polls the waiting room for guests to admit.
+    if (tok.isHost) {
+      _startWaitingPoll();
+    }
+  }
+
+  void _startAdmissionPoll(String room) {
+    _admissionPoll?.cancel();
+    _admissionPoll = Timer.periodic(
+        const Duration(seconds: 3), (_) => _pollAdmission(room));
+  }
+
+  Future<void> _pollAdmission(String room) async {
+    if (!state.isPending) return;
+    try {
+      final status = await ref.read(confServiceProvider).enterWaiting(
+            room,
+            identity: arg.identity,
+            display: arg.name,
+          );
+      if (status.denied) {
+        _admissionPoll?.cancel();
+        state = state.copyWith(
+          isPending: false,
+          error: status.message.isNotEmpty
+              ? status.message
+              : WaitingStatus.denyMessage,
+        );
+        return;
+      }
+      if (status.admitted) {
+        _admissionPoll?.cancel();
+        await _joinMedia(room);
+      }
+    } on Object {
+      // Best-effort — keep waiting and retry on the next tick.
     }
   }
 
@@ -259,6 +347,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
     _partSub?.cancel();
     _connSub?.cancel();
     _waitingPoll?.cancel();
+    _admissionPoll?.cancel();
   }
 }
 
@@ -318,9 +407,12 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
                   Expanded(
                     child: st.isConnected
                         ? _Body(args: widget.args, state: st)
-                        : _buildConnecting(),
+                        : st.isPending
+                            ? _WaitingLobby(state: st, onCancel: _leave)
+                            : _buildConnecting(),
                   ),
-                  _ControlBar(args: widget.args, state: st, onLeave: _leave),
+                  if (!st.isPending)
+                    _ControlBar(args: widget.args, state: st, onLeave: _leave),
                 ],
               ),
             ),
@@ -395,6 +487,66 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
   }
 }
 
+// ── Waiting lobby (guest) ─────────────────────────────────────────────────────
+
+/// Shown to a guest who has knocked on the conference lobby and is waiting for
+/// the host to admit them. The notifier polls admission in the background; this
+/// is purely the "please hold" surface with a way to back out.
+class _WaitingLobby extends StatelessWidget {
+  const _WaitingLobby({required this.state, required this.onCancel});
+
+  final ConfState state;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = state.pendingMessage.isNotEmpty
+        ? state.pendingMessage
+        : "Your request is pending the host's approval";
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 44,
+              height: 44,
+              child: CircularProgressIndicator(
+                color: SovereignColors.soulLumina,
+                strokeWidth: 2.5,
+              ),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              "Waiting to be admitted",
+              style: TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 28),
+            OutlinedButton(
+              onPressed: onCancel,
+              child: const Text("Cancel"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Header ────────────────────────────────────────────────────────────────────
 
 class _Header extends StatelessWidget {
@@ -433,7 +585,9 @@ class _Header extends StatelessWidget {
                 Text(
                   state.isConnected
                       ? "${state.participants.length} in call"
-                      : "connecting...",
+                      : state.isPending
+                          ? "waiting for host..."
+                          : "connecting...",
                   style: const TextStyle(
                     color: SovereignColors.textSecondary,
                     fontSize: 12,
