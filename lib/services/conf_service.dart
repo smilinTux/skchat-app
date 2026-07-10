@@ -75,6 +75,9 @@ class ConfParticipant {
 }
 
 /// A guest sitting in the waiting room, awaiting host admit/deny.
+///
+/// The server (``PendingGuest.to_dict``) serializes the chosen label under
+/// ``display``; older payloads used ``name``, so both keys are accepted.
 class WaitingGuest {
   const WaitingGuest({required this.identity, this.name = ""});
 
@@ -83,8 +86,41 @@ class WaitingGuest {
 
   factory WaitingGuest.fromJson(Map<String, dynamic> j) => WaitingGuest(
         identity: j["identity"] as String? ?? "",
-        name: j["name"] as String? ?? "",
+        name: j["display"] as String? ?? j["name"] as String? ?? "",
       );
+}
+
+/// Outcome of a guest POST to ``/conf/{room}/waiting``.
+///
+/// Tailnet callers are auto-admitted server-side ([autoAdmitted] true); a guest
+/// who was previously admitted gets [admitted] true immediately. Otherwise the
+/// guest sits in the lobby ([admitted] false) with a queue [position] and a
+/// human-readable [message]. A host denial surfaces as [denied] (the server
+/// answers a re-entry attempt with HTTP 403, which the service maps here).
+class WaitingStatus {
+  const WaitingStatus({
+    required this.admitted,
+    this.denied = false,
+    this.autoAdmitted = false,
+    this.position = 0,
+    this.message = "",
+  });
+
+  final bool admitted;
+  final bool denied;
+  final bool autoAdmitted;
+  final int position;
+  final String message;
+
+  factory WaitingStatus.fromJson(Map<String, dynamic> j) => WaitingStatus(
+        admitted: j["admitted"] as bool? ?? false,
+        denied: j["denied"] as bool? ?? false,
+        autoAdmitted: j["auto_admitted"] as bool? ?? false,
+        position: (j["position"] as num?)?.toInt() ?? 0,
+        message: j["message"] as String? ?? "",
+      );
+
+  static const denyMessage = "The host denied your request to join.";
 }
 
 // ── Service ─────────────────────────────────────────────────────────────────
@@ -154,11 +190,30 @@ class ConfService {
 
   // ── Waiting room ──────────────────────────────────────────────────────────
 
-  /// Guest enters the waiting room for [room].
-  Future<void> enterWaiting(String room,
-          {required String identity, String? name}) =>
-      _post("/conf/$room/waiting",
-          {"identity": identity, "name": name ?? identity});
+  /// Guest enters the waiting room for [room], returning the lobby outcome.
+  ///
+  /// The server reads the label under ``display``. A host denial comes back as
+  /// HTTP 403 on a (re-)entry attempt; that is mapped to a denied
+  /// [WaitingStatus] rather than thrown, so a polling caller can react cleanly.
+  Future<WaitingStatus> enterWaiting(String room,
+      {required String identity, String? display}) async {
+    try {
+      final r = await _post("/conf/$room/waiting", {
+        "identity": identity,
+        "display": display ?? identity.split("@").first,
+      });
+      return WaitingStatus.fromJson(r);
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 403) {
+        return const WaitingStatus(
+          admitted: false,
+          denied: true,
+          message: WaitingStatus.denyMessage,
+        );
+      }
+      rethrow;
+    }
+  }
 
   /// Host view: list guests waiting to be admitted.
   Future<List<WaitingGuest>> waitingList(String room) async {
