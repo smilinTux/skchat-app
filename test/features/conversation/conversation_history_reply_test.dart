@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:skchat/data/conversation_repository.dart';
 import 'package:skchat/data/message_repository.dart';
@@ -46,6 +49,11 @@ void main() {
   late MockDaemonService daemon;
 
   setUpAll(() {
+    // The pq-prekey provider chain reached through ConversationNotifier opens
+    // Hive boxes (daemonUrlProvider persistence); on the test VM Hive has no
+    // default path, so seed it with a throwaway temp dir or provider creation
+    // throws HiveError.
+    Hive.init(Directory.systemTemp.createTempSync('skchat_test_hive').path);
     registerFallbackValue(ChatMessage(
       id: '',
       peerId: '',

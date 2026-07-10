@@ -1,0 +1,116 @@
+# skchat-app CI: analyze + test + build web (coord 89efb4d2, bulletproof gap G2).
+#
+# Sibling-dependency note: pubspec.yaml declares sk_pqc as a git dependency but
+# dependency_overrides pins it to the sibling path ../sk-pqc-dart, and pub
+# applies overrides unconditionally. A clean clone therefore only resolves if
+# sk-pqc-dart is checked out NEXT TO this repo. This workflow handles that by
+# checking out both repos into sibling directories under the workspace:
+#
+#   $GITHUB_WORKSPACE/skchat-app     (this repo)
+#   $GITHUB_WORKSPACE/sk-pqc-dart    (smilinTux/sk-pqc-dart, public)
+#
+# Both repos are public, so no secrets, tokens, or submodule steps are needed.
+# The Flutter version is pinned to 3.41.2 (Dart 3.11), matching the fleet
+# build box (~/flutter on .41) and the pubspec sdk constraint ^3.11.0.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter:
+    name: analyze, test, build web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: skchat-app
+    steps:
+      - name: Checkout skchat-app
+        uses: actions/checkout@v4
+        with:
+          path: skchat-app
+
+      # Required sibling: satisfies the dependency_overrides path ../sk-pqc-dart.
+      - name: Checkout sibling sk-pqc-dart (sk_pqc path override)
+        uses: actions/checkout@v4
+        with:
+          repository: smilinTux/sk-pqc-dart
+          path: sk-pqc-dart
+
+      # The PQ tests (pq_conversation_service, pq_dm_codec interop) exercise
+      # the real ML-KEM-768 backend through sk_pqc's FFI, which needs the
+      # native liboqs shared library on the VM. Build it once (same version
+      # and flags as sk-pqc-dart's own CI) and cache the install tree.
+      - name: Cache liboqs
+        id: liboqs-cache
+        uses: actions/cache@v4
+        with:
+          path: liboqs-install
+          key: liboqs-0.12.0-${{ runner.os }}
+
+      - name: Build liboqs 0.12.0 (ML-KEM-768) from source
+        if: steps.liboqs-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          git clone --depth 1 --branch 0.12.0 \
+            https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build -GNinja \
+            -DBUILD_SHARED_LIBS=ON \
+            -DOQS_BUILD_ONLY_LIB=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/liboqs-install"
+          ninja -C /tmp/liboqs/build
+          ninja -C /tmp/liboqs/build install
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.2'
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        env:
+          SK_PQC_LIBOQS: ${{ github.workspace }}/liboqs-install/lib/liboqs.so
+        run: flutter test
+
+      - name: flutter build web
+        run: flutter build web --release
+
+      # Mirrors the REQUIRED artifact list in scripts/deploy-web.sh: the PQC
+      # web interop shim (sk_pqc_noble.js) must land in build/web or hybrid
+      # DMs break at runtime even though the build itself is green.
+      - name: Preflight required web artifacts
+        run: |
+          missing=0
+          for f in index.html main.dart.js flutter_bootstrap.js sk_pqc_noble.js; do
+            if [ ! -f "build/web/$f" ]; then
+              echo "missing required artifact: build/web/$f" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Upload web build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skchat-web-${{ github.sha }}
+          path: skchat-app/build/web
+          retention-days: 14
+          if-no-files-found: error

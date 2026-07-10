@@ -19,8 +19,14 @@ Future<int> _litPixels(WidgetTester tester) async {
   final boundary = tester.renderObject<RenderRepaintBoundary>(
     find.byType(RepaintBoundary).first,
   );
-  final ui.Image image = await boundary.toImage(pixelRatio: 1.0);
-  final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  // toImage/toByteData complete on the real event loop; without runAsync the
+  // fake-async test zone never pumps them and the test hangs to the 10 minute
+  // timeout (seen in CI validation on Flutter 3.41.2).
+  final ui.Image? image =
+      await tester.runAsync(() => boundary.toImage(pixelRatio: 1.0));
+  if (image == null) return -1;
+  final data = await tester
+      .runAsync(() => image.toByteData(format: ui.ImageByteFormat.rawRgba));
   if (data == null) return -1;
   final bytes = data.buffer.asUint8List();
   int lit = 0;

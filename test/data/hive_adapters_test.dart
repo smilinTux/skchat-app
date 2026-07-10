@@ -1,7 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:skchat/data/hive_adapters.dart';
-import 'package:skchat/models/chat_message.dart';
-import 'package:skchat/models/conversation.dart';
 
 void main() {
   group('ChatMessageAdapter', () {

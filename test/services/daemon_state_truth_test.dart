@@ -27,7 +27,10 @@ void main() {
     ProviderContainer c,
     bool Function(DaemonState) predicate,
   ) async {
-    for (var i = 0; i < 50; i++) {
+    // 2s budget (exits early on match). The old 250ms budget flaked on
+    // loaded CI runners: the deferred health check landed late and the
+    // state was still `connecting` when the loop gave up.
+    for (var i = 0; i < 400; i++) {
       final s = c.read(skcommsSyncProvider);
       if (predicate(s)) return s;
       await Future<void>.delayed(const Duration(milliseconds: 5));

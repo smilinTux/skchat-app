@@ -101,12 +101,14 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
 
     if (!alive) {
       _healthFailStreak++;
-      // Debounce: only flip offline after repeated failures, so the brief
-      // unresponsiveness during reply generation doesn't flash the banner.
-      // If we're already offline, keep it; otherwise stay online until the
-      // streak crosses the threshold.
-      if (_healthFailStreak >= _healthFailThreshold ||
-          state.status == DaemonStatus.offline) {
+      // Debounce: an ESTABLISHED online state only flips offline after
+      // repeated failures, so the brief unresponsiveness during reply
+      // generation doesn't flash the banner. Any other state (connecting on
+      // cold start, already offline, error) reflects the truth immediately:
+      // a dead daemon must not sit on "connecting" for a whole check
+      // interval before the banner appears.
+      if (state.status != DaemonStatus.online ||
+          _healthFailStreak >= _healthFailThreshold) {
         state = state.copyWith(status: DaemonStatus.offline);
       }
       return;

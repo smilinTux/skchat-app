@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:skchat/data/conversation_repository.dart';
 import 'package:skchat/data/message_repository.dart';
@@ -19,6 +22,14 @@ class MockConversationRepository extends Mock
 class MockMessageRepository extends Mock implements MessageRepository {}
 
 void main() {
+  setUpAll(() {
+    // The pq-prekey provider chain (daemonUrlProvider and friends) opens Hive
+    // boxes during the first widget build; on the test VM Hive has no default
+    // path, so seed it with a throwaway temp dir or the smoke test throws
+    // HiveError before the tree finishes building.
+    Hive.init(Directory.systemTemp.createTempSync('skchat_test_hive').path);
+  });
+
   testWidgets('SKChatApp smoke test', (WidgetTester tester) async {
     final mockClient = MockSKCommsClient();
     final mockConvoRepo = MockConversationRepository();
