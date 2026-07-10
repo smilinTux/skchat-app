@@ -116,7 +116,7 @@ void main() {
         role: any(named: "role")));
     verifyNever(() => lk.connectWithToken(
         wsUrl: any(named: "wsUrl"), token: any(named: "token")));
-    // NB: no pumpAndSettle — the lobby spinner animates forever. The admission
+    // NB: no pumpAndSettle, the lobby spinner animates forever. The admission
     // poll timer is torn down via the provider's onDispose at test teardown.
   });
 
@@ -136,7 +136,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    // No lobby — went straight to the media join.
+    // No lobby, went straight to the media join.
     expect(find.text("Waiting to be admitted"), findsNothing);
     verify(() => lk.connectWithToken(
           wsUrl: "wss://lk.test/ws",

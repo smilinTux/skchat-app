@@ -269,7 +269,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
         await _joinMedia(room);
       }
     } on Object {
-      // Best-effort — keep waiting and retry on the next tick.
+      // Best-effort, keep waiting and retry on the next tick.
     }
   }
 
