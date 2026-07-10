@@ -99,7 +99,7 @@ class PgpBridge {
       ..init(true, PrivateKeyParameter<RSAPrivateKey>(key));
     final sig = signer.generateSignature(
       Uint8List.fromList(utf8.encode(data)),
-    ) as RSASignature;
+    );
     return base64.encode(sig.bytes);
   }
 

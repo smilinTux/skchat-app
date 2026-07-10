@@ -82,8 +82,16 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      # On Flutter 3.41 both --fatal-infos and --fatal-warnings default to ON.
+      # Warnings stay fatal (the tree is warning-clean as of this commit), but
+      # info-level hints do not gate the build: the remaining infos are
+      # pre-existing style/deprecation notes (dart:html web shims pending the
+      # package:web migration, Radio groupValue/onChanged pending the
+      # RadioGroup refactor, use_null_aware_elements suggestions). Those are
+      # tracked cleanup work, not regressions, and blocking every PR on them
+      # would freeze the pipeline. New warnings or errors still fail here.
       - name: flutter analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: flutter test
         env:

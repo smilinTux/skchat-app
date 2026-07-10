@@ -48,9 +48,12 @@ dependencies:
   # Post-quantum hybrid KEM (X25519 + ML-KEM-768). Web = @noble/post-quantum
   # via JS-interop (globalThis.skPqc); native = liboqs FFI (mobile follow-up).
   # PqDmCodec uses this to seal/open `pqdm1:` hybrid DM blobs (PQC-MIGRATION Q5).
+  # The GitHub repo was renamed sk_pqc to sk-pqc-dart; the old URL only works
+  # via a 301 redirect. Use the canonical URL so the declared contract
+  # dependency resolves even without the dependency_overrides path below.
   sk_pqc:
     git:
-      url: https://github.com/smilinTux/sk_pqc
+      url: https://github.com/smilinTux/sk-pqc-dart
 
   # HKDF-SHA256 + AES-256-GCM for the PqDmCodec wrap (mirrors skcomms/pqdm.py).
   # Same package sk_pqc itself uses for the X25519 leg + HKDF combiner.

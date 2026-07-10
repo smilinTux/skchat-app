@@ -137,7 +137,7 @@ class _QrLoginScreenState extends ConsumerState<QrLoginScreen>
   }
 }
 
-enum _ScanStatus { idle, success, error }
+enum _ScanStatus { idle, success }
 
 // ── My QR tab ─────────────────────────────────────────────────────────────
 
