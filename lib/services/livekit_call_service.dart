@@ -195,7 +195,7 @@ class LiveKitCallService {
     final body = <String, dynamic>{
       'room': roomName,
       'identity': identity,
-      if (metadata != null) 'metadata': metadata,
+      'metadata': ?metadata,
     };
     final resp = await _dio.post<Map<String, dynamic>>(
       '$_webuiBaseUrl/livekit/token',
@@ -414,6 +414,98 @@ class LiveKitCallService {
       isSpeaking: p.isSpeaking,
       metadata: p.metadata,
     );
+  }
+
+  // ── Device selection (camera / mic) ─────────────────────────────────────────
+
+  /// Label substrings that mark a virtual / loopback capture device. These
+  /// enumerate like a real device but frequently cannot actually stream (a dead
+  /// DroidCam `/dev/video0`, an OBS virtual cam, etc.) which throws
+  /// NotFound/NotReadable on capture. They are skipped when auto-picking a smart
+  /// default so a phantom device never shadows the real webcam/mic. Match is a
+  /// case-insensitive substring test on the device label. Mirrors the shipped
+  /// web fix.
+  static const List<String> virtualDevicePatterns = [
+    'droidcam',
+    'obs',
+    'v4l2loopback',
+    'virtual',
+    'snap camera',
+    'manycam',
+    'null',
+  ];
+
+  /// True when [label] looks like a virtual / loopback device (case-insensitive
+  /// substring match against [virtualDevicePatterns]).
+  static bool isVirtualDeviceLabel(String label) {
+    final l = label.toLowerCase();
+    return virtualDevicePatterns.any(l.contains);
+  }
+
+  /// Pick a sensible default deviceId from [devices]: prefer the first
+  /// NON-virtual device, falling back to the first device only when every
+  /// candidate looks virtual. Returns null for an empty list. Do NOT blindly
+  /// select the platform's first device (that is what handed a live user their
+  /// dead DroidCam loopback while the real webcam sat unused).
+  static String? pickDefaultDeviceId(List<MediaDevice> devices) {
+    if (devices.isEmpty) return null;
+    for (final d in devices) {
+      if (!isVirtualDeviceLabel(d.label)) return d.deviceId;
+    }
+    return devices.first.deviceId;
+  }
+
+  /// Enumerate available microphone (audio input) devices.
+  ///
+  /// Device labels are only populated after a media-permission grant, so call
+  /// this once the call is live (the published mic/cam already granted
+  /// permission) to get human-readable names in the picker.
+  Future<List<MediaDevice>> enumerateAudioInputs() =>
+      Hardware.instance.enumerateDevices(type: 'audioinput');
+
+  /// Enumerate available camera (video input) devices.
+  Future<List<MediaDevice>> enumerateVideoInputs() =>
+      Hardware.instance.enumerateDevices(type: 'videoinput');
+
+  /// Switch the active microphone to [deviceId] WITHOUT dropping the call.
+  ///
+  /// If a mic track is already published, its capture device is restarted on the
+  /// new id (audio keeps flowing, no reconnect). If no mic track is live yet the
+  /// mic is published directly on the chosen device. Throws on capture failure
+  /// (NotFound / NotReadable) so the caller can surface an inline message and
+  /// keep the rest of the call working.
+  Future<void> switchMicDevice(String deviceId) async {
+    final lp = _localParticipant;
+    if (lp == null) return;
+    final track = lp.getTrackPublicationBySource(TrackSource.microphone)?.track;
+    if (track is LocalAudioTrack) {
+      await track.setDeviceId(deviceId);
+    } else {
+      await lp.setMicrophoneEnabled(
+        true,
+        audioCaptureOptions: AudioCaptureOptions(deviceId: deviceId),
+      );
+    }
+  }
+
+  /// Switch the active camera to [deviceId] WITHOUT dropping the call.
+  ///
+  /// If a camera track is already published, it is restarted on the new device;
+  /// otherwise the camera is published directly on the chosen device. Throws on
+  /// capture failure so the caller can surface an inline message (audio is
+  /// unaffected).
+  Future<void> switchCameraDevice(String deviceId) async {
+    final lp = _localParticipant;
+    if (lp == null) return;
+    final track = lp.getTrackPublicationBySource(TrackSource.camera)?.track;
+    if (track is LocalVideoTrack) {
+      await track.switchCamera(deviceId);
+    } else {
+      await lp.setCameraEnabled(
+        true,
+        cameraCaptureOptions: CameraCaptureOptions(deviceId: deviceId),
+      );
+    }
   }
 
   // ── Dispose ───────────────────────────────────────────────────────────────

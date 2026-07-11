@@ -6,6 +6,7 @@ import 'package:livekit_client/livekit_client.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
 import '../../services/recordings_service.dart';
+import 'call_device_picker.dart';
 
 // ── Soul-color map for well-known agents ───────────────────────────────────
 
@@ -1037,6 +1038,9 @@ class _LiveKitControlBar extends ConsumerWidget {
             activeColor: SovereignColors.accentDanger,
             onTap: notifier.toggleRecording,
           ),
+
+          // Camera / mic device picker (self-contained control widget).
+          const CallDevicePickerButton(size: 56),
 
           // Leave / end call.
           _LeaveButton(

@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
+import "../calls/call_device_picker.dart";
 
 // ── Route args ────────────────────────────────────────────────────────────────
 
@@ -874,6 +875,8 @@ class _ControlBar extends ConsumerWidget {
             activeColor: SovereignColors.soulLumina,
             onTap: notifier.toggleScreenShare,
           ),
+          // Camera / mic device picker (self-contained control widget).
+          const CallDevicePickerButton(),
           if (state.isHost)
             _RoundButton(
               icon: Icons.smart_toy_rounded,
