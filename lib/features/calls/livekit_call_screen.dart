@@ -353,6 +353,21 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
     }
   }
 
+  /// Pull an AI agent (default Lumina) into the CURRENT room so she joins the
+  /// live call. Spawns her media stack server-side via
+  /// [LiveKitCallService.inviteAgent]. Rethrows a human-readable [Exception] on
+  /// a backend rejection so the UI can show it in a snackbar.
+  Future<void> inviteAgent({String agent = 'lumina'}) async {
+    final s = state;
+    if (s == null || s.roomName.isEmpty) return;
+    final svc = ref.read(liveKitCallServiceProvider);
+    await svc.inviteAgent(
+      room: s.roomName,
+      agent: agent,
+      requester: s.identity,
+    );
+  }
+
   Future<void> leave(BuildContext context) async {
     _cancelSubs();
     final svc = ref.read(liveKitCallServiceProvider);
@@ -1173,6 +1188,15 @@ class _LiveKitControlBar extends ConsumerWidget {
             onTap: notifier.toggleRecording,
           ),
 
+          // Invite Lumina (AI agent) into this room so she joins the call.
+          _LKControlButton(
+            icon: Icons.smart_toy_rounded,
+            label: 'Lumina',
+            active: false,
+            activeColor: SovereignColors.soulLumina,
+            onTap: () => _inviteLumina(context, ref),
+          ),
+
           // Camera / mic device picker (self-contained control widget).
           const CallDevicePickerButton(size: 56),
 
@@ -1184,6 +1208,24 @@ class _LiveKitControlBar extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Invite Lumina into the current room. Spawns her server-side so she joins
+  /// the live call, then confirms with a snackbar (or surfaces the backend
+  /// error). The room may be a conference or a plain 1:1 / group call room.
+  Future<void> _inviteLumina(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(liveKitCallProvider.notifier).inviteAgent();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Lumina is joining...')),
+      );
+    } catch (e) {
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not invite Lumina: $msg')),
+      );
+    }
   }
 }
 
