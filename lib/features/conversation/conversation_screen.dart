@@ -6,15 +6,14 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
-import '../../models/call_state.dart';
 import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/group_call_service.dart';
-import '../calls/call_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
 import '../identity/identity_card_screen.dart';
+import '../profile/profile_screen.dart' show localIdentityProvider;
 import '../../services/skcomms_sync.dart';
 import '../../services/pq_conversation_service.dart';
 import '../../core/chat_text.dart';
@@ -391,8 +390,9 @@ class ConversationScreen extends ConsumerWidget {
   Future<void> _startGroupCall(
     BuildContext context,
     WidgetRef ref,
-    String groupName,
-  ) async {
+    String groupName, {
+    required bool withVideo,
+  }) async {
     final messenger = ScaffoldMessenger.of(context);
     final svc = ref.read(groupCallServiceProvider);
     try {
@@ -404,7 +404,7 @@ class ConversationScreen extends ConsumerWidget {
             ? await svc.joinCall(peerId)
             : await svc.startCall(peerId, topic: 'Call: $groupName');
       } catch (_) {
-        // Participants probe failed (SFU unreachable) — fall back to start.
+        // Participants probe failed (SFU unreachable), fall back to start.
         session = await svc.startCall(peerId, topic: 'Call: $groupName');
       }
       if (!context.mounted) return;
@@ -414,7 +414,7 @@ class ConversationScreen extends ConsumerWidget {
           roomName: session.room,
           identity: session.identity,
           displayName: groupName,
-          withVideo: true,
+          withVideo: withVideo,
           preMintedToken: session.token,
           livekitUrl: session.livekitUrl,
         ),
@@ -424,6 +424,38 @@ class ConversationScreen extends ConsumerWidget {
         SnackBar(content: Text('Group call failed: $e')),
       );
     }
+  }
+
+  /// Start a 1:1 call over the LiveKit SFU (the working sovereign call path)
+  /// and land on the LiveKit call screen, which carries the collaborative
+  /// in-call panels (chat / whiteboard / watch / terminal / screenshare) and
+  /// the camera/mic device picker. Replaces the dead P2P outgoing-call stub.
+  ///
+  /// The room is derived deterministically from the sorted pair of the local
+  /// fingerprint and the peer id, so both parties compute the same room and land
+  /// together. The screen mints a token via POST /livekit/token on join.
+  /// [withVideo] enables the camera (video button); false starts mic-only
+  /// (voice button).
+  void _startDirectCall(
+    BuildContext context,
+    WidgetRef ref,
+    String displayName, {
+    required bool withVideo,
+  }) {
+    final me = ref.read(localIdentityProvider);
+    final selfId =
+        me.fingerprint.isNotEmpty ? me.fingerprint : 'local';
+    final ids = [peerId, selfId]..sort();
+    final roomName = 'sk-room-${ids.join("-")}';
+    context.push(
+      AppRoutes.livekitCall,
+      extra: LiveKitCallArgs(
+        roomName: roomName,
+        identity: selfId,
+        displayName: displayName,
+        withVideo: withVideo,
+      ),
+    );
   }
 
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
@@ -624,20 +656,22 @@ class ConversationScreen extends ConsumerWidget {
         Consumer(
           builder: (context, ref, _) => IconButton(
             icon: const Icon(Icons.call_outlined),
-            tooltip: 'Voice call',
+            tooltip: conversation.isGroup == true
+                ? 'Group voice call'
+                : 'Voice call',
             onPressed: () {
               final conversations = ref.read(chatsProvider);
               final conv = conversations.firstWhere(
                 (c) => c.peerId == peerId,
                 orElse: () => conversations.first,
               );
-              ref.read(callProvider.notifier).initiateCall(
-                    peerId: peerId,
-                    peerName: conv.displayName,
-                    peerSoulColor: conv.resolvedSoulColor,
-                    type: CallType.voice,
-                  );
-              context.push(AppRoutes.outgoingCallPath(peerId));
+              if (conversation.isGroup == true) {
+                _startGroupCall(context, ref, conv.displayName,
+                    withVideo: false);
+                return;
+              }
+              _startDirectCall(context, ref, conv.displayName,
+                  withVideo: false);
             },
           ),
         ),
@@ -654,16 +688,12 @@ class ConversationScreen extends ConsumerWidget {
                 orElse: () => conversations.first,
               );
               if (conversation.isGroup == true) {
-                _startGroupCall(context, ref, conv.displayName);
+                _startGroupCall(context, ref, conv.displayName,
+                    withVideo: true);
                 return;
               }
-              ref.read(callProvider.notifier).initiateCall(
-                    peerId: peerId,
-                    peerName: conv.displayName,
-                    peerSoulColor: conv.resolvedSoulColor,
-                    type: CallType.video,
-                  );
-              context.push(AppRoutes.outgoingCallPath(peerId));
+              _startDirectCall(context, ref, conv.displayName,
+                  withVideo: true);
             },
           ),
         ),
