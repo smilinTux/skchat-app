@@ -215,6 +215,50 @@ class LiveKitCallService {
     return LiveKitTokenResult.fromJson(resp.data ?? {});
   }
 
+  // ── Guest invite (shareable link, multi-party) ─────────────────────────────
+
+  /// Mint a shareable guest-invite link for [room] via POST /guest/invite on
+  /// the skchat web-UI (operator-gated server-side: loopback / tailnet, or a
+  /// shared bearer token). ONE link admits MULTIPLE guests: each person who
+  /// opens `/join/<room>?invite=<token>` becomes a distinct guest in the SAME
+  /// LiveKit room as the host, so this is the "add people" / multi-party path.
+  ///
+  /// [display] is a display-name hint shown on the join page. [ttlSeconds] is
+  /// the invite lifetime (default 8h). Returns the absolute invite_url. On web,
+  /// a server-relative invite_url (when no funnel base is configured) is
+  /// prefixed with the live page origin so the link is shareable as-is.
+  ///
+  /// Throws (DioException) on a non-2xx response so the caller can surface a
+  /// friendly message (e.g. guest links disabled, or not operator-authorized).
+  Future<String> mintGuestInvite({
+    required String room,
+    String display = 'Guest',
+    int ttlSeconds = 28800,
+  }) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '$_webuiBaseUrl/guest/invite',
+      // The server reads `ttl`; `ttl_seconds` is sent too for callers/mirrors
+      // that expect that key. Unknown keys are ignored server-side.
+      data: <String, dynamic>{
+        'room': room,
+        'display': display,
+        'ttl': ttlSeconds,
+        'ttl_seconds': ttlSeconds,
+      },
+      options: Options(headers: {'Content-Type': 'application/json'}),
+    );
+    final data = resp.data ?? const <String, dynamic>{};
+    final raw = (data['invite_url'] as String?) ?? '';
+    if (raw.isEmpty) return raw;
+    if (raw.startsWith('http')) return raw;
+    // Server-relative (no funnel base configured): prefix a usable origin.
+    final base = _webuiBaseUrl.endsWith('/')
+        ? _webuiBaseUrl.substring(0, _webuiBaseUrl.length - 1)
+        : _webuiBaseUrl;
+    final path = raw.startsWith('/') ? raw : '/$raw';
+    return '$base$path';
+  }
+
   // ── Room join / leave ─────────────────────────────────────────────────────
 
   /// Mint a token, connect to the LiveKit room, and publish mic (+ optional cam).

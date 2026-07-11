@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -31,6 +32,108 @@ const Map<String, Color> _kSoulColors = {
 Color _soulColorFor(String identity) {
   final key = identity.toLowerCase().split('@').first;
   return _kSoulColors[key] ?? SovereignColors.fromFingerprint(identity);
+}
+
+// ── Guest invite (shareable link, multi-party) ─────────────────────────────
+
+/// Mint a shareable guest-invite link for [room] and present it in a dialog
+/// with a Copy button. ONE link admits MULTIPLE guests, so this is the in-app
+/// "add people" path: each person who opens the link joins the SAME LiveKit
+/// room as the host. Shows a spinner while minting, then the link (or a
+/// friendly error when guest links are disabled / not operator-authorized).
+Future<void> _shareGuestInvite(
+  BuildContext context,
+  WidgetRef ref,
+  String room,
+) async {
+  if (room.isEmpty) return;
+  final svc = ref.read(liveKitCallServiceProvider);
+
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const Center(
+      child: CircularProgressIndicator(color: SovereignColors.soulLumina),
+    ),
+  );
+
+  String? link;
+  String? error;
+  try {
+    final url = await svc.mintGuestInvite(room: room);
+    if (url.isEmpty) {
+      error = 'The server did not return an invite link.';
+    } else {
+      link = url;
+    }
+  } catch (_) {
+    error = 'Could not create an invite link. Guest links may be disabled '
+        'on this server, or you are not authorized to invite.';
+  }
+
+  if (!context.mounted) return;
+  Navigator.of(context).pop(); // dismiss the spinner
+
+  showDialog<void>(
+    context: context,
+    builder: (dctx) => AlertDialog(
+      backgroundColor: SovereignColors.surfaceRaised,
+      title: const Text('Add people'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(
+              error,
+              style: const TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 13,
+              ),
+            )
+          else ...[
+            const Text(
+              'Anyone with this link can join THIS call as a guest. Share it '
+              'with as many people as you like: each one joins the same room.',
+              style: TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              link ?? '',
+              style: const TextStyle(
+                color: SovereignColors.soulLumina,
+                fontSize: 12,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        if (link != null)
+          TextButton.icon(
+            icon: const Icon(Icons.copy_rounded, size: 18),
+            label: const Text('Copy link'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: link!));
+              if (dctx.mounted) Navigator.of(dctx).pop();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Invite link copied')),
+                );
+              }
+            },
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(dctx).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }
 
 // ── Riverpod state for active LiveKit session ─────────────────────────────
@@ -510,14 +613,14 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
 
 // ── Top bar ────────────────────────────────────────────────────────────────
 
-class _TopBar extends StatelessWidget {
+class _TopBar extends ConsumerWidget {
   const _TopBar({required this.callState, this.displayName});
 
   final LiveKitCallState callState;
   final String? displayName;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final safePad = MediaQuery.of(context).padding.top;
 
     return Container(
@@ -628,6 +731,26 @@ class _TopBar extends StatelessWidget {
             ),
             const SizedBox(width: 6),
           ],
+
+          // Add people: mint + share a guest invite link for THIS room. One
+          // link admits multiple guests into the same LiveKit room.
+          GestureDetector(
+            onTap: () => _shareGuestInvite(context, ref, callState.roomName),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: SovereignColors.surfaceGlass,
+                border: Border.all(color: SovereignColors.surfaceGlassBorder),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.person_add_alt_1_rounded,
+                color: SovereignColors.textPrimary,
+                size: 20,
+              ),
+            ),
+          ),
 
           // Room-name mono badge.
           Container(
