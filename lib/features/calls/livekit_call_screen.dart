@@ -6,6 +6,7 @@ import 'package:livekit_client/livekit_client.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
 import '../../services/recordings_service.dart';
+import '../call_shared/in_call_panels.dart';
 
 // ── Soul-color map for well-known agents ───────────────────────────────────
 
@@ -367,6 +368,16 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
+      // Collab lanes (chat / whiteboard / watch / terminal / screenshare) over
+      // this room's LiveKit data channel, keyed by the room name. Same substrate
+      // a Space room uses; mounted once media is connected.
+      floatingActionButton:
+          (callState?.isConnected ?? false) && callState!.roomName.isNotEmpty
+              ? InCallPanelsFab(
+                  roomId: callState.roomName,
+                  identity: callState.identity,
+                )
+              : null,
       body: callState == null
           ? _buildConnecting()
           : callState.error != null
