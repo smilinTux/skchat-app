@@ -63,10 +63,14 @@ done
 log() { printf '\033[36m[deploy-web]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[31m[deploy-web] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# The app is served under /app/ on the public Funnel (webui static/app), so the
+# build MUST set base href to /app/ or the relative asset loads 404 and the app
+# never boots. Override with SKCHAT_APP_BASE_HREF if a deploy serves it elsewhere.
+APP_BASE_HREF="${SKCHAT_APP_BASE_HREF:-/app/}"
 flutter_build() {
-  log "flutter build web --release"
+  log "flutter build web --release --base-href ${APP_BASE_HREF}"
   command -v flutter >/dev/null 2>&1 || die "flutter not on PATH"
-  ( cd "$PROJECT_DIR" && flutter build web --release )
+  ( cd "$PROJECT_DIR" && flutter build web --release --base-href "${APP_BASE_HREF}" )
 }
 
 # ── key files the build MUST contain (PQC web interop included) ───────────────

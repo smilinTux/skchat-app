@@ -99,7 +99,9 @@ jobs:
         run: flutter test
 
       - name: flutter build web
-        run: flutter build web --release
+        # base href must match the production serve path (/app/ on the Funnel), or
+        # the deployed app 404s its assets and never boots. See scripts/deploy-web.sh.
+        run: flutter build web --release --base-href /app/
 
       # Mirrors the REQUIRED artifact list in scripts/deploy-web.sh: the PQC
       # web interop shim (sk_pqc_noble.js) must land in build/web or hybrid
