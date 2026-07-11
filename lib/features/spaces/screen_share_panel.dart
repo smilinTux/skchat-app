@@ -4,6 +4,7 @@ import "package:livekit_client/livekit_client.dart";
 
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
+import "screen_share_helper.dart";
 
 /// Screen-share lane (Tier 4, MEDIA): publishes a LiveKit screen-share video
 /// track from the local participant and renders any REMOTE screen-share tracks
@@ -88,7 +89,10 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
               builder: (context, snap) {
                 final room = svc.room;
                 final participants = snap.data ?? const [];
-                final shares = _resolveRemoteShares(room, participants);
+                // Remote shares only here (the local user has the toggle below).
+                final shares = resolveScreenShares(room, participants)
+                    .where((s) => !s.isLocal)
+                    .toList();
 
                 if (shares.isEmpty) {
                   return const Center(
@@ -163,32 +167,5 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
         ],
       ),
     );
-  }
-
-  /// Resolve the live remote screen-share [VideoTrack]s from the [Room].
-  ///
-  /// The [LiveKitParticipantSnapshot] does not carry the underlying track, so
-  /// we look it up in the live room by identity via
-  /// `getTrackPublicationBySource(TrackSource.screenShareVideo)` — the same
-  /// approach the call grid uses for camera tracks. Local + non-sharing
-  /// participants are skipped.
-  List<({String identity, VideoTrack track})> _resolveRemoteShares(
-    Room? room,
-    List<LiveKitParticipantSnapshot> participants,
-  ) {
-    if (room == null) return const [];
-    final out = <({String identity, VideoTrack track})>[];
-    for (final p in participants) {
-      if (p.isLocal) continue;
-      final remote = room.remoteParticipants[p.identity];
-      if (remote == null) continue;
-      final pub =
-          remote.getTrackPublicationBySource(TrackSource.screenShareVideo);
-      final track = pub?.track;
-      if (track is VideoTrack) {
-        out.add((identity: p.identity, track: track as VideoTrack));
-      }
-    }
-    return out;
   }
 }

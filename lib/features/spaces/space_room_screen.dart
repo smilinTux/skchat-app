@@ -11,6 +11,7 @@ import "../../services/spaces_service.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
+import "screen_share_helper.dart";
 import "terminal_panel.dart";
 import "doc_panel.dart";
 import "whiteboard_panel.dart";
@@ -112,6 +113,16 @@ class SpaceRoomNotifier
     final next = !state.isMicEnabled;
     await svc.setMicEnabled(next);
     state = state.copyWith(isMicEnabled: next);
+  }
+
+  /// Start / stop sharing the local screen (WITH audio) as the watch-party
+  /// stream. Reuses [LiveKitCallService.setScreenShareEnabled], which captures
+  /// screen audio so the shared surface plays with sound for every listener.
+  /// The `isScreenSharing` flag on the participants snapshot drives the UI, so
+  /// no extra state is tracked here: the stream update flips the controls and
+  /// raises the stage for everyone.
+  Future<void> toggleScreenShare(bool enabled) async {
+    await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(enabled);
   }
 
   Future<void> raiseHand(String identity) async {
@@ -484,9 +495,20 @@ class _Stage extends ConsumerWidget {
     // Raised hands: listeners (cannot publish) who asked for the stage.
     final raisedHands = listeners.where((p) => p.handRaised).toList();
 
+    // Watch-party stage: the moment ANY participant (local or remote) publishes
+    // a screen-share, it becomes the big main stage above the speaker rings for
+    // EVERY role (host, speaker, listener). No share = normal audio-room layout.
+    final shares =
+        resolveScreenShares(ref.read(liveKitCallServiceProvider).room,
+            state.participants);
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
+        if (shares.isNotEmpty) ...[
+          _WatchStage(shares: shares),
+          const SizedBox(height: 24),
+        ],
         if (join.isHost && raisedHands.isNotEmpty) ...[
           _sectionLabel("Raised hands", raisedHands.length),
           const SizedBox(height: 12),
@@ -633,6 +655,124 @@ class _Stage extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Watch stage ──────────────────────────────────────────────────────────────
+
+/// The big main stage for a watch party: renders the live screen-share
+/// [VideoTrack] full-width at 16:9 above the speaker rings, so every
+/// participant (host, speaker, listener) sees the shared screen (e.g. the
+/// fight) the moment someone goes live. If several people are sharing, the
+/// first / most recent is on the stage and the rest are noted below.
+///
+/// Audio: the shared surface's audio (captured via `captureScreenAudio`) plus
+/// the host's mic ride normal LiveKit tracks that autoplay for every
+/// subscribed listener. Nothing here mutes or gates them, so the fight is
+/// heard as well as seen.
+class _WatchStage extends StatelessWidget {
+  const _WatchStage({required this.shares});
+
+  final List<ScreenShare> shares;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = shares.first;
+    final others = shares.length - 1;
+    final soul = _soulColorFor(primary.identity);
+    final who = primary.isLocal ? "You" : primary.identity;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Stack(
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Container(
+                  color: Colors.black,
+                  child: VideoTrackRenderer(primary.track),
+                ),
+              ),
+              // "Streaming: <identity>" label pill, top-left.
+              Positioned(
+                left: 10,
+                top: 10,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: soul.withValues(alpha: 0.6)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: soul,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        "Streaming: $who",
+                        style: const TextStyle(
+                          color: SovereignColors.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (others > 0) ...[
+          const SizedBox(height: 8),
+          Text(
+            others == 1 ? "+1 other is also sharing" : "+$others others are also sharing",
+            style: const TextStyle(
+              color: SovereignColors.textTertiary,
+              fontSize: 11,
+            ),
+          ),
+        ],
+        if (primary.isLocal) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(
+                Icons.info_outline_rounded,
+                size: 14,
+                color: SovereignColors.textTertiary,
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  // Same guidance as the call screen-share path: on Linux, full
+                  // system audio through getDisplayMedia is unreliable, so pick a
+                  // PulseAudio \"Monitor of ...\" source as your mic to stream
+                  // desktop audio (e.g. the fight) to listeners.
+                  "Desktop audio? Pick a \"Monitor of ...\" source as your mic so listeners hear it.",
+                  style: TextStyle(
+                    color: SovereignColors.textTertiary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -920,6 +1060,19 @@ class _ControlBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(spaceRoomProvider(join).notifier);
 
+    // Local participant snapshot: drives the share affordance. Anyone the
+    // LiveKit grant lets publish (host or an invited speaker) can go live with
+    // a screen-share; listeners cannot.
+    LiveKitParticipantSnapshot? local;
+    for (final p in state.participants) {
+      if (p.isLocal) {
+        local = p;
+        break;
+      }
+    }
+    final canShare = join.isHost || (local?.canPublish ?? false);
+    final isSharing = local?.isScreenSharing ?? false;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
       child: Row(
@@ -944,6 +1097,30 @@ class _ControlBar extends ConsumerWidget {
               active: state.handRaised,
               activeColor: SovereignColors.soulLumina,
               onTap: () => notifier.raiseHand(join.identity),
+            ),
+          // Go live: prominent screen-share affordance for the host and any
+          // speaker with publish, NOT buried in the lane sheet. Reuses
+          // setScreenShareEnabled (which captures screen audio). Doubles as the
+          // stop control once live.
+          if (canShare)
+            _RoundButton(
+              icon: isSharing
+                  ? Icons.stop_screen_share_rounded
+                  : Icons.screen_share_rounded,
+              label: isSharing ? "Stop" : "Go live",
+              active: isSharing,
+              activeColor: SovereignColors.accentEncrypt,
+              onTap: () async {
+                try {
+                  await notifier.toggleScreenShare(!isSharing);
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Screen share failed: $e")),
+                    );
+                  }
+                }
+              },
             ),
           if (join.isHost)
             _RoundButton(
