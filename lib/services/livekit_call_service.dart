@@ -145,6 +145,11 @@ class LiveKitCallService {
   final String _defaultLivekitUrl;
   final Dio _dio;
 
+  /// Set when a local capture device could not be published on join (missing,
+  /// busy, or virtual-only). Non-fatal: the call still connects. The UI may
+  /// surface this so the user knows to pick a device from the picker.
+  String? mediaWarning;
+
   Room? _room;
   LocalParticipant? _localParticipant;
 
@@ -240,10 +245,22 @@ class LiveKitCallService {
     // 3-4. Construct the room, bind listeners, connect.
     await _connectRoom(wsUrl: wsUrl, token: tokenResult.token);
 
-    // 5. Publish tracks.
-    await _localParticipant?.setMicrophoneEnabled(true);
+    // 5. Publish tracks. The room is already connected at this point, so a
+    // missing, busy, or virtual-only capture device (NotFoundError /
+    // NotReadableError) must NOT tear the whole call down. Publish best-effort:
+    // stay in the room without the failed track. The user can pick a working
+    // device from the in-call device picker, or just listen.
+    try {
+      await _localParticipant?.setMicrophoneEnabled(true);
+    } catch (e) {
+      mediaWarning = 'Microphone unavailable: $e';
+    }
     if (withVideo) {
-      await _localParticipant?.setCameraEnabled(true);
+      try {
+        await _localParticipant?.setCameraEnabled(true);
+      } catch (e) {
+        mediaWarning = 'Camera unavailable: $e';
+      }
     }
 
     _emitParticipants();
