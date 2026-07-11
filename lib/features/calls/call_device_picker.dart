@@ -10,9 +10,10 @@ import '../../services/livekit_call_service.dart';
 //
 // The explicit device choice is persisted to the shared `settings` Hive box
 // (same box backend_config uses) so it survives across calls and app restarts.
-// Reuse: [CallDevicePickerButton] silently re-applies the saved choice when the
-// control bar first renders (i.e. once the call is live), so the user does not
-// have to re-pick every call.
+// Reuse: [CallDevicePickerButton] silently reconciles the live tracks with the
+// saved choice (or the smart default when none is saved) when the control bar
+// first renders (i.e. once the call is live), so the user does not have to
+// re-pick every call and a fresh call avoids a phantom default device.
 
 const _kSettingsBox = 'settings';
 const _kMicDeviceKey = 'call_mic_device_id';
@@ -46,7 +47,7 @@ class CallDevicePrefs {
     try {
       await (await _box()).put(_kMicDeviceKey, deviceId);
     } on Object {
-      // Best-effort — a persistence failure must not break device switching.
+      // Best-effort, a persistence failure must not break device switching.
     }
   }
 
@@ -66,9 +67,11 @@ class CallDevicePrefs {
 /// ([conf_screen] and [livekit_call_screen]) add exactly one line and this
 /// change stays out of the way of the panels work touching the same bars.
 ///
-/// On first render (which is when the call is live) it silently re-applies any
-/// previously persisted device choice, so a picked mic/camera is reused across
-/// calls without the user re-opening the sheet.
+/// On first render (which is when the call is live) it silently reconciles the
+/// live tracks with the persisted choice, or, when none is saved, the smart
+/// default (first non-virtual device). So a picked mic/camera is reused across
+/// calls and a fresh call auto-avoids a phantom device, without the user
+/// re-opening the sheet.
 class CallDevicePickerButton extends ConsumerStatefulWidget {
   const CallDevicePickerButton({super.key, this.size = 52});
 
@@ -83,6 +86,7 @@ class CallDevicePickerButton extends ConsumerStatefulWidget {
 class _CallDevicePickerButtonState
     extends ConsumerState<CallDevicePickerButton> {
   bool _reapplied = false;
+  int _reapplyAttempts = 0;
 
   @override
   void initState() {
@@ -90,38 +94,66 @@ class _CallDevicePickerButtonState
     WidgetsBinding.instance.addPostFrameCallback((_) => _reapplySaved());
   }
 
-  /// Re-apply the persisted device choice to the live tracks (best-effort).
-  /// Only switches when the saved device is still present in the enumeration,
-  /// and swallows capture failures so audio keeps working on the default device
-  /// when a previously-chosen device has since disappeared.
+  /// Reconcile the live tracks with the persisted-or-smart-default device once
+  /// the call is live (best-effort).
+  ///
+  /// For each input the target is the explicit saved choice when it is still
+  /// present in the enumeration, otherwise the smart default (first non-virtual
+  /// device) so a fresh call auto-avoids a phantom / loopback device (e.g. a
+  /// dead DroidCam that happens to be the OS default) at publish time, instead
+  /// of waiting for the user to open the sheet and re-pick.
+  ///
+  /// The control bar can mount a frame before the room finishes connecting, so
+  /// [switchMicDevice] / [switchCameraDevice] would no-op on a null local
+  /// participant. Defer to a later frame (bounded) until the participant exists.
+  ///
+  /// The mic is always published on a live call, so it is always reconciled.
+  /// The camera is only reconciled when a camera track is already live, so this
+  /// never forces video onto an audio-only call. Capture failures are swallowed
+  /// so the rest of the call keeps working when a device has disappeared.
   Future<void> _reapplySaved() async {
     if (_reapplied) return;
-    _reapplied = true;
     final svc = ref.read(liveKitCallServiceProvider);
+    if (svc.localParticipant == null) {
+      if (!mounted || _reapplyAttempts >= 30) return;
+      _reapplyAttempts++;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reapplySaved());
+      return;
+    }
+    _reapplied = true;
 
     final savedMic = await CallDevicePrefs.loadMic();
-    if (savedMic != null && savedMic.isNotEmpty) {
-      try {
-        final mics = await svc.enumerateAudioInputs();
-        if (mics.any((d) => d.deviceId == savedMic)) {
-          await svc.switchMicDevice(savedMic);
-        }
-      } on Object {
-        // Saved mic gone / unreadable — leave the default mic running.
-      }
+    try {
+      final mics = await svc.enumerateAudioInputs();
+      final target = _pickTarget(mics, savedMic);
+      if (target != null) await svc.switchMicDevice(target);
+    } on Object {
+      // Saved / default mic gone or unreadable, leave the current mic running.
     }
 
-    final savedCam = await CallDevicePrefs.loadCamera();
-    if (savedCam != null && savedCam.isNotEmpty) {
+    // Only touch the camera when it is already live: never turn video ON here.
+    if (svc.localParticipant?.isCameraEnabled() ?? false) {
+      final savedCam = await CallDevicePrefs.loadCamera();
       try {
         final cams = await svc.enumerateVideoInputs();
-        if (cams.any((d) => d.deviceId == savedCam)) {
-          await svc.switchCameraDevice(savedCam);
-        }
+        final target = _pickTarget(cams, savedCam);
+        if (target != null) await svc.switchCameraDevice(target);
       } on Object {
-        // Saved camera gone / unreadable — leave audio unaffected.
+        // Saved / default camera gone or unreadable, leave video unaffected.
       }
     }
+  }
+
+  /// The device id to apply: the persisted [saved] choice when it is still
+  /// present in [list], otherwise the smart default (first non-virtual device).
+  /// Returns null for an empty enumeration.
+  String? _pickTarget(List<MediaDevice> list, String? saved) {
+    if (saved != null &&
+        saved.isNotEmpty &&
+        list.any((d) => d.deviceId == saved)) {
+      return saved;
+    }
+    return LiveKitCallService.pickDefaultDeviceId(list);
   }
 
   Future<void> _openSheet() async {
