@@ -215,6 +215,50 @@ class LiveKitCallService {
     return LiveKitTokenResult.fromJson(resp.data ?? {});
   }
 
+  // ── Agent invite ────────────────────────────────────────────────────────────
+
+  /// Pull an AI agent (default Lumina) into [room] so she joins the live call.
+  ///
+  /// Calls POST /conf/{room}/invite-agent on the skchat web-UI, which spawns the
+  /// agent's media stack into that exact room. This works both for a registered
+  /// conference (host-gated server-side) and for a plain 1:1 / group call room
+  /// the app is already connected to (served for a tailnet caller; the backend
+  /// returns a clean error otherwise).
+  ///
+  /// [requester] is the caller's own identity (used for the conf host-gate);
+  /// [greet] is an optional opening line for the agent to speak on join.
+  ///
+  /// Throws an [Exception] carrying a human-readable message on a backend
+  /// rejection (e.g. not permitted, agent host unavailable) so the caller can
+  /// surface it in a snackbar.
+  Future<void> inviteAgent({
+    required String room,
+    String agent = 'lumina',
+    String? requester,
+    String? greet,
+  }) async {
+    final body = <String, dynamic>{
+      'agent': agent,
+      'requester': ?requester,
+      'greet': ?greet,
+    };
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '$_webuiBaseUrl/conf/$room/invite-agent',
+        data: body,
+        options: Options(headers: {'Content-Type': 'application/json'}),
+      );
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final detail =
+          (data is Map && data['detail'] is String) ? data['detail'] as String : null;
+      final code = e.response?.statusCode;
+      throw Exception(
+        detail ?? 'agent invite failed${code == null ? '' : ' (HTTP $code)'}',
+      );
+    }
+  }
+
   // ── Room join / leave ─────────────────────────────────────────────────────
 
   /// Mint a token, connect to the LiveKit room, and publish mic (+ optional cam).
