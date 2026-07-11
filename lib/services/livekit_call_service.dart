@@ -242,8 +242,13 @@ class LiveKitCallService {
     // 2. Prefer the server-supplied URL (geo-routing), fall back to default.
     final wsUrl = tokenResult.livekitUrl ?? _defaultLivekitUrl;
 
-    // 3-4. Construct the room, bind listeners, connect.
-    await _connectRoom(wsUrl: wsUrl, token: tokenResult.token);
+    // 3-4. Construct the room, bind listeners, connect. Pass our own identity so
+    // the sovereign-ICE fetch can key the ephemeral TURN cred off this peer.
+    await _connectRoom(
+      wsUrl: wsUrl,
+      token: tokenResult.token,
+      identity: identity,
+    );
 
     // 5. Publish tracks. The room is already connected at this point, so a
     // missing, busy, or virtual-only capture device (NotFoundError /
@@ -286,9 +291,15 @@ class LiveKitCallService {
   /// Shared connect body used by [joinRoom] and [connectWithToken]: builds the
   /// [Room] with the standard publish options, wires listeners, connects, and
   /// captures the local participant. (DRY - single source of room wiring.)
+  ///
+  /// [identity] - our own identity/fingerprint, forwarded to the sovereign-ICE
+  /// fetch as the `peer` hint so the ephemeral TURN credential is keyed to us.
+  /// Optional: a null / empty identity still fetches (the endpoint falls back to
+  /// the local FQID), and the whole ICE step is best-effort anyway.
   Future<void> _connectRoom({
     required String wsUrl,
     required String token,
+    String? identity,
   }) async {
     _room = Room(
       roomOptions: RoomOptions(
@@ -304,9 +315,97 @@ class LiveKitCallService {
       ),
     );
     _bindRoomListeners();
-    await _room!.connect(wsUrl, token);
+    // Sovereign ICE: pull STUN/TURN from the web-UI so off-tailnet / cellular
+    // peerconnections relay through the sovereign coturn instead of timing out
+    // ("timed out waiting for peerconnection to connect"). Best-effort: a null
+    // result connects with the SFU's default ICE rather than blocking the call.
+    // Mirrors the web guest page (static/livekit.html).
+    final iceConfig = await fetchIceConfig(identity);
+    await _room!.connect(
+      wsUrl,
+      token,
+      connectOptions: ConnectOptions(
+        rtcConfiguration: iceConfig ?? const RTCConfiguration(),
+      ),
+    );
     _localParticipant = _room!.localParticipant;
   }
+
+  // ── Sovereign ICE (STUN / TURN) ─────────────────────────────────────────────
+
+  /// Fetch the sovereign ICE (STUN / TURN) config from the skchat web-UI and map
+  /// it to a livekit_client [RTCConfiguration].
+  ///
+  /// Calls `GET ${_webuiBaseUrl}/connectivity/ice?peer=<identity>`, which returns
+  /// `{ice_servers: [{urls, username?, credential?}], policy}`. The result is
+  /// passed to [Room.connect] via [ConnectOptions.rtcConfiguration] so the
+  /// peerconnection can relay through the sovereign coturn.
+  ///
+  /// Best-effort by design: any failure (network error, non-200, malformed body,
+  /// no servers) returns null so the caller connects with the SFU's default ICE
+  /// rather than blocking or failing the call. Never throws. Mirrors
+  /// static/livekit.html.
+  Future<RTCConfiguration?> fetchIceConfig(String? identity) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '$_webuiBaseUrl/connectivity/ice',
+        queryParameters: <String, dynamic>{
+          if (identity != null && identity.isNotEmpty) 'peer': identity,
+        },
+      );
+      final data = resp.data;
+      if (data == null) return null;
+      final servers = parseIceServers(data['ice_servers']);
+      if (servers.isEmpty) return null;
+      return RTCConfiguration(
+        iceServers: servers,
+        iceTransportPolicy: parseIcePolicy(data['policy']),
+      );
+    } catch (_) {
+      // Best-effort: never let an ICE fetch failure block or fail the call.
+      return null;
+    }
+  }
+
+  /// Map the server's `ice_servers` JSON array into livekit_client
+  /// [RTCIceServer]s.
+  ///
+  /// Each entry is `{urls: string | [string], username?, credential?}`. `urls`
+  /// may be a single string or a list of strings (both are valid WebRTC shapes);
+  /// both are normalized to a `List<String>`. Entries with no usable urls, and
+  /// any non-object / non-list payload, are skipped. Never throws: a malformed
+  /// payload yields an empty list.
+  static List<RTCIceServer> parseIceServers(dynamic raw) {
+    if (raw is! List) return const <RTCIceServer>[];
+    final out = <RTCIceServer>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final urlsRaw = entry['urls'];
+      final urls = <String>[];
+      if (urlsRaw is String) {
+        if (urlsRaw.isNotEmpty) urls.add(urlsRaw);
+      } else if (urlsRaw is List) {
+        for (final u in urlsRaw) {
+          if (u is String && u.isNotEmpty) urls.add(u);
+        }
+      }
+      if (urls.isEmpty) continue;
+      final username = entry['username'];
+      final credential = entry['credential'];
+      out.add(RTCIceServer(
+        urls: urls,
+        username: username is String ? username : null,
+        credential: credential is String ? credential : null,
+      ));
+    }
+    return out;
+  }
+
+  /// Parse the transport-policy string into the livekit_client enum. The server
+  /// sends 'all' (STUN + TURN, direct preferred) or 'relay' (TURN only).
+  /// Defaults to [RTCIceTransportPolicy.all] for anything else / missing.
+  static RTCIceTransportPolicy parseIcePolicy(dynamic raw) =>
+      raw == 'relay' ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all;
 
   /// Disconnect from the room and clean up resources.
   Future<void> leaveRoom() => dispose();
