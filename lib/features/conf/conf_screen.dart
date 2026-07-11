@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
+import "../call_shared/in_call_panels.dart";
 
 // ── Route args ────────────────────────────────────────────────────────────────
 
@@ -398,6 +399,11 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
+      // Collab lanes (chat / whiteboard / watch / terminal / screenshare) over
+      // the current room's LiveKit data channel, keyed by the conf room id.
+      floatingActionButton: st.isConnected && st.room.isNotEmpty
+          ? InCallPanelsFab(roomId: st.room, identity: widget.args.identity)
+          : null,
       body: st.error != null
           ? _buildError(st.error!)
           : SafeArea(
