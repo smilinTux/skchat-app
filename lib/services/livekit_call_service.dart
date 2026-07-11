@@ -538,7 +538,13 @@ final liveKitCallServiceProvider =
   // config changes (a new call session then uses the new host).
   final cfg = ref.watch(backendConfigProvider);
   final svc = LiveKitCallService(
-    webuiBaseUrl: cfg.livekitWebuiUrl,
+    // POST /livekit/token is served by the skchat web-UI (the same origin that
+    // serves this app, e.g. the public Funnel), NOT the standalone livekit web
+    // UI. Using livekitWebuiUrl here pointed the token mint at localhost:7779,
+    // which a browser cannot reach, so every call died with "Room join failed"
+    // (DioException connection error). The SFU wss URL still comes from the
+    // token response (livekit_url), so only the mint base needed correcting.
+    webuiBaseUrl: cfg.skchatWebuiUrl,
     livekitUrl: cfg.livekitUrl,
   );
   ref.onDispose(svc.dispose);
