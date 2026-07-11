@@ -44,7 +44,12 @@ class LiveKitTokenResult {
       token: json['token'] as String? ?? '',
       roomName: json['room'] as String? ?? json['room_name'] as String? ?? '',
       identity: json['identity'] as String? ?? '',
-      livekitUrl: json['livekit_url'] as String?,
+      // The skchat webui returns the SFU wss URL under "url" (public-aware, e.g.
+      // wss://<host>/livekit-ws). Accept "livekit_url" too for older servers.
+      // Without this the field was null and the connect fell back to the
+      // wss://localhost:8443 default, unreachable from a browser, so the join
+      // died at /rtc/validate with "Room join failed".
+      livekitUrl: (json['url'] ?? json['livekit_url']) as String?,
     );
   }
 }
