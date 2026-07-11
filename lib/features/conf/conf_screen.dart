@@ -10,6 +10,7 @@ import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
 import "../call_shared/in_call_panels.dart";
 import "../calls/call_device_picker.dart";
+import "../profile/profile_screen.dart" show localIdentityProvider;
 
 // ── Route args ────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,8 @@ class ConfArgs {
     this.role = "guest",
     this.createTitle,
     this.hostFqid,
+    this.preMintedToken,
+    this.wsUrl,
   });
 
   /// Caller identity (fqid / fingerprint).
@@ -36,7 +39,7 @@ class ConfArgs {
   /// Display name in the room (defaults to [identity]).
   final String? name;
 
-  /// Requested role — "host" or "guest".
+  /// Requested role, "host" or "guest".
   final String role;
 
   /// When set, create a new conference with this title before joining.
@@ -45,7 +48,42 @@ class ConfArgs {
   /// Host fqid to register on create (defaults to [identity]).
   final String? hostFqid;
 
+  /// Pre-minted, role-scoped LiveKit JWT (from a guest/sovereign conf join
+  /// deep link). When present the server already authorized this join, so the
+  /// notifier skips create + lobby + token mint and connects straight to media.
+  final String? preMintedToken;
+
+  /// LiveKit WebSocket URL paired with [preMintedToken].
+  final String? wsUrl;
+
   bool get wantsHost => role == "host";
+
+  /// True when a pre-minted token + ws url are present (deep-link join path).
+  bool get hasPreMintedToken =>
+      (preMintedToken ?? "").isNotEmpty && (wsUrl ?? "").isNotEmpty;
+
+  /// Build [ConfArgs] from a deep-link's query parameters (GoRouter supplies
+  /// these via `state.uri.queryParameters`). Backs the native hand-off routes:
+  ///   /conf?room=R&token=T&url=U&identity=I&display=N   (guest / sovereign)
+  ///   /conf?room=R                                       (bare conf landing)
+  /// Returns null when no room is present (nothing to join).
+  static ConfArgs? fromParams(Map<String, String> q) {
+    final room = (q["room"] ?? q["space"] ?? q["space_id"] ?? "").trim();
+    if (room.isEmpty) return null;
+    final token = (q["token"] ?? q["lk_token"] ?? "").trim();
+    final url = (q["url"] ?? q["lk_url"] ?? q["livekit_url"] ?? "").trim();
+    final identity = (q["identity"] ?? "").trim();
+    final name = (q["name"] ?? q["display"] ?? q["display_name"] ?? "").trim();
+    final role = (q["role"] ?? "").trim();
+    return ConfArgs(
+      identity: identity,
+      room: room,
+      name: name.isEmpty ? null : name,
+      role: role.isEmpty ? "guest" : role,
+      preMintedToken: token.isEmpty ? null : token,
+      wsUrl: url.isEmpty ? null : url,
+    );
+  }
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -135,10 +173,29 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   Timer? _waitingPoll;
   Timer? _admissionPoll;
 
+  String? _identityCache;
+
   @override
   ConfState build(ConfArgs arg) {
     ref.onDispose(_cancel);
     return ConfState.empty.copyWith(room: arg.room ?? "", isHost: arg.wantsHost);
+  }
+
+  /// Effective caller identity. Uses [ConfArgs.identity] when supplied; a bare
+  /// deep-link (/conf?room=...) carries none, so fall back to the signed-in
+  /// local identity (fingerprint, else display name).
+  String get _identity {
+    final cached = _identityCache;
+    if (cached != null) return cached;
+    final fromArg = arg.identity.trim();
+    final resolved = fromArg.isNotEmpty
+        ? fromArg
+        : () {
+            final me = ref.read(localIdentityProvider);
+            return me.fingerprint.isNotEmpty ? me.fingerprint : me.displayName;
+          }();
+    _identityCache = resolved;
+    return resolved;
   }
 
   /// Create (if needed), mint a token, and join the LiveKit media room.
@@ -151,11 +208,25 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
     final conf = ref.read(confServiceProvider);
 
     try {
+      // Deep-link fast path: a pre-minted token means the server already
+      // authorized this join (guest admitted / sovereign proven), so skip
+      // create + lobby + mint and connect straight to media.
+      if (arg.hasPreMintedToken) {
+        await _joinWithToken(
+          room: arg.room ?? "",
+          wsUrl: arg.wsUrl!,
+          token: arg.preMintedToken!,
+          isHost: arg.wantsHost,
+          title: state.title,
+        );
+        return;
+      }
+
       var room = arg.room;
       // 1. Create the conference if no room id was supplied (host path).
       if (room == null || room.isEmpty) {
         final created = await conf.create(
-          hostFqid: arg.hostFqid ?? arg.identity,
+          hostFqid: arg.hostFqid ?? _identity,
           title: arg.createTitle,
         );
         room = created.room;
@@ -166,7 +237,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
       if (!arg.wantsHost) {
         final status = await conf.enterWaiting(
           room,
-          identity: arg.identity,
+          identity: _identity,
           display: arg.name,
         );
         if (status.denied) {
@@ -201,19 +272,38 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   /// Mint a role-scoped token and join the LiveKit media room for [room].
   Future<void> _joinMedia(String room) async {
     final conf = ref.read(confServiceProvider);
-    final lk = ref.read(liveKitCallServiceProvider);
-
     final tok = await conf.token(
       room,
-      identity: arg.identity,
+      identity: _identity,
       name: arg.name,
       role: arg.role,
     );
-    state = state.copyWith(
+    await _joinWithToken(
       room: tok.room.isNotEmpty ? tok.room : room,
+      wsUrl: tok.url,
+      token: tok.token,
       isHost: tok.isHost,
+      title: tok.title,
+    );
+  }
+
+  /// Join the LiveKit media room with an already-minted [token] + [wsUrl].
+  /// Shared by the minted path ([_joinMedia]) and the deep-link pre-minted path
+  /// ([connect]); both connect via [LiveKitCallService.connectWithToken].
+  Future<void> _joinWithToken({
+    required String room,
+    required String wsUrl,
+    required String token,
+    required bool isHost,
+    String title = "",
+  }) async {
+    final lk = ref.read(liveKitCallServiceProvider);
+
+    state = state.copyWith(
+      room: room.isNotEmpty ? room : state.room,
+      isHost: isHost,
       isPending: false,
-      title: tok.title.isNotEmpty ? tok.title : state.title,
+      title: title.isNotEmpty ? title : state.title,
     );
 
     // Wire media streams.
@@ -225,19 +315,19 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
     });
 
     // Join the LiveKit room with the role-scoped token.
-    await lk.connectWithToken(wsUrl: tok.url, token: tok.token);
+    await lk.connectWithToken(wsUrl: wsUrl, token: token);
     // Host goes live on mic immediately.
-    if (tok.isHost) {
+    if (isHost) {
       await lk.setMicEnabled(true);
     }
     state = state.copyWith(
       participants: lk.currentParticipants,
       isConnected: true,
-      isMicEnabled: tok.isHost,
+      isMicEnabled: isHost,
     );
 
     // Host polls the waiting room for guests to admit.
-    if (tok.isHost) {
+    if (isHost) {
       _startWaitingPoll();
     }
   }
@@ -253,7 +343,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
     try {
       final status = await ref.read(confServiceProvider).enterWaiting(
             room,
-            identity: arg.identity,
+            identity: _identity,
             display: arg.name,
           );
       if (status.denied) {
@@ -317,28 +407,28 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   Future<void> admit(String identity) async {
     await ref
         .read(confServiceProvider)
-        .admit(state.room, identity: identity, requester: arg.identity);
+        .admit(state.room, identity: identity, requester: _identity);
     await _refreshWaiting();
   }
 
   Future<void> deny(String identity) async {
     await ref
         .read(confServiceProvider)
-        .deny(state.room, identity: identity, requester: arg.identity);
+        .deny(state.room, identity: identity, requester: _identity);
     await _refreshWaiting();
   }
 
   Future<void> inviteAgent(String agent) => ref
       .read(confServiceProvider)
-      .inviteAgent(state.room, agent: agent, requester: arg.identity);
+      .inviteAgent(state.room, agent: agent, requester: _identity);
 
   Future<void> removeAgent(String agent) => ref
       .read(confServiceProvider)
-      .removeAgent(state.room, agent: agent, requester: arg.identity);
+      .removeAgent(state.room, agent: agent, requester: _identity);
 
   Future<void> end() => ref
       .read(confServiceProvider)
-      .end(state.room, requester: arg.identity);
+      .end(state.room, requester: _identity);
 
   Future<void> leave() async {
     _cancel();

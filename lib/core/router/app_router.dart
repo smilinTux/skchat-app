@@ -153,6 +153,28 @@ class AppRoutes {
   /// Build a sovereign join link/route for [room].
   static String sovereignJoinPath(String room) =>
       '/join?room=${Uri.encodeQueryComponent(room)}&sovereign=1';
+
+  /// Build a native conf hand-off route carrying a pre-minted LiveKit token.
+  /// Mirrors the backend `/app/#/conf?...` deep link produced after a
+  /// guest/sovereign/conf token mint. Empty optional fields are omitted.
+  static String confJoinPath(
+    String room, {
+    String? token,
+    String? url,
+    String? identity,
+    String? display,
+  }) {
+    final q = <String, String>{'room': room};
+    if ((token ?? '').isNotEmpty) q['token'] = token!;
+    if ((url ?? '').isNotEmpty) q['url'] = url!;
+    if ((identity ?? '').isNotEmpty) q['identity'] = identity!;
+    if ((display ?? '').isNotEmpty) q['display'] = display!;
+    final query = q.entries
+        .map((e) =>
+            '${e.key}=${Uri.encodeQueryComponent(e.value)}')
+        .join('&');
+    return '$conf?$query';
+  }
 }
 
 /// GoRouter provider — uses shell routes for the bottom nav structure.
@@ -410,11 +432,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
 
-      // -- Conference room (sovereign /conf REST surface; ConfArgs via extra)
+      // -- Conference room (sovereign /conf REST surface).
+      //    In-app navigation passes a ConfArgs via `extra`; a shared/native
+      //    hand-off link (e.g. /app/#/conf?room=R&token=T&url=U&identity=I from
+      //    a guest/sovereign token mint) carries query params instead. Both land
+      //    in ConfScreen, which connects via LiveKitCallService.connectWithToken.
       GoRoute(
         path: AppRoutes.conf,
         pageBuilder: (context, state) {
-          final args = state.extra as ConfArgs;
+          final extra = state.extra;
+          final args = extra is ConfArgs
+              ? extra
+              : ConfArgs.fromParams(state.uri.queryParameters);
+          if (args == null) {
+            return const MaterialPage(child: _InvalidJoinScreen());
+          }
           return MaterialPage(
             fullscreenDialog: true,
             child: ConfScreen(args: args),
