@@ -732,7 +732,7 @@ class _TopBar extends ConsumerWidget {
             const SizedBox(width: 6),
           ],
 
-          // Add people — mint + share a guest invite link for THIS room. One
+          // Add people: mint + share a guest invite link for THIS room. One
           // link admits multiple guests into the same LiveKit room.
           GestureDetector(
             onTap: () => _shareGuestInvite(context, ref, callState.roomName),
