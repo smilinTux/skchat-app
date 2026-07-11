@@ -817,6 +817,47 @@ class _ParticipantGrid extends StatelessWidget {
       return const _EmptyRoomPlaceholder();
     }
 
+    // Screen-share stage: if anyone is sharing their screen, promote that tile
+    // to a large stage and drop everyone else into a horizontal filmstrip so
+    // viewers see the shared content (e.g. Kodi) big. The stage tile resolves
+    // to the screen-share video track (see _ParticipantTile._resolveVideoTrack),
+    // and its audio (tab audio or a selected monitor source) plays because
+    // LiveKit auto-plays every subscribed audio track. If several people share
+    // at once, the first sharer takes the stage.
+    final sharerIndex = participants.indexWhere((p) => p.isScreenSharing);
+    if (sharerIndex >= 0) {
+      final sharer = participants[sharerIndex];
+      final others = <LiveKitParticipantSnapshot>[
+        for (var i = 0; i < participants.length; i++)
+          if (i != sharerIndex) participants[i],
+      ];
+      return Column(
+        children: [
+          Expanded(
+            child: _ParticipantTile(
+              snapshot: sharer,
+              room: room,
+              fullScreen: true,
+            ),
+          ),
+          if (others.isNotEmpty)
+            SizedBox(
+              height: 104,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                itemCount: others.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 2),
+                itemBuilder: (_, i) => AspectRatio(
+                  aspectRatio: 1,
+                  child: _ParticipantTile(snapshot: others[i], room: room),
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
     if (participants.length == 1) {
       return _ParticipantTile(
         snapshot: participants.first,
