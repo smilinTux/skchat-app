@@ -63,6 +63,7 @@ class LiveKitParticipantSnapshot {
     required this.isLocal,
     required this.isMuted,
     required this.isCameraEnabled,
+    this.isScreenSharing = false,
     this.canPublish = false,
     this.handRaised = false,
     this.isSpeaking = false,
@@ -73,6 +74,11 @@ class LiveKitParticipantSnapshot {
   final bool isLocal;
   final bool isMuted;
   final bool isCameraEnabled;
+
+  /// True when this participant is publishing a screen-share video track. The
+  /// call UI promotes a sharing participant to a prominent "stage" tile so
+  /// viewers see the shared content large (with the shared audio playing).
+  final bool isScreenSharing;
 
   /// Whether the LiveKit grant lets this participant publish tracks.
   ///
@@ -399,6 +405,20 @@ class LiveKitCallService {
         ),
         defaultVideoPublishOptions: const VideoPublishOptions(
           simulcast: true,
+          // Content-friendly screen-share publish encoding: 1080p30 at a high
+          // ceiling (4 Mbps) so streamed content (e.g. Kodi) stays crisp, and a
+          // resolution-first degradation policy so text/detail is preserved when
+          // bandwidth dips (drop framerate before sharpness).
+          screenShareEncoding: VideoEncoding(
+            maxFramerate: 30,
+            maxBitrate: 4 * 1000 * 1000,
+          ),
+          degradationPreference: DegradationPreference.maintainResolution,
+        ),
+        // Capture the screen at up to 1080p30 by default (the toggle path below
+        // may override with captureScreenAudio for the browser tab-audio case).
+        defaultScreenShareCaptureOptions: const ScreenShareCaptureOptions(
+          params: VideoParametersPresets.screenShareH1080FPS30,
         ),
       ),
     );
@@ -512,15 +532,41 @@ class LiveKitCallService {
     _emitParticipants();
   }
 
-  /// Start / stop sharing the local screen.
+  /// Start / stop sharing the local screen, WITH audio.
   ///
   /// Publishes (or unpublishes) a screen-share video track on the local
   /// participant. On platforms that require a capture prompt (desktop/web),
   /// the LiveKit client surfaces it; on mobile a foreground-service /
   /// broadcast-extension flow applies. Guarded for a null local participant
   /// (no-op until [joinRoom] / [connectWithToken] completes).
-  Future<void> setScreenShareEnabled(bool enabled) async {
-    await _localParticipant?.setScreenShareEnabled(enabled);
+  ///
+  /// Audio: when [withAudio] is true (the default) we ask the browser to also
+  /// capture the shared surface's audio (`captureScreenAudio`). Chromium
+  /// reliably delivers this for a shared browser TAB, so a tab-shared video
+  /// plays with sound on every viewer. For a DESKTOP app (e.g. Kodi on Linux)
+  /// full system-audio capture through getDisplayMedia is unreliable, so the
+  /// robust path there is to select a PulseAudio `Monitor of ...` source as
+  /// the microphone in the device picker: that publishes desktop audio as a
+  /// normal mic track alongside this screen video. See docs for the exact
+  /// `pactl` / monitor-source steps.
+  ///
+  /// The screen video is captured/published at up to 1080p30 with a
+  /// resolution-first degradation policy (set on the room's
+  /// [VideoPublishOptions]) so content looks decent.
+  Future<void> setScreenShareEnabled(bool enabled,
+      {bool withAudio = true}) async {
+    if (enabled) {
+      await _localParticipant?.setScreenShareEnabled(
+        true,
+        captureScreenAudio: withAudio,
+        screenShareCaptureOptions: const ScreenShareCaptureOptions(
+          captureScreenAudio: true,
+          params: VideoParametersPresets.screenShareH1080FPS30,
+        ),
+      );
+    } else {
+      await _localParticipant?.setScreenShareEnabled(false);
+    }
     _emitParticipants();
   }
 
@@ -605,6 +651,8 @@ class LiveKitCallService {
       isLocal: true,
       isMuted: !p.isMicrophoneEnabled(),
       isCameraEnabled: p.isCameraEnabled(),
+      isScreenSharing:
+          p.getTrackPublicationBySource(TrackSource.screenShareVideo) != null,
       canPublish: p.permissions.canPublish,
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       isSpeaking: p.isSpeaking,
@@ -618,6 +666,8 @@ class LiveKitCallService {
       isLocal: false,
       isMuted: !p.isMicrophoneEnabled(),
       isCameraEnabled: p.isCameraEnabled(),
+      isScreenSharing:
+          p.getTrackPublicationBySource(TrackSource.screenShareVideo) != null,
       canPublish: p.permissions.canPublish,
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       isSpeaking: p.isSpeaking,
@@ -646,8 +696,16 @@ class LiveKitCallService {
 
   /// True when [label] looks like a virtual / loopback device (case-insensitive
   /// substring match against [virtualDevicePatterns]).
+  ///
+  /// EXCEPTION: a PulseAudio / PipeWire `Monitor of ...` source is NOT
+  /// treated as virtual even though its name may contain a filtered word
+  /// (e.g. "Monitor of Virtual Sink"). A monitor source is exactly how a Linux
+  /// user streams DESKTOP audio (e.g. Kodi) into a call: it captures whatever
+  /// is playing on that output sink. Filtering it out would hide the one input
+  /// a screen-sharer needs, so monitor sources are always allowed.
   static bool isVirtualDeviceLabel(String label) {
     final l = label.toLowerCase();
+    if (l.contains('monitor')) return false;
     return virtualDevicePatterns.any(l.contains);
   }
 
