@@ -178,7 +178,7 @@ class NodeInfo {
     this.detail,
   });
 
-  /// The node key (e.g. `.158` / `.41`) — matches [SearchHit.node].
+  /// The node key (e.g. `.158` / `.41`), matches [SearchHit.node].
   final String node;
 
   /// Whether the node's `sk-access` MCP answered `health()`.

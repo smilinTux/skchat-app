@@ -7,7 +7,7 @@ import '../../core/theme/theme.dart';
 import '../../services/module_prefs.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// Modules settings — the "promote to toolbar" + enable/disable surface.
+/// Modules settings, the "promote to toolbar" + enable/disable surface.
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Lists every declared module with:
@@ -39,7 +39,7 @@ class ModulesSettingsScreen extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
             child: Text(
-              'Enable modules and choose where each one lives — the bottom nav, '
+              'Enable modules and choose where each one lives, the bottom nav, '
               'the toolbar, or the swipe-up app drawer. A module greys out when '
               'the node it needs is offline.',
               style: tt.bodySmall?.copyWith(
@@ -145,7 +145,7 @@ class _ModuleCard extends StatelessWidget {
                 ),
               ],
             ),
-            // Availability reason (honesty — greyed with a reason).
+            // Availability reason (honesty, greyed with a reason).
             if (!available) ...[
               const SizedBox(height: 8),
               Row(
@@ -155,7 +155,7 @@ class _ModuleCard extends StatelessWidget {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Unavailable — ${availability.reason}',
+                      'Unavailable, ${availability.reason}',
                       key: Key('module-reason-${m.id}'),
                       style: tt.labelSmall?.copyWith(
                         color: SovereignColors.accentWarning,
@@ -166,7 +166,7 @@ class _ModuleCard extends StatelessWidget {
               ),
             ],
             // Placement chooser (the promote control). Disabled when the module
-            // is off — placement is meaningless until it's enabled.
+            // is off, placement is meaningless until it's enabled.
             const SizedBox(height: 12),
             Opacity(
               opacity: enabled ? 1.0 : 0.4,

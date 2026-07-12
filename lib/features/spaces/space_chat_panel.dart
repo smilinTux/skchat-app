@@ -112,7 +112,7 @@ class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
             child: _msgs.isEmpty
                 ? const Center(
                     child: Text(
-                      "No messages yet — say hello to the room.",
+                      "No messages yet, say hello to the room.",
                       style: TextStyle(color: SovereignColors.textTertiary),
                     ),
                   )

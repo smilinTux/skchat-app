@@ -2,7 +2,7 @@
 // browser, so this keeps an in-memory ephemeral keypair surrogate. It exists so
 // the app compiles on non-web targets and so unit tests can drive the join flow
 // without a browser. Production guest access is web-only (the app is a web build
-// — see daemon_proxy.py header).
+//, see daemon_proxy.py header).
 
 import 'dart:convert';
 import 'dart:math';

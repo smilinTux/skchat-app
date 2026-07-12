@@ -7,7 +7,7 @@ import '../../../core/theme/glass_widgets.dart';
 import '../../../services/identity_service.dart';
 import '../onboarding_provider.dart';
 
-/// Onboarding step 2 — import an existing PGP key or generate a new identity.
+/// Onboarding step 2, import an existing PGP key or generate a new identity.
 ///
 /// On first render, checks [identityKeyPairProvider] for a key already stored
 /// in the OS keychain (e.g. from a previous install) and pre-fills the UI.
@@ -131,7 +131,7 @@ class _IdentityPageState extends ConsumerState<IdentityPage> {
               ),
             ),
             const SizedBox(height: 32),
-            // Option A — Generate new identity.
+            // Option A, Generate new identity.
             _OptionCard(
               icon: Icons.auto_awesome,
               iconColor: SovereignColors.soulLumina,
@@ -144,7 +144,7 @@ class _IdentityPageState extends ConsumerState<IdentityPage> {
                   : null,
             ),
             const SizedBox(height: 16),
-            // Option B — Import existing PGP key.
+            // Option B, Import existing PGP key.
             _OptionCard(
               icon: Icons.file_upload_outlined,
               iconColor: SovereignColors.soulJarvis,
@@ -267,7 +267,7 @@ class _ImportKeyDialogState extends State<_ImportKeyDialog> {
     try {
       PgpBridge.importPrivateKey(text); // dry-run parse
     } catch (_) {
-      setState(() => _error = 'Could not parse the key — check formatting.');
+      setState(() => _error = 'Could not parse the key, check formatting.');
       return;
     }
     Navigator.of(context).pop(text);

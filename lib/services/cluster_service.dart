@@ -7,24 +7,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'backend_config.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// ClusterService — a second native client (alongside skbloom's own web UI) to
+/// ClusterService, a second native client (alongside skbloom's own web UI) to
 /// skbloom's EXISTING JSON/SSE control-plane API.
 ///
 /// skbloom serves a `ThreadingHTTPServer` (see `skbloom/web/server.py`) that
 /// projects its app-store + day-2 control plane over plain HTTP so a non-Python
-/// client — explicitly, "the skchat Flutter Cluster-control module" — can drive
+/// client, explicitly, "the skchat Flutter Cluster-control module", can drive
 /// the sovereign stack:
 ///
 ///   GET  /api/services            list deployable services (+ tunables/secrets)
 ///   GET  /api/status              installed stacks (from ~/.skbloom/*.json)
 ///   POST /api/propose  {intent}   concierge plan for a natural-language intent
-///   POST /api/up       {profile}  install flow — **SSE** step-progress stream
+///   POST /api/up       {profile}  install flow, **SSE** step-progress stream
 ///   GET  /api/health?cluster=     live per-service readiness (kubectl)
 ///   POST /api/restart  {svc}      roll-restart a service deployment
 ///   POST /api/scale    {svc,n}    scale a service deployment
 ///   GET  /api/logs?cluster&svc    **SSE** log line stream
 ///
-/// NO backend work happens here — this is purely a typed Dart consumer. The
+/// NO backend work happens here, this is purely a typed Dart consumer. The
 /// base URL is the runtime-settable [BackendConfig.clusterUrl] (default
 /// `http://localhost:8774`); never hard-coded.
 /// ─────────────────────────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ class ClusterService {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Models — mirror the shapes produced by skbloom/web/server.py.
+// Models, mirror the shapes produced by skbloom/web/server.py.
 // ─────────────────────────────────────────────────────────────────────────
 
 /// One row of `GET /api/services`.
@@ -286,7 +286,7 @@ class ClusterProposal {
   /// Proposed service list.
   final List<String> services;
 
-  /// The named-step plan (no side effects — a dry run).
+  /// The named-step plan (no side effects, a dry run).
   final List<String> plan;
 
   final int rotationSecrets;
@@ -380,7 +380,7 @@ class ClusterActionResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Provider — repoints live when the user changes the cluster base URL.
+// Provider, repoints live when the user changes the cluster base URL.
 // ─────────────────────────────────────────────────────────────────────────
 
 final clusterServiceProvider = Provider<ClusterService>((ref) {

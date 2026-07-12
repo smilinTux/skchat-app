@@ -4,20 +4,20 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../core/modules/module_manifest.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// Module preferences — the *settings* half of the availability/placement
+/// Module preferences, the *settings* half of the availability/placement
 /// split (mirrors `daemon_config.dart`'s Hive-backed Notifier pattern).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Availability is capability-gated and global (see [ModuleAvailability]).
 /// Placement/visibility is per-user and persisted here:
-///   * [ModulePrefs.enabledIds]  — modules the user has turned on
-///   * [ModulePrefs.placement]   — per-module slot override (nav/toolbar/drawer)
-///   * [ModulePrefs.order]       — per-module sort override within a slot
+///   * [ModulePrefs.enabledIds] , modules the user has turned on
+///   * [ModulePrefs.placement]  , per-module slot override (nav/toolbar/drawer)
+///   * [ModulePrefs.order]      , per-module sort override within a slot
 ///
 /// The **final shown set = settings ∩ availability**: a module renders only
 /// when the user has it enabled AND the node backs its required capabilities.
 /// (Disabled-by-user modules simply don't render; capability-down-but-enabled
-/// modules render greyed-with-a-reason — that distinction lives in the
+/// modules render greyed-with-a-reason, that distinction lives in the
 /// registry providers, not here.)
 
 const _kModulePrefsBox = 'module_prefs';
@@ -35,7 +35,7 @@ class ModulePrefs {
   });
 
   /// Ids the user has enabled. When [initialized] is false this is a seed
-  /// placeholder — the registry seeds defaults from the manifest list on first
+  /// placeholder, the registry seeds defaults from the manifest list on first
   /// run (every module's `defaultPlacement` + enabled).
   final Set<String> enabledIds;
 
@@ -50,11 +50,11 @@ class ModulePrefs {
 
   bool isEnabled(String id) => enabledIds.contains(id);
 
-  /// Effective placement for [m] — user override if any, else manifest default.
+  /// Effective placement for [m], user override if any, else manifest default.
   ModulePlacement placementFor(ModuleManifest m) =>
       placement[m.id] ?? m.defaultPlacement;
 
-  /// Effective order for [m] — user override if any, else manifest order.
+  /// Effective order for [m], user override if any, else manifest order.
   int orderFor(ModuleManifest m) => order[m.id] ?? m.order;
 
   ModulePrefs copyWith({
@@ -125,7 +125,7 @@ class ModulePrefsNotifier extends Notifier<ModulePrefs> {
         initialized: true,
       );
     } catch (_) {
-      // Hive unavailable — leave defaults; seedFrom() will populate in-memory.
+      // Hive unavailable, leave defaults; seedFrom() will populate in-memory.
     }
   }
 

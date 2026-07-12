@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Sovereign Glass color palette — OLED-first dark mode with glass surfaces.
+/// Sovereign Glass color palette, OLED-first dark mode with glass surfaces.
 /// All values derived from the PRD color spec.
 class SovereignColors {
   SovereignColors._();

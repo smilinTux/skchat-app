@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:sk_pqc/sk_pqc.dart';
 
-/// PqDmCodec — Dart mirror of `skcomms/src/skcomms/pqdm.py` (PQC-MIGRATION Q5).
+/// PqDmCodec, Dart mirror of `skcomms/src/skcomms/pqdm.py` (PQC-MIGRATION Q5).
 ///
 /// Byte-for-byte interoperable with the Python daemon's hybrid DM sealing so a
 /// blob this codec seals can be opened by `pqdm.py` (and `ChatCrypto` / Q3) and
@@ -12,7 +12,7 @@ import 'package:sk_pqc/sk_pqc.dart';
 /// native = liboqs); the wrap is HKDF-SHA256 + AES-256-GCM, exactly as in
 /// `pqdm.py`.
 ///
-/// Wire contract (the interop gate — MUST NOT drift from pqdm.py):
+/// Wire contract (the interop gate, MUST NOT drift from pqdm.py):
 ///
 /// ```
 /// sealed = ct(1120) ‖ nonce(12) ‖ AES-256-GCM(body)          # body + 16B tag
@@ -24,7 +24,7 @@ import 'package:sk_pqc/sk_pqc.dart';
 ///
 /// The KEM ciphertext is the `pqkem` 1120-byte `X25519_eph_pub(32) ‖ ML-KEM-ct
 /// (1088)` and the 32-byte shared secret is `HKDF(X25519_ss ‖ ML-KEM_ss,
-/// info="sk_pqc/x25519-mlkem768/v1")` — identical on both sides because both use
+/// info="sk_pqc/x25519-mlkem768/v1")`, identical on both sides because both use
 /// the same `sk_pqc` combiner / pqkem default `info`.
 class PqDmCodec {
   PqDmCodec({HybridKem? kem}) : _kem = kem ?? HybridKemImpl();
@@ -54,7 +54,7 @@ class PqDmCodec {
   static const int _tagLen = 16; // pqdm._AESGCM_TAG_LEN
   static const int _sealedMinLen = _ciphertextLen + _nonceLen + _tagLen;
 
-  // ── AAD (downgrade-lock) — mirrors pqdm.downgrade_lock_aad ─────────────────
+  // ── AAD (downgrade-lock), mirrors pqdm.downgrade_lock_aad ─────────────────
 
   /// Canonical AEAD AAD binding the negotiated suite + parties into the
   /// transcript. MUST match `pqdm.downgrade_lock_aad` byte-for-byte:
@@ -80,13 +80,13 @@ class PqDmCodec {
     return Uint8List.fromList([...headBytes, ...extra]);
   }
 
-  /// JSON-encode a string exactly like Python's `json.dumps` (compact) — used
+  /// JSON-encode a string exactly like Python's `json.dumps` (compact), used
   /// for the AAD so the bytes are identical across impls. `dart:convert`'s
   /// `jsonEncode` of a String produces the same escaping for the inputs we use
   /// (identity URIs / suite ids: ASCII, no control chars).
   static String _jsonStr(String s) => jsonEncode(s);
 
-  // ── Wrap-key derivation — mirrors pqdm._wrap_key ──────────────────────────
+  // ── Wrap-key derivation, mirrors pqdm._wrap_key ──────────────────────────
 
   /// `HKDF-SHA256(shared, salt=b"", info=_INFO_WRAP ‖ b"|" ‖ aad, L=32)`.
   Future<Uint8List> _wrapKey(Uint8List shared, Uint8List aad) async {
@@ -103,7 +103,7 @@ class PqDmCodec {
     return Uint8List.fromList(await key.extractBytes());
   }
 
-  // ── Seal — mirrors pqdm.seal + crypto.encrypt_payload_hybrid token wrap ────
+  // ── Seal, mirrors pqdm.seal + crypto.encrypt_payload_hybrid token wrap ────
 
   /// Hybrid-seal [plaintext] to the recipient's 1216-byte [hybridPublicKey] and
   /// return the `pqdm1:x25519-mlkem768:<base64>` token (what goes in `content`).
@@ -115,7 +115,7 @@ class PqDmCodec {
     Uint8List hybridPublicKey, {
     String sender = '',
     String recipient = '',
-    Uint8List? nonceOverride, // tests only — pin the nonce for vectors
+    Uint8List? nonceOverride, // tests only, pin the nonce for vectors
   }) async {
     if (hybridPublicKey.length != _publicKeyLen) {
       throw SkPqcError(
@@ -178,7 +178,7 @@ class PqDmCodec {
     return out;
   }
 
-  // ── Open — mirrors pqdm.open_sealed + crypto.decrypt_payload_hybrid ────────
+  // ── Open, mirrors pqdm.open_sealed + crypto.decrypt_payload_hybrid ────────
 
   /// Detect whether [content] carries a hybrid-sealed token.
   static bool isHybridToken(String content) => content.startsWith(pqdmScheme);
@@ -268,13 +268,13 @@ class PqDmCodec {
       return Uint8List.fromList(clear);
     } catch (e) {
       throw DowngradeDetected(
-        'hybrid-sealed open failed — wrong key, tampered ciphertext, or a '
+        'hybrid-sealed open failed, wrong key, tampered ciphertext, or a '
         'suite-downgrade attempt (AAD bound suite=$expectedSuite): $e',
       );
     }
   }
 
-  // ── Negotiation helper — mirrors pqdm.negotiate_suite ─────────────────────
+  // ── Negotiation helper, mirrors pqdm.negotiate_suite ─────────────────────
 
   /// The suite both sides agree on: hybrid only when the local side supports it
   /// AND the peer advertises a hybrid prekey; else the classical suite.

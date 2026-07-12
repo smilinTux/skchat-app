@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'sovereign_colors.dart';
 
-/// GlassCard — frosted glass panel with 8-16px blur, subtle border.
+/// GlassCard, frosted glass panel with 8-16px blur, subtle border.
 class GlassCard extends StatelessWidget {
   const GlassCard({
     super.key,
@@ -62,7 +62,7 @@ class GlassCard extends StatelessWidget {
   }
 }
 
-/// GlassNavBar — frosted bottom navigation bar.
+/// GlassNavBar, frosted bottom navigation bar.
 class GlassNavBar extends StatelessWidget {
   const GlassNavBar({
     super.key,
@@ -100,7 +100,7 @@ class GlassNavBar extends StatelessWidget {
   }
 }
 
-/// SoulAvatar — circular avatar with a soul-color ring.
+/// SoulAvatar, circular avatar with a soul-color ring.
 /// Shows a pulsing animation when [isOnline] is true.
 /// AI agents get a diamond badge overlay.
 class SoulAvatar extends StatefulWidget {
@@ -246,7 +246,7 @@ class _SoulAvatarState extends State<SoulAvatar>
   }
 }
 
-/// EncryptBadge — tiny lock icon indicating E2E encryption.
+/// EncryptBadge, tiny lock icon indicating E2E encryption.
 class EncryptBadge extends StatelessWidget {
   const EncryptBadge({super.key, this.size = 12.0});
 
@@ -258,7 +258,7 @@ class EncryptBadge extends StatelessWidget {
   }
 }
 
-/// DeliveryStatus — renders ✓ / ✓✓ / ✓✓(colored) based on status string.
+/// DeliveryStatus, renders ✓ / ✓✓ / ✓✓(colored) based on status string.
 class DeliveryStatus extends StatelessWidget {
   const DeliveryStatus({super.key, required this.status, this.soulColor});
 

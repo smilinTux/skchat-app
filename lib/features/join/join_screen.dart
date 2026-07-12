@@ -151,7 +151,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
               const SizedBox(height: 16),
             ],
 
-            // Guest path — only when the link carries an invite token.
+            // Guest path, only when the link carries an invite token.
             if (link.hasGuest) ...[
               Text("Join as guest", style: tt.titleMedium),
               const SizedBox(height: 8),
@@ -177,7 +177,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
               const SizedBox(height: 8),
             ],
 
-            // Sovereign path — capauth-signed identity.
+            // Sovereign path, capauth-signed identity.
             if (link.sovereign) ...[
               Text("Join as yourself (sovereign)", style: tt.titleMedium),
               const SizedBox(height: 4),

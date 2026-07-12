@@ -35,7 +35,7 @@ class SKCapstoneClient {
   final Dio _dio;
   final Dio _dashDio;
 
-  /// GET /ping — verify the daemon is running.
+  /// GET /ping, verify the daemon is running.
   Future<bool> isAlive() async {
     try {
       final resp = await _dio.get('/ping');
@@ -45,7 +45,7 @@ class SKCapstoneClient {
     }
   }
 
-  /// GET /consciousness — full consciousness loop status.
+  /// GET /consciousness, full consciousness loop status.
   Future<Map<String, dynamic>?> getConsciousness() async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>('/consciousness');
@@ -55,7 +55,7 @@ class SKCapstoneClient {
     }
   }
 
-  /// GET /api/v1/conversations/{peerId} — message history for a peer.
+  /// GET /api/v1/conversations/{peerId}, message history for a peer.
   /// Returns a bare list or a {messages: [...]} envelope.
   Future<List<dynamic>> getConversationHistory(String peerId) async {
     final resp =
@@ -68,7 +68,7 @@ class SKCapstoneClient {
     return [];
   }
 
-  /// GET /api/v1/household/agents — list all agents with heartbeat data.
+  /// GET /api/v1/household/agents, list all agents with heartbeat data.
   Future<List<AgentHeartbeat>> getHouseholdAgents() async {
     final resp =
         await _dio.get<Map<String, dynamic>>('/api/v1/household/agents');
@@ -78,7 +78,7 @@ class SKCapstoneClient {
         .toList();
   }
 
-  /// GET /api/board (dashboard port 7778) — coordination board snapshot.
+  /// GET /api/board (dashboard port 7778), coordination board snapshot.
   ///
   /// Returns null when the dashboard service is unreachable.
   Future<CoordBoardData?> getCoordBoard() async {
@@ -149,7 +149,7 @@ class AgentHeartbeat {
 /// whenever the user switches federation instances.
 final skCapstoneClientProvider = Provider<SKCapstoneClient>((ref) {
   final cfg = ref.watch(backendConfigProvider);
-  // On web, the dashboard (:7778) isn't exposed through tailscale/funnel — only
+  // On web, the dashboard (:7778) isn't exposed through tailscale/funnel, only
   // the webui is. Use the served ORIGIN so /api/board hits the webui same-origin
   // proxy (→ :7778 server-side), which works on localhost AND the tailscale URL.
   String dash = cfg.skcapstoneDashboardUrl;

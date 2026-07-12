@@ -137,7 +137,7 @@ final activityFilterProvider = StateProvider<ActivityFilter>(
 
 // ── Activity screen ────────────────────────────────────────────────────────
 
-/// Activity feed screen — shows notifications, mentions, reactions, and
+/// Activity feed screen, shows notifications, mentions, reactions, and
 /// system events in a chronological feed. Filter tabs at the top.
 class ActivityScreen extends ConsumerWidget {
   const ActivityScreen({super.key});
@@ -252,7 +252,7 @@ class ActivityScreen extends ConsumerWidget {
       ActivityFilter.mentions => 'No mentions yet',
       ActivityFilter.messages => 'No new messages',
       ActivityFilter.system => 'No system events',
-      _ => 'All quiet — nothing new',
+      _ => 'All quiet, nothing new',
     };
 
     return Center(

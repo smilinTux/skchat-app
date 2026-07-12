@@ -36,7 +36,7 @@ class LiveKitTokenResult {
   final String identity;
 
   /// LiveKit WebSocket URL returned by the server (overrides the default
-  /// if present — allows the server to route to a geo-local SFU).
+  /// if present, allows the server to route to a geo-local SFU).
   final String? livekitUrl;
 
   factory LiveKitTokenResult.fromJson(Map<String, dynamic> json) {
@@ -113,7 +113,7 @@ class LiveKitParticipantSnapshot {
         return decoded['hand_raised'] == true;
       }
     } on FormatException {
-      // Malformed metadata — treat as no hand raised.
+      // Malformed metadata, treat as no hand raised.
     }
     return false;
   }
@@ -121,7 +121,7 @@ class LiveKitParticipantSnapshot {
 
 // ── Service ────────────────────────────────────────────────────────────────
 
-/// LiveKit SFU call service — group and agent room calls.
+/// LiveKit SFU call service, group and agent room calls.
 ///
 /// Use this alongside [WebRTCCallService] (direct P2P tier):
 /// - **P2P** ([WebRTCCallService]): two-party calls, low-latency, no server.
@@ -159,7 +159,7 @@ class LiveKitCallService {
   Room? _room;
   LocalParticipant? _localParticipant;
 
-  /// Room event subscription — carries the data-channel receive-wire that
+  /// Room event subscription, carries the data-channel receive-wire that
   /// feeds [_dataCtl] (and therefore [dataChannel] / the lane substrate).
   /// Without this, [sendData] publishes fine but inbound lane events (in-call
   /// chat, whiteboard, etc.) never arrive. Created in [_bindRoomListeners],
@@ -176,7 +176,7 @@ class LiveKitCallService {
       })>.broadcast();
   final _connStateCtl = StreamController<ConnectionState>.broadcast();
 
-  /// Stream of participant snapshots — updated whenever participants join,
+  /// Stream of participant snapshots, updated whenever participants join,
   /// leave, or change their track state.
   Stream<List<LiveKitParticipantSnapshot>> get participants =>
       _participantsCtl.stream;
@@ -188,21 +188,21 @@ class LiveKitCallService {
   /// LiveKit room connection state changes.
   Stream<ConnectionState> get connectionState => _connStateCtl.stream;
 
-  /// The underlying [Room] — null until [joinRoom] completes.
+  /// The underlying [Room], null until [joinRoom] completes.
   Room? get room => _room;
 
-  /// The local [LocalParticipant] — null until [joinRoom] completes.
+  /// The local [LocalParticipant], null until [joinRoom] completes.
   LocalParticipant? get localParticipant => _localParticipant;
 
   // ── Token mint ────────────────────────────────────────────────────────────
 
   /// Mint a room token by calling POST /livekit/token on the skchat web-UI.
   ///
-  /// [roomName] — deterministic per-pair room, e.g. `sk-room-<fp1>-<fp2>`.
+  /// [roomName], deterministic per-pair room, e.g. `sk-room-<fp1>-<fp2>`.
   ///              The server derives the canonical room from the sorted pair
   ///              so both parties always land in the same room.
-  /// [identity] — caller's agent name or fingerprint.
-  /// [metadata] — optional JSON blob attached to the participant.
+  /// [identity], caller's agent name or fingerprint.
+  /// [metadata], optional JSON blob attached to the participant.
   Future<LiveKitTokenResult> mintToken({
     required String roomName,
     required String identity,
@@ -314,8 +314,8 @@ class LiveKitCallService {
   /// Mint a token, connect to the LiveKit room, and publish mic (+ optional cam).
   ///
   /// [roomName] and [identity] are forwarded to [mintToken].
-  /// [withVideo] — set true to also publish the camera.
-  /// [metadata]  — optional JSON blob for this participant.
+  /// [withVideo], set true to also publish the camera.
+  /// [metadata] , optional JSON blob for this participant.
   ///
   /// Returns when the room is connected and tracks are published.
   Future<void> joinRoom({
@@ -574,8 +574,8 @@ class LiveKitCallService {
 
   /// Publish a data message to the room (all participants unless restricted).
   ///
-  /// [topic] — semantic channel, e.g. 'chat', 'agent-cmd', 'reaction'.
-  /// [payload] — raw bytes (caller serializes; UTF-8 for JSON).
+  /// [topic], semantic channel, e.g. 'chat', 'agent-cmd', 'reaction'.
+  /// [payload], raw bytes (caller serializes; UTF-8 for JSON).
   Future<void> sendData({
     required String topic,
     required List<int> payload,

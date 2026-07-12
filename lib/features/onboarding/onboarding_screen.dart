@@ -8,7 +8,7 @@ import 'pages/transport_page.dart';
 import 'pages/pair_page.dart';
 import 'pages/complete_page.dart';
 
-/// Main onboarding wizard — a horizontal PageView with 5 pages, animated dot
+/// Main onboarding wizard, a horizontal PageView with 5 pages, animated dot
 /// indicators, and Skip / Next navigation controls.
 ///
 /// Pass [onComplete] to receive a callback when the user taps "Enter SKChat"

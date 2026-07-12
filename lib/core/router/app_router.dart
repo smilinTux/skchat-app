@@ -46,13 +46,13 @@ class AppRoutes {
   /// SK Spaces directory (live audio rooms): /spaces
   static const spaces = '/spaces';
 
-  /// Operator hub ("Ops" tab) — links the operator control surfaces: /hub
+  /// Operator hub ("Ops" tab), links the operator control surfaces: /hub
   static const hub = '/hub';
 
   /// Recordings browser (call/space recordings): /recordings
   static const recordings = '/recordings';
 
-  /// Contact Requests — first-contact consent review (gate 5): /requests
+  /// Contact Requests, first-contact consent review (gate 5): /requests
   static const requests = '/requests';
 
   /// Coordination board: /coord
@@ -74,7 +74,7 @@ class AppRoutes {
   /// the shell so the bottom nav never shows through. Pushed via `context.push`
   /// so browser-history back / the in-app ✕ pop consistently back to the live
   /// skos Files screen (preserving its browsed dir) instead of resetting to
-  /// root — see SkosFileViewer + the close→root bugfix.
+  /// root, see SkosFileViewer + the close→root bugfix.
   static const skosView = '/skos/view';
 
   /// A single Space room (takes a SpaceJoin via extra): /spaces/:id
@@ -138,7 +138,7 @@ class AppRoutes {
   static const join = '/join';
 
   /// Guest GROUP access landing (outside the authed shell):
-  ///   `/g/:token` — opens the group invite, prompts a name (first visit),
+  ///   `/g/:token`, opens the group invite, prompts a name (first visit),
   ///   generates+persists a browser keypair, and enters the guest room.
   static const guestGroup = '/g/:token';
 
@@ -177,7 +177,7 @@ class AppRoutes {
   }
 }
 
-/// GoRouter provider — uses shell routes for the bottom nav structure.
+/// GoRouter provider, uses shell routes for the bottom nav structure.
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: AppRoutes.chats,
@@ -332,7 +332,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // opaque black backdrop + quick fade. Being a real GoRouter route keeps
       // push/pop in sync with browser history: closing (✕ or back) pops back
       // to the live /skos/files screen, which still holds its browsed dir
-      // (currentPathProvider) — fixing the close→root regression that the old
+      // (currentPathProvider), fixing the close→root regression that the old
       // imperative root-Navigator push caused on web.
       GoRoute(
         path: AppRoutes.skosView,
@@ -469,7 +469,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// Instant tab switch — no transition animation on tab change.
+/// Instant tab switch, no transition animation on tab change.
 /// Push navigation (conversations) uses the default spring transition.
 NoTransitionPage<void> _noTransitionPage(GoRouterState state, Widget child) {
   return NoTransitionPage<void>(key: state.pageKey, child: child);

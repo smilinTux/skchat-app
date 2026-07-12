@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../services/agent_model_service.dart';
 
 /// App-bar action (shown for agent conversations) that lets the operator pick
-/// which model the agent uses to generate its replies — e.g. Claude Opus 4.8
+/// which model the agent uses to generate its replies, e.g. Claude Opus 4.8
 /// or the local qwen3.6-27b. The selection is persisted by the skchat daemon
 /// and read by the consciousness bridge for the next reply.
 class ModelPickerButton extends ConsumerWidget {
@@ -44,7 +44,7 @@ class ModelPickerButton extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
               child: Text(
-                'Reply model — ${state.agent}',
+                'Reply model: ${state.agent}',
                 style: Theme.of(ctx).textTheme.titleMedium,
               ),
             ),

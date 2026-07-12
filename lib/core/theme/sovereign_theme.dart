@@ -50,7 +50,7 @@ class SovereignTheme {
       scaffoldBackgroundColor: SovereignColors.surfaceBase,
       textTheme: textTheme,
 
-      // AppBar — transparent glass
+      // AppBar, transparent glass
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         foregroundColor: SovereignColors.textPrimary,
@@ -70,7 +70,7 @@ class SovereignTheme {
         ),
       ),
 
-      // Bottom nav bar — glass surface
+      // Bottom nav bar, glass surface
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -108,7 +108,7 @@ class SovereignTheme {
         }),
       ),
 
-      // Card — glass surface
+      // Card, glass surface
       cardTheme: CardThemeData(
         color: SovereignColors.surfaceGlass,
         elevation: 0,
@@ -223,7 +223,7 @@ class SovereignTheme {
         behavior: SnackBarBehavior.floating,
       ),
 
-      // Page transitions — spring-based
+      // Page transitions, spring-based
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: ZoomPageTransitionsBuilder(),

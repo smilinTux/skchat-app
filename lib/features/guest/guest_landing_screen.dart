@@ -96,7 +96,7 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = 'Join failed — the invite may be invalid or expired.';
+          _error = 'Join failed, the invite may be invalid or expired.';
         });
       }
     }
@@ -212,7 +212,7 @@ class _UntrustedNote extends StatelessWidget {
           Expanded(
             child: Text(
               'You will join as a guest. Your identity is self-asserted and '
-              'untrusted — you can chat, call, and share files in this room only.',
+              'untrusted, you can chat, call, and share files in this room only.',
               style: tt.bodySmall
                   ?.copyWith(color: SovereignColors.textSecondary),
             ),

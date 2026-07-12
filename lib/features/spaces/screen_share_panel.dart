@@ -81,7 +81,7 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
           ),
           const SizedBox(height: 10),
 
-          // Remote screen-share tracks — rendered live from the LiveKit room.
+          // Remote screen-share tracks, rendered live from the LiveKit room.
           Expanded(
             child: StreamBuilder<List<LiveKitParticipantSnapshot>>(
               stream: svc.participants,

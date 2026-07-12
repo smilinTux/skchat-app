@@ -88,7 +88,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   Future<void> _loadPersistedThenDaemon(String peerId) async {
     final repo = ref.read(messageRepositoryProvider);
 
-    // Instant load from Hive (deduped — the cache can hold dup saves).
+    // Instant load from Hive (deduped, the cache can hold dup saves).
     final persisted = await repo.getMessages(peerId);
     if (persisted.isNotEmpty) {
       state = _dedup(persisted);
@@ -102,7 +102,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   ///
   /// PQC Q5 (BUG 1): an own-outbound hybrid DM is sealed to the PEER's key, so
   /// this device cannot decapsulate it. We therefore FIRST ask the PQ service
-  /// whether this exact token is one WE sealed (`recallOutbound`) — a hit means
+  /// whether this exact token is one WE sealed (`recallOutbound`), a hit means
   /// "render the remembered plaintext as OUTBOUND", regardless of how
   /// directionality was computed (which is unreliable when the local identity
   /// hasn't resolved yet). Only a miss is treated as a peer message to open with
@@ -173,7 +173,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             isOutbound = r.isOutbound;
           }
 
-          // Reaction sentinel (__REACT__) — fold into the target message's
+          // Reaction sentinel (__REACT__), fold into the target message's
           // reactions map instead of rendering. Skip our own outbound echoes
           // (we applied them optimistically) and already-applied ones.
           final react = ReactionSignal.parse(cliBody);
@@ -184,7 +184,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             continue;
           }
 
-          // Edit sentinel (__EDIT__) — replace the target's body + mark edited.
+          // Edit sentinel (__EDIT__), replace the target's body + mark edited.
           final edit = EditSignal.parse(cliBody);
           if (edit != null) {
             if (!isOutbound && _appliedControlIds.add(m.id)) {
@@ -193,7 +193,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             continue;
           }
 
-          // Receipt sentinel (__RECEIPT__) — fold into delivered/read lists.
+          // Receipt sentinel (__RECEIPT__), fold into delivered/read lists.
           final receipt = ReceiptSignal.parse(cliBody);
           if (receipt != null) {
             if (!isOutbound && _appliedControlIds.add(m.id)) {
@@ -202,7 +202,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             continue;
           }
 
-          // Typing sentinel (__TYPING__) — ephemeral; flip the peer's
+          // Typing sentinel (__TYPING__), ephemeral; flip the peer's
           // "is composing" flag. Never persisted or shown. Ignore our own.
           final typing = TypingSignal.parse(cliBody);
           if (typing != null) {
@@ -244,14 +244,14 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         return;
       }
     } catch (_) {
-      // CLI unavailable — fall through to HTTP fallback.
+      // CLI unavailable, fall through to HTTP fallback.
     }
 
     // Fallback: SKComms HTTP conversation history (the ONLY path on web, where
     // there is no local `skchat` CLI to spawn). Calls
     // GET /api/v1/conversations/{peer_id} with the FULL peer key the backend
-    // stores under (the fqid, e.g. `lumina@chef.skworld`) — NOT the normalized
-    // short name — then folds the returned contract messages into state.
+    // stores under (the fqid, e.g. `lumina@chef.skworld`), NOT the normalized
+    // short name, then folds the returned contract messages into state.
     final client = ref.read(skcommsClientProvider);
     try {
       // Gate on health first (cheap) so an unreachable daemon short-circuits
@@ -262,7 +262,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       if (raw.isEmpty) return;
       await _ingestContractMessages(peerId, raw);
     } catch (_) {
-      // Daemon offline / endpoint missing — keep Hive data.
+      // Daemon offline / endpoint missing, keep Hive data.
     }
   }
 
@@ -297,11 +297,11 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       var isOutbound = localShort != null && senderShort == localShort;
       var body = parsed.content;
 
-      // PQC Q5: an inbound `pqdm1:` token is a hybrid-sealed DM — open it with
+      // PQC Q5: an inbound `pqdm1:` token is a hybrid-sealed DM, open it with
       // this device's hybrid private key (flips the convo `hybrid-pq`). Our own
       // OUTBOUND copy is stored sealed to the PEER's key (not decapsulatable
       // here), so we first ask `recallOutbound` for the remembered plaintext and
-      // render it as outbound — never as ciphertext, deduped by content.
+      // render it as outbound, never as ciphertext, deduped by content.
       if (PqDmCodec.isHybridToken(body)) {
         final r = await _resolvePqToken(
           body,
@@ -313,7 +313,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         isOutbound = r.isOutbound;
       }
 
-      // Control sentinels — fold into target state instead of rendering.
+      // Control sentinels, fold into target state instead of rendering.
       final react = ReactionSignal.parse(body);
       if (react != null) {
         if (!isOutbound && _appliedControlIds.add(parsed.id)) {

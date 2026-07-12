@@ -3,7 +3,7 @@ import '../../../models/call_state.dart';
 import '../../../core/theme/sovereign_colors.dart';
 
 /// Four vertical bars showing WebRTC connection quality.
-/// Derived from [CallQuality.signalBars] (0–4).
+/// Derived from [CallQuality.signalBars] (0-4).
 class CallQualityIndicator extends StatelessWidget {
   const CallQualityIndicator({
     super.key,

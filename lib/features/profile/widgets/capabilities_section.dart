@@ -7,11 +7,11 @@ import '../../../services/capabilities_service.dart';
 /// "Services & Transports" section for the Me screen.
 ///
 /// Fetches the node capability document from the SKComms daemon and renders two
-/// labeled groups — Transports and Services — each as a status row with a
+/// labeled groups, Transports and Services, each as a status row with a
 /// colored dot (green=up, amber=configured/degraded, grey=unconfigured/down)
 /// and a protocol/rail label. Degrades gracefully: when the endpoint is missing
 /// or unreachable the section quietly renders nothing (the rest of the Me
-/// screen — daemon health + transport summary — is unaffected).
+/// screen, daemon health + transport summary, is unaffected).
 class CapabilitiesSection extends ConsumerWidget {
   const CapabilitiesSection({super.key});
 
@@ -30,7 +30,7 @@ class CapabilitiesSection extends ConsumerWidget {
   }
 }
 
-/// Stateless renderer for a [NodeCapabilities] document — split out so it can be
+/// Stateless renderer for a [NodeCapabilities] document, split out so it can be
 /// widget-tested with a mock document, no daemon required.
 class CapabilitiesView extends StatelessWidget {
   const CapabilitiesView({super.key, required this.caps});

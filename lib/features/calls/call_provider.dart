@@ -210,7 +210,7 @@ final callProvider = NotifierProvider<CallNotifier, CallState?>(
   CallNotifier.new,
 );
 
-/// Convenience provider — true when a call is active (for PiP overlay).
+/// Convenience provider, true when a call is active (for PiP overlay).
 final hasActiveCallProvider = Provider<bool>((ref) {
   final call = ref.watch(callProvider);
   return call != null && call.status == CallStatus.active;

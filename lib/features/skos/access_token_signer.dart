@@ -4,14 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/daemon_config.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// AccessTokenSigner — mints the capauth token for a single sk-access call.
+/// AccessTokenSigner, mints the capauth token for a single sk-access call.
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// **Why this lives in the daemon, not the app:** the sk-access gate (P7)
 /// verifies an *OpenPGP detached signature* over the canonical Envelope-v1
 /// bytes (`skcomms.federation.accept_signed` → `pgpy`). The app's in-app crypto
 /// ([PgpBridge]) is RSA/PKCS#1-v1.5 + SHA-256 producing a *raw base64*
-/// signature — NOT an OpenPGP packet — so it can never produce a byte-compatible
+/// signature, NOT an OpenPGP packet, so it can never produce a byte-compatible
 /// token. The local SKComms daemon, however, already holds this node's CapAuth
 /// PGP key and can build the exact `SignedEnvelope` a node accepts.
 ///
@@ -58,7 +58,7 @@ class AccessTokenSigner {
           : e.message;
       if (code == 503) {
         throw StateError(
-          'No CapAuth signing key on the daemon — cannot mint an access token '
+          'No CapAuth signing key on the daemon, cannot mint an access token '
           '($detail)',
         );
       }

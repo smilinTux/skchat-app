@@ -64,10 +64,10 @@ class DaemonSendResult {
 /// Bridges the Flutter UI to the local skchat daemon.
 ///
 /// Two channels:
-/// - **HTTP** – health check at `<daemonHost>:9385/health` (daemon's built-in
+/// - **HTTP**, health check at `<daemonHost>:9385/health` (daemon's built-in
 ///   server).  The host is derived from the configured SKComm daemon URL so a
 ///   tailnet daemon is reachable from a remote web client.
-/// - **CLI**  – `skchat inbox --json` / `skchat send` via dart:io [Process].
+/// - **CLI** , `skchat inbox --json` / `skchat send` via dart:io [Process].
 ///
 /// The CLI channel is **native-only**.  On the web there is no local process to
 /// spawn, so every CLI method is a no-op there and the app relies entirely on
@@ -100,7 +100,7 @@ class DaemonService {
 
   /// Absolute path to the `skchat` CLI. The app may be launched without
   /// `~/.skenv/bin` on PATH (e.g. from a desktop launcher), which would make a
-  /// bare `Process.run('skchat', …)` fail silently — sends never go out and the
+  /// bare `Process.run('skchat', …)` fail silently, sends never go out and the
   /// agent never replies. Prefer the known install path, fall back to PATH.
   static final String skchatBin = (() {
     if (kIsWeb) return 'skchat';
@@ -210,7 +210,7 @@ class DaemonService {
     int limit = 100,
   }) async {
     if (kIsWeb) return [];
-    // Use `skchat history <peer>` (BOTH directions) — not `inbox`, which only
+    // Use `skchat history <peer>` (BOTH directions), not `inbox`, which only
     // returns messages RECEIVED by the identity (so the operator's own sent
     // messages would be missing → they'd render only as optimistic copies and
     // everything else as inbound). Run as the operator identity so history
@@ -253,7 +253,7 @@ class DaemonService {
     String? replyTo,
   }) async {
     if (kIsWeb) {
-      // No local CLI on the web — caller falls back to the HTTP SKComm client.
+      // No local CLI on the web, caller falls back to the HTTP SKComm client.
       return const DaemonSendResult(
         success: false,
         error: 'CLI unavailable on web',

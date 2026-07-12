@@ -4,13 +4,13 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/theme/theme.dart";
 import "../../services/consent_service.dart";
 
-/// Contact Requests — the operator review surface for first-contact knocks
+/// Contact Requests, the operator review surface for first-contact knocks
 /// (skfed-consent-design gate 5). Lists the node's quarantined first-contact
 /// requests and lets the operator **Accept** (promote to known + mint a
 /// per-contact delivery token), **Decline** (clear the knock, sender returns to
 /// UNKNOWN), or **Block** (drop the knock + block the sender outright).
 ///
-/// Signal Message-Request semantics: quiet by default — nothing is delivered
+/// Signal Message-Request semantics: quiet by default, nothing is delivered
 /// until the operator accepts. The list is empty until consent mode is enabled
 /// on the daemon (`SKCOMMS_CONSENT_MODE`), so this screen ships dark/safe.
 class RequestsScreen extends ConsumerWidget {

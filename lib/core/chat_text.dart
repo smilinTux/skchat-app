@@ -22,7 +22,7 @@ const String _kTypingPrefix = "__TYPING__:";
 const String _kEditPrefix = "__EDIT__:";
 const String _kReceiptPrefix = "__RECEIPT__:";
 
-/// A bare UUID token (delivery receipt / message-id envelope) — never chat text.
+/// A bare UUID token (delivery receipt / message-id envelope), never chat text.
 final RegExp _kUuidOnly = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 );
@@ -50,10 +50,10 @@ String? displayTextFor(String? raw) {
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
 
-  // System "context" injection — never user-visible chat text.
+  // System "context" injection, never user-visible chat text.
   if (trimmed.startsWith(_kChatContextPrefix)) return null;
 
-  // Reaction / typing control sentinels — handled by the conversation layer,
+  // Reaction / typing control sentinels, handled by the conversation layer,
   // never shown as a chat bubble or list preview.
   if (trimmed.startsWith(_kReactPrefix)) return null;
   if (trimmed.startsWith(_kTypingPrefix)) return null;
@@ -71,11 +71,11 @@ String? displayTextFor(String? raw) {
         final caption = (decoded["caption"] as String?)?.trim();
         final label = (name != null && name.isNotEmpty) ? name : "attachment";
         return (caption != null && caption.isNotEmpty)
-            ? "📎 $label — $caption"
+            ? "📎 $label, $caption"
             : "📎 $label";
       }
     } catch (_) {
-      // Malformed sentinel — fall through to default handling.
+      // Malformed sentinel, fall through to default handling.
     }
     return "📎 attachment";
   }
@@ -92,7 +92,7 @@ String? displayTextFor(String? raw) {
     try {
       final decoded = jsonDecode(trimmed);
       if (decoded is Map) {
-        // Control envelopes — typing / presence / acks / heartbeats.
+        // Control envelopes, typing / presence / acks / heartbeats.
         final disc =
             (decoded["type"] ?? decoded["state"] ?? "").toString().toLowerCase();
         if (decoded.containsKey("state") ||
@@ -108,7 +108,7 @@ String? displayTextFor(String? raw) {
         // Any other JSON object (not control, not an envelope) -> show as-is.
       }
     } catch (_) {
-      // Not valid JSON after all — fall through and show the trimmed text.
+      // Not valid JSON after all, fall through and show the trimmed text.
     }
   }
 

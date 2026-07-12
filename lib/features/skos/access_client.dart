@@ -6,14 +6,14 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'skos_models.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// AccessClient — the ADAPTER SEAM for the per-node `sk-access` MCP (P7).
+/// AccessClient, the ADAPTER SEAM for the per-node `sk-access` MCP (P7).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// The skos surfaces (Files browser, corpus search, control panel) talk ONLY to
 /// this interface and never care whether the bytes come from a mock, a daemon
 /// over the tailnet, or (later) a federated route. To go live, implement this
 /// one interface ([DaemonAccessClient] is the skeleton) and swap which client
-/// `accessClientProvider` returns — no UI changes required.
+/// `accessClientProvider` returns, no UI changes required.
 ///
 /// Backed by the access plane documented in `skcomms/docs/access-plane-p7.md`:
 /// one capauth-gated `sk-access` MCP per node on the tailnet, tools:
@@ -62,12 +62,12 @@ class AccessScopeException implements Exception {
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// kAccessNodes — the node → base-URL map (tailnet `sk-access` endpoints).
+/// kAccessNodes, the node → base-URL map (tailnet `sk-access` endpoints).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// From the P7 deploy notes: `sk-access` is LIVE on both boxes, tailnet-only,
 /// capauth-gated, on port 9386. Keyed by the short node label that also tags
-/// each [SearchHit.node]. These are the **tailnet** (100.x) addresses — never
+/// each [SearchHit.node]. These are the **tailnet** (100.x) addresses, never
 /// public / the Funnel (the Postgres + file fabric is private node-to-node).
 const Map<String, String> kAccessNodes = {
   // .158 noroc2027 (PRIMARY: skmem-pg primary + access MCP)
@@ -92,18 +92,18 @@ String accessNodeLabel(String node) {
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// MockAccessClient — v1 demonstrable client (no backend / no tailnet).
+/// MockAccessClient, v1 demonstrable client (no backend / no tailnet).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Serves a small fake `~/clawd` tree per node plus fake corpus hits so the
 /// Files browser, viewer, search, and control panel are fully demoable and
 /// widget-testable offline. Read-only by default ([canWrite] = false) so the
-/// viewer's Save affordance is correctly disabled — flip [writable] true to
+/// viewer's Save affordance is correctly disabled, flip [writable] true to
 /// exercise the write path in a demo.
 class MockAccessClient implements AccessClient {
   MockAccessClient({this.writable = false});
 
-  /// When true, [writeFile] succeeds (and [canWrite] is true) — used to demo
+  /// When true, [writeFile] succeeds (and [canWrite] is true), used to demo
   /// the granted-write-scope path. Default false = read-only (the real default).
   final bool writable;
 
@@ -121,7 +121,7 @@ class MockAccessClient implements AccessClient {
           '# Sovereign notes\n\nThe access plane collapses the fleet into one '
               'brain + one disk.\n',
       '/home/cbrd21/clawd/docs/access-plane-p7.md':
-          '# P7 — The Access Plane\n\nAny agent on the tailnet can search the '
+          '# P7, The Access Plane\n\nAny agent on the tailnet can search the '
               'corpus and read/write any file on any node, capauth-gated.\n',
       '/home/cbrd21/clawd/docs/redundancy.md':
           'If you need one, get two. No single point of failure.\n',
@@ -286,12 +286,12 @@ class MockAccessClient implements AccessClient {
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// DaemonAccessClient — LIVE-CLIENT SKELETON (the integration point).
+/// DaemonAccessClient, LIVE-CLIENT SKELETON (the integration point).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// POSTs to each node's `sk-access` `/tool` endpoint over the tailnet. This is
 /// the ONLY file that needs to change to go live. There is exactly ONE thing to
-/// wire — the capauth token (see [tokenForCall]) — flagged with a single clear
+/// wire, the capauth token (see [tokenForCall]), flagged with a single clear
 /// TODO below. Everything else (base-URL map, request envelope, result parsing)
 /// is done.
 ///
@@ -321,9 +321,9 @@ class DaemonAccessClient implements AccessClient {
   /// ▶▶ THE ONE THING TO WIRE ◀◀
   ///
   /// Produces the **capauth SignedEnvelope** string that authorizes a single
-  /// `/tool` call. The token comes from the app's own identity/daemon — the
+  /// `/tool` call. The token comes from the app's own identity/daemon, the
   /// PGP/capauth signer already in the app (`pgp_capauth_signer.dart` /
-  /// `capauth_service.dart`) — NOT from any crypto invented here in Dart.
+  /// `capauth_service.dart`), NOT from any crypto invented here in Dart.
   ///
   /// TODO(P9-live): replace the `accessClientProvider` mock with a
   /// [DaemonAccessClient] and pass a real `tokenForCall` that asks the app's
@@ -353,8 +353,8 @@ class DaemonAccessClient implements AccessClient {
   }
 
   /// The `/tool` endpoint. On web, route through the same-origin webui proxy
-  /// (`/access/tool`) so the app works over ANY origin — localhost, the https
-  /// funnel, a cloudflared tunnel — with no mixed-content and without the
+  /// (`/access/tool`) so the app works over ANY origin, localhost, the https
+  /// funnel, a cloudflared tunnel, with no mixed-content and without the
   /// browser needing to reach a tailnet IP directly. Native talks to the
   /// node's sk-access endpoint directly.
   String _toolUrl(String node) {
@@ -362,7 +362,7 @@ class DaemonAccessClient implements AccessClient {
       try {
         return '${Uri.base.origin}/access/tool';
       } catch (_) {
-        // file: base (test runner) — fall through to the direct node URL.
+        // file: base (test runner), fall through to the direct node URL.
       }
     }
     return '${_baseUrl(node)}/tool';

@@ -326,7 +326,7 @@ class _VideoCallLayoutState extends ConsumerState<_VideoCallLayout> {
 
     return Stack(
       children: [
-        // Remote video — full screen.
+        // Remote video, full screen.
         Positioned.fill(
           child: RTCVideoView(
             widget.remoteRenderer,
@@ -334,7 +334,7 @@ class _VideoCallLayoutState extends ConsumerState<_VideoCallLayout> {
           ),
         ),
 
-        // Local video thumbnail — draggable.
+        // Local video thumbnail, draggable.
         Positioned(
           right: _localRight,
           bottom: _localBottom,

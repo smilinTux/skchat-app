@@ -1,4 +1,4 @@
-/// Models for SK Spaces — sovereign audio rooms.
+/// Models for SK Spaces, sovereign audio rooms.
 class SpaceSummary {
   const SpaceSummary({
     required this.spaceId,

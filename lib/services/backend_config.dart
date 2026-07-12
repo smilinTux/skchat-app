@@ -20,7 +20,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 // ── Compile-time default seeds (unchanged build-time behaviour) ──────────────
 
-/// SKChat web-UI base URL — serves `/spaces` + `/livekit/token`.
+/// SKChat web-UI base URL, serves `/spaces` + `/livekit/token`.
 const kDefaultSkchatWebuiUrl = String.fromEnvironment(
   'SKCHAT_WEBUI_URL',
   defaultValue: 'https://noroc2027.tail204f0c.ts.net',
@@ -176,8 +176,8 @@ class BackendConfig {
 
 // ── Presets (federation instances) ───────────────────────────────────────────
 
-/// A named instance preset that repoints *every* backend — including the
-/// SKComms daemon URL (applied via `daemon_config.dart`) — to one host.
+/// A named instance preset that repoints *every* backend, including the
+/// SKComms daemon URL (applied via `daemon_config.dart`), to one host.
 class BackendPreset {
   const BackendPreset({
     required this.id,
@@ -203,7 +203,7 @@ class BackendPreset {
 ///
 /// `lumina` is the current tailnet default (`noroc2027` @ 192.168.0.158).
 /// `jarvis` is the laptop host (`cbrd21-laptop12thgenintelcore` @
-/// 192.168.0.41) — its MagicDNS name on the `tail204f0c` tailnet.
+/// 192.168.0.41), its MagicDNS name on the `tail204f0c` tailnet.
 const List<BackendPreset> kBackendPresets = [
   BackendPreset(
     id: 'lumina',
@@ -277,7 +277,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
       );
       if (loaded != state) state = loaded;
     } catch (_) {
-      // Hive unavailable — keep the compile-time defaults.
+      // Hive unavailable, keep the compile-time defaults.
     }
   }
 
@@ -299,7 +299,7 @@ class BackendConfigNotifier extends Notifier<BackendConfig> {
   /// Apply a [BackendPreset] (repoints all non-daemon backends) and persist.
   ///
   /// NOTE: the SKComms daemon URL must be repointed separately by the caller
-  /// via `daemonUrlProvider` — the picker UI does both atomically.
+  /// via `daemonUrlProvider`, the picker UI does both atomically.
   Future<void> applyPreset(BackendPreset preset) => setConfig(preset.config);
 
   /// Replace the whole config and persist it.

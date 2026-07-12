@@ -7,14 +7,14 @@ import '../router/app_router.dart';
 import 'module_manifest.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// Module registry — the declared set of app surfaces (Phase 0).
+/// Module registry, the declared set of app surfaces (Phase 0).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// A `const` list of [ModuleManifest] declaring the surfaces the app exposes.
 /// Phase 0 declares them all so the spine is provably complete, but only the
 /// **skmap pilot** is fully wired through the registry (its Hub tile is removed
 /// and its placement/availability flow is end-to-end). The other surfaces keep
-/// their existing hand-coded wiring for now — later phases migrate the routes
+/// their existing hand-coded wiring for now, later phases migrate the routes
 /// and bottom-nav off the constants and onto these manifests.
 ///
 /// Each manifest's `requires` references the EXISTING capability ids verbatim
@@ -74,7 +74,7 @@ const List<ModuleManifest> kBuiltinModules = [
     requires: [CapabilityRef('service:geo-cot')],
     defaultPlacement: ModulePlacement.drawer,
     order: 30,
-    description: 'Tactical map — live unit positions',
+    description: 'Tactical map, live unit positions',
   ),
 
   // ── Operator surfaces (drawer) ────────────────────────────────────────────
@@ -149,14 +149,14 @@ final moduleRegistryProvider = Provider<List<ModuleManifest>>((ref) {
   return kBuiltinModules;
 });
 
-/// Registry ∩ node capabilities — each module paired with its resolved
+/// Registry ∩ node capabilities, each module paired with its resolved
 /// [ModuleAvailability]. A module is **available** only when EVERY `requires`
 /// ref resolves to an up/configured/degraded [CapStatus] and the daemon API
 /// floor is met; otherwise it stays in the list but `available == false` with a
 /// `reason` (honesty principle: grey with a reason, never silently hide).
 ///
 /// When the node advertises a `modules` hint block, modules NOT named there are
-/// dropped from this list entirely (operator policy — "this deployment doesn't
+/// dropped from this list entirely (operator policy, "this deployment doesn't
 /// ship that sub-app"). An empty/absent hint list = ship the full registry.
 final moduleAvailabilityProvider =
     Provider<List<ModuleAvailability>>((ref) {
@@ -182,7 +182,7 @@ final moduleAvailabilityByIdProvider =
   return {for (final a in list) a.manifest.id: a};
 });
 
-/// The user-enabled, capability-gated, placement-resolved modules — the FINAL
+/// The user-enabled, capability-gated, placement-resolved modules, the FINAL
 /// shown set = settings ∩ availability, carrying each module's effective slot
 /// and order. Disabled-by-user modules are excluded entirely; enabled modules
 /// are included even when unavailable (so the drawer/settings can show them
@@ -251,7 +251,7 @@ final drawerModulesProvider = Provider<List<PlacedModule>>((ref) {
 });
 
 /// A module manifest resolved with its availability + the user's effective
-/// placement/order — what the nav/toolbar/drawer widgets render.
+/// placement/order, what the nav/toolbar/drawer widgets render.
 @immutable
 class PlacedModule {
   const PlacedModule({

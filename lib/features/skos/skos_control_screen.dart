@@ -7,12 +7,12 @@ import 'skos_models.dart';
 import 'skos_providers.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// SkosControlScreen — the (light) skos control surface (P9).
+/// SkosControlScreen, the (light) skos control surface (P9).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// For each node on the access plane it shows the `health` / `node_info`
-/// picture — up/down, hostname, exposed-tool count, the exposed-root allowlist
-/// — so the operator can see the sovereign fabric at a glance. Cluster actions
+/// picture, up/down, hostname, exposed-tool count, the exposed-root allowlist
+///, so the operator can see the sovereign fabric at a glance. Cluster actions
 /// (promote replica, grant scope, re-index) are stubbed behind a clearly
 /// labelled TODO until the exec/RBAC tools (P7 A6/A7) are wired.
 class SkosControlScreen extends ConsumerWidget {
@@ -66,7 +66,7 @@ class _ControlHeader extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'The sovereign access plane — one brain, one disk',
+          'The sovereign access plane, one brain, one disk',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: SovereignColors.textSecondary,
               ),
@@ -83,7 +83,7 @@ class _NodeCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final infoAsync = ref.watch(nodeInfoProvider(node));
-    final baseUrl = kAccessNodes[node] ?? '—';
+    final baseUrl = kAccessNodes[node] ?? '-';
 
     return GlassCard(
       padding: const EdgeInsets.all(16),
@@ -252,7 +252,7 @@ class _Detail extends StatelessWidget {
   }
 }
 
-/// Cluster actions — stubbed behind a clearly-labelled TODO. The promote /
+/// Cluster actions, stubbed behind a clearly-labelled TODO. The promote /
 /// grant-scope / re-index actions ride P7 A6 (RBAC scope grants) + A7 (skreachd
 /// exec), neither of which the Flutter client drives yet.
 class _ClusterActions extends StatelessWidget {

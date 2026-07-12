@@ -131,12 +131,12 @@ class SpaceRoomNotifier
       final onStage = await spaces.raiseHand(arg.spaceId, identity: identity);
       state = state.copyWith(handRaised: !onStage);
       if (onStage) {
-        // Promoted to speaker — go live.
+        // Promoted to speaker, go live.
         await ref.read(liveKitCallServiceProvider).setMicEnabled(true);
         state = state.copyWith(isMicEnabled: true);
       }
     } on Object {
-      // Best-effort — leave hand state as-is on failure.
+      // Best-effort, leave hand state as-is on failure.
     }
   }
 
@@ -563,7 +563,7 @@ class _Stage extends ConsumerWidget {
     );
   }
 
-  /// Host tapped a raised hand — invite them straight to the stage.
+  /// Host tapped a raised hand, invite them straight to the stage.
   void _inviteRaisedHand(WidgetRef ref, String identity) {
     ref
         .read(spaceRoomProvider(join).notifier)

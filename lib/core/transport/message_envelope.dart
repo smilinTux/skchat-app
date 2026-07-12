@@ -6,7 +6,7 @@ import 'dart:convert';
 /// without needing to understand the application payload.
 ///
 /// Receivers that pre-date this format will see the raw JSON string as the
-/// message body — [tryParse] returns null in that case so callers fall back
+/// message body, [tryParse] returns null in that case so callers fall back
 /// to treating the raw string as plaintext.
 class MessageEnvelope {
   const MessageEnvelope({
@@ -69,7 +69,7 @@ class MessageEnvelope {
   /// Attempt to parse [content] as a [MessageEnvelope].
   ///
   /// Returns null if [content] is not valid JSON or does not carry the
-  /// `skchat_envelope` marker — callers should treat it as raw plaintext.
+  /// `skchat_envelope` marker, callers should treat it as raw plaintext.
   static MessageEnvelope? tryParse(String content) {
     try {
       final decoded = jsonDecode(content);

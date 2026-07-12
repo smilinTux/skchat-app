@@ -74,7 +74,7 @@ class LocalIdentityNotifier extends Notifier<LocalIdentity> {
             : info.fingerprint,
       );
     } catch (_) {
-      // Daemon offline — keep placeholder.
+      // Daemon offline, keep placeholder.
     }
   }
 
@@ -347,7 +347,7 @@ class ProfileScreen extends ConsumerWidget {
             const Text(
               'On native this is your local daemon. In a browser, point this at '
               'a network-reachable daemon (e.g. a tailnet host) with CORS '
-              'enabled — localhost is this device, which has no daemon.',
+              'enabled, localhost is this device, which has no daemon.',
               style: TextStyle(
                 fontSize: 12,
                 color: SovereignColors.textTertiary,
@@ -429,7 +429,7 @@ class ProfileScreen extends ConsumerWidget {
     return 'Custom · ${cfg.skchatWebuiUrl}';
   }
 
-  /// Instance picker — selecting a preset repoints ALL backends (the SKComms
+  /// Instance picker, selecting a preset repoints ALL backends (the SKComms
   /// daemon URL *and* the Spaces/LiveKit/skcapstone base URLs) live and
   /// persists them. A custom field repoints them to an arbitrary host.
   void _showInstancePicker(
@@ -476,7 +476,7 @@ class ProfileScreen extends ConsumerWidget {
             const SizedBox(height: 8),
             const Text(
               'Switch which sovereign node this app federates with. A preset '
-              'repoints every backend at once — the SKComms daemon, the SK '
+              'repoints every backend at once, the SKComms daemon, the SK '
               'Spaces / LiveKit web-UI, the LiveKit SFU, and skcapstone.',
               style: TextStyle(
                 fontSize: 12,
@@ -951,7 +951,7 @@ class _EncryptionCard extends StatelessWidget {
               onTap: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Key rotation — coming soon'),
+                    content: Text('Key rotation, coming soon'),
                   ),
                 );
               },

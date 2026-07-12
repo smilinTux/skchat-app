@@ -3,14 +3,14 @@ import 'package:flutter/material.dart';
 import '../../services/capabilities_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// Module spine — declarative manifest model (Phase 0 of the Comms Suite).
+/// Module spine, declarative manifest model (Phase 0 of the Comms Suite).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Today every surface the app exposes is hand-wired in three places at once:
 /// the AppShell `_tabs` const, the ~30 GoRoutes in `app_router.dart`, and the
 /// `HubScreen` tile list. A new feature means editing all three in lockstep.
 ///
-/// A [ModuleManifest] is a *declaration* of one surface — its id, title, icon,
+/// A [ModuleManifest] is a *declaration* of one surface, its id, title, icon,
 /// route, the capabilities it needs, where it should live (nav / toolbar /
 /// drawer), and who may see it. The registry holds a `const` list of these;
 /// providers cross them with the live node capability document and the user's
@@ -31,13 +31,13 @@ class CapabilityRef {
   /// The compact source string, e.g. `"service:geo-cot"`.
   final String raw;
 
-  /// The kind segment — `service` or `transport` (lower-cased).
+  /// The kind segment, `service` or `transport` (lower-cased).
   String get kind {
     final i = raw.indexOf(':');
     return i < 0 ? '' : raw.substring(0, i).toLowerCase();
   }
 
-  /// The id segment — e.g. `geo-cot`, `webrtc`. Empty when malformed.
+  /// The id segment, e.g. `geo-cot`, `webrtc`. Empty when malformed.
   String get id {
     final i = raw.indexOf(':');
     return i < 0 ? raw : raw.substring(i + 1);
@@ -79,7 +79,7 @@ class CapabilityRef {
 /// Whether a [CapStatus] counts a capability as **available** for the purpose
 /// of un-greying a module. Up / configured / degraded all count as available
 /// (the module can be used, perhaps imperfectly); down / unconfigured / unknown
-/// do NOT — the module greys out with a reason rather than vanishing.
+/// do NOT, the module greys out with a reason rather than vanishing.
 bool capStatusAvailable(CapStatus status) {
   switch (status) {
     case CapStatus.up:
@@ -96,13 +96,13 @@ bool capStatusAvailable(CapStatus status) {
 /// Where a module surfaces by default. Users can override per-module via the
 /// Modules settings tab; this is only the seed.
 enum ModulePlacement {
-  /// Bottom-nav tab — core sub-apps (Chats, Activity, Calls, …).
+  /// Bottom-nav tab, core sub-apps (Chats, Activity, Calls, …).
   nav,
 
-  /// A per-screen AppBar action icon — the "promote to toolbar" slot.
+  /// A per-screen AppBar action icon, the "promote to toolbar" slot.
   toolbar,
 
-  /// The swipe-up app drawer — the "all enabled sub-apps" grid.
+  /// The swipe-up app drawer, the "all enabled sub-apps" grid.
   drawer,
 }
 
@@ -147,7 +147,7 @@ extension ModuleRoleName on ModuleRole {
 }
 
 /// Optional activation hook context (Obsidian `register*` model). Reserved for
-/// later phases — modules that need to register handlers / warm caches on first
+/// later phases, modules that need to register handlers / warm caches on first
 /// activation receive this. Kept intentionally minimal for Phase 0.
 @immutable
 class ModuleContext {
@@ -155,7 +155,7 @@ class ModuleContext {
   final String? moduleId;
 }
 
-/// A declared app surface — const-constructible so the whole registry is a
+/// A declared app surface, const-constructible so the whole registry is a
 /// compile-time constant.
 @immutable
 class ModuleManifest {
@@ -213,14 +213,14 @@ class ModuleManifest {
   /// Optional one-line description (drawer/settings subtitle).
   final String? description;
 
-  /// Optional lazy-activation hook (reserved — not invoked in Phase 0).
+  /// Optional lazy-activation hook (reserved, not invoked in Phase 0).
   final Future<void> Function(ModuleContext)? onActivate;
 
   /// Icon shown when this module's nav tab is active.
   IconData get effectiveActiveIcon => activeIcon ?? icon;
 }
 
-/// The resolved availability of a module against a capability document — what
+/// The resolved availability of a module against a capability document, what
 /// the UI needs to render either a live tile or a greyed-with-a-reason one.
 @immutable
 class ModuleAvailability {
@@ -242,7 +242,7 @@ class ModuleAvailability {
 
   /// Compute availability of [manifest] against [caps] (and the node's
   /// advertised daemon `api` version). Returns the first failing reason so the
-  /// UI can be honest about *why* a module is greyed — never silently hidden.
+  /// UI can be honest about *why* a module is greyed, never silently hidden.
   factory ModuleAvailability.resolve(
     ModuleManifest manifest,
     NodeCapabilities? caps, {
@@ -267,7 +267,7 @@ class ModuleAvailability {
       }
     }
 
-    // Capability gating — EVERY required ref must be available.
+    // Capability gating, EVERY required ref must be available.
     for (final ref in manifest.requires) {
       final status = ref.resolve(caps);
       if (!capStatusAvailable(status)) {

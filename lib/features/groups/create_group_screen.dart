@@ -20,7 +20,7 @@ import 'groups_provider.dart';
 ///
 /// Member source: the SAME conversation peers shown on the Chats screen
 /// ([chatsProvider], minus groups). This is every real person/agent you can
-/// message — previously the picker only used `getPeers()` (discovery), which
+/// message, previously the picker only used `getPeers()` (discovery), which
 /// hard-failed when the daemon was momentarily unreachable and excluded real
 /// contacts that only had a conversation (not a live discovery record).
 class CreateGroupScreen extends ConsumerStatefulWidget {
@@ -49,7 +49,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
     // Real conversation peers (humans + agents), excluding existing groups.
     final candidates =
         ref.watch(chatsProvider).where((c) => !c.isGroup).toList();
-    // Keyboard inset — pad the scroll view so the member tiles at the bottom
+    // Keyboard inset, pad the scroll view so the member tiles at the bottom
     // are never hidden behind the on-screen keyboard (the operator-reported
     // "member selection is cut off"). resizeToAvoidBottomInset stays true so
     // the Scaffold also shrinks; the extra padding guarantees the LAST tile
@@ -293,7 +293,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
           )
         else
           // A plain Column (NOT a nested scrollable) so the parent ListView
-          // owns scrolling and every tile is reachable — combined with the
+          // owns scrolling and every tile is reachable, combined with the
           // keyboard-inset bottom padding this fixes the "member list cut off".
           Column(
             children: candidates
@@ -408,7 +408,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         lastDeliveryStatus: 'delivered',
       ));
     } on Object catch (e) {
-      // Daemon offline or API error — create locally and let the user proceed.
+      // Daemon offline or API error, create locally and let the user proceed.
       createdGroupId = 'group-${DateTime.now().millisecondsSinceEpoch}';
       await notifier.addGroup(Conversation(
         peerId: createdGroupId,
@@ -428,7 +428,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         );
       }
     } finally {
-      // Always clear the spinner BEFORE navigating away — leaving _isSubmitting
+      // Always clear the spinner BEFORE navigating away, leaving _isSubmitting
       // true was the "spins forever" hang the operator hit (the screen never
       // settled because navigation raced the setState in finally).
       if (mounted) setState(() => _isSubmitting = false);

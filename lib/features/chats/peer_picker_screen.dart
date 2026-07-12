@@ -9,7 +9,7 @@ import 'chats_provider.dart';
 import 'peer_picker_provider.dart';
 import 'qr_peer_sheet.dart';
 
-/// Well-known agent names — same set as chats_provider.dart.
+/// Well-known agent names, same set as chats_provider.dart.
 const _knownAgents = {'lumina', 'jarvis', 'opus', 'ava', 'ara'};
 
 Color? _agentSoulColor(String name) {
@@ -25,7 +25,7 @@ Color? _agentSoulColor(String name) {
   }
 }
 
-/// Peer picker screen — discovers peers via SKComms and lets the user
+/// Peer picker screen, discovers peers via SKComms and lets the user
 /// start a new 1:1 encrypted conversation.
 ///
 /// Layout:
@@ -235,7 +235,7 @@ class _PeerPickerScreenState extends ConsumerState<PeerPickerScreen> {
   ) {
     final filteredConvs = _filteredRecentConvs(recentConvs);
 
-    // IDs shown in the recent section — exclude them from discovery list.
+    // IDs shown in the recent section, exclude them from discovery list.
     final recentIds = recentConvs.map((c) => c.peerId.toLowerCase()).toSet();
 
     // Discovered peers filtered by search, excluding already-recent ones.

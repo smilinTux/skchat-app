@@ -5,7 +5,7 @@ import 'daemon_config.dart';
 
 /// Result of starting / joining a group A/V call.
 ///
-/// Returned by `POST /api/v1/groups/{id}/call/{start|join}` — the deterministic
+/// Returned by `POST /api/v1/groups/{id}/call/{start|join}`, the deterministic
 /// LiveKit room (derived from the group id), the caller's room-scoped member
 /// token, the SFU WebSocket URL, and the member roster. The Flutter call screen
 /// connects with [token] via [LiveKitCallService.connectWithToken].
@@ -116,7 +116,7 @@ class GroupCallService {
 
   final Dio _dio;
 
-  /// POST /api/v1/groups/{id}/call/start — mint a member token + ring members.
+  /// POST /api/v1/groups/{id}/call/start, mint a member token + ring members.
   ///
   /// [ring] (default true) fans a CALL_INVITE out to every other member so they
   /// get the standard incoming-call surface. [topic] labels the ring.
@@ -132,7 +132,7 @@ class GroupCallService {
     return GroupCallSession.fromJson(resp.data ?? const {});
   }
 
-  /// POST /api/v1/groups/{id}/call/join — mint a member token (no ring).
+  /// POST /api/v1/groups/{id}/call/join, mint a member token (no ring).
   ///
   /// Used by a late-joiner / a member answering the ring: joins the in-progress
   /// room without re-ringing anyone.
@@ -144,7 +144,7 @@ class GroupCallService {
     return GroupCallSession.fromJson(resp.data ?? const {});
   }
 
-  /// GET /api/v1/groups/{id}/call/participants — who's currently in the room.
+  /// GET /api/v1/groups/{id}/call/participants, who's currently in the room.
   Future<GroupCallParticipants> participants(String groupId) async {
     final resp = await _dio.get<Map<String, dynamic>>(
       '/api/v1/groups/$groupId/call/participants',

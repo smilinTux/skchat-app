@@ -25,7 +25,7 @@ final spacesDirectoryProvider =
   }
 });
 
-/// Live-now directory of SK Spaces — sovereign audio rooms.
+/// Live-now directory of SK Spaces, sovereign audio rooms.
 ///
 /// Renders each live Space (title, host, LIVE/REC badges, speaker count) with a
 /// Join button that connects as a listener, plus a + FAB to create + host a new

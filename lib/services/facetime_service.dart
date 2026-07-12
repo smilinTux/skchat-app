@@ -45,11 +45,11 @@ class FaceTimeAgent {
 ///
 /// Two halves:
 ///
-///  1. **REST** (via [_dio]) — the agent roster + portrait image URL:
+///  1. **REST** (via [_dio]), the agent roster + portrait image URL:
 ///       - GET /api/facetime/agents            → list of [FaceTimeAgent]
 ///       - GET /api/facetime/portrait/{agent}  → PNG (URL only, not fetched)
 ///
-///  2. **Signaling** ([connect]) — the WebRTC *answer* side of the avatar
+///  2. **Signaling** ([connect]), the WebRTC *answer* side of the avatar
 ///     stream. This mirrors `static/facetime.html` exactly:
 ///       - Browser opens `/webrtc/ws?room=facetime-{agent}&peer=browser-XXXX`.
 ///       - The GPU server (aiortc + MuseTalk) is the **offerer**; it sends an
@@ -184,7 +184,7 @@ class FaceTimeService {
       case "welcome":
       case "peer_joined":
       case "peer_left":
-        // Roster events — no action; the server drives the offer.
+        // Roster events, no action; the server drives the offer.
         break;
     }
   }
@@ -231,7 +231,7 @@ class FaceTimeService {
 
     pc.onIceCandidate = (RTCIceCandidate c) {
       if (c.candidate == null || c.candidate!.isEmpty) return;
-      // Broadcast to the room — the server is the only other peer.
+      // Broadcast to the room, the server is the only other peer.
       _emit({
         "type": "signal",
         "to": "*",

@@ -27,7 +27,7 @@ class LocationPayload {
   final double? accuracyM;
   final String? label;
 
-  /// ~3 decimals ≈ ~1 km — the approximate grid.
+  /// ~3 decimals ≈ ~1 km, the approximate grid.
   static const int coarseDecimals = 3;
   static const int preciseDecimals = 6;
 

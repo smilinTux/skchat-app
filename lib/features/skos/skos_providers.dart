@@ -30,7 +30,7 @@ import 'skos_models.dart';
 final accessClientProvider = Provider<AccessClient>((ref) {
   // LIVE (P9): talk to each node's sk-access `/tool` over the tailnet, with the
   // per-call capauth token minted by the local SKComms daemon (the daemon holds
-  // the OpenPGP CapAuth key the gate requires — see [AccessTokenSigner]).
+  // the OpenPGP CapAuth key the gate requires, see [AccessTokenSigner]).
   //
   // Read-only by default: `canWriteOverride` stays false until a write scope is
   // granted to this identity server-side (`python -m skcomms.access.grants`).
@@ -45,7 +45,7 @@ final accessClientProvider = Provider<AccessClient>((ref) {
 });
 
 /// True when the active client holds a granted write scope. Drives the Files
-/// viewer's Save affordance (read-only by default — see P7 security model).
+/// viewer's Save affordance (read-only by default, see P7 security model).
 final canWriteProvider = Provider<bool>((ref) {
   return ref.watch(accessClientProvider).canWrite;
 });
@@ -58,7 +58,7 @@ final selectedNodeProvider =
 /// exposed roots (`list_roots`).
 final currentPathProvider = StateProvider<String?>((ref) => null);
 
-/// (node, path) key for the directory listing — rebuilds when either changes.
+/// (node, path) key for the directory listing, rebuilds when either changes.
 typedef DirKey = ({String node, String? path});
 
 final _dirKeyProvider = Provider<DirKey>((ref) {
@@ -79,7 +79,7 @@ final dirListingProvider = FutureProvider<List<FsEntry>>((ref) async {
   return client.listDir(key.node, key.path!);
 });
 
-/// The exposed-root absolute paths for a node (cached) — used to clamp "go up a
+/// The exposed-root absolute paths for a node (cached), used to clamp "go up a
 /// folder" so it never navigates above an allowlisted root.
 final rootsProvider = FutureProvider.family<List<String>, String>((ref, node) async {
   final client = ref.watch(accessClientProvider);

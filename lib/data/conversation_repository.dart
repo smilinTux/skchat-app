@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/conversation.dart';
 
-/// Persistent conversation list store — single Hive box for all threads.
+/// Persistent conversation list store, single Hive box for all threads.
 class ConversationRepository {
   static const _boxName = 'conversations';
 

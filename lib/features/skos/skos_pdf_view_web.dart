@@ -3,7 +3,7 @@ import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/material.dart';
 
-/// Web PDF surface — the web side of the conditional import seam in
+/// Web PDF surface, the web side of the conditional import seam in
 /// `skos_files_screen.dart`.
 ///
 /// Browsers render PDFs natively, so the same-origin streaming URL
@@ -17,7 +17,7 @@ class SkosPdfView extends StatefulWidget {
   /// The same-origin streaming URL (`/media/file?...`).
   final String url;
 
-  /// Optional display name (unused on web — the iframe shows the document).
+  /// Optional display name (unused on web, the iframe shows the document).
   final String? label;
 
   @override

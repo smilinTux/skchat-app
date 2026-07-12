@@ -6,7 +6,7 @@ import 'location_geo.dart';
 /// Web one-shot geolocation read via the browser **Geolocation API**.
 ///
 /// `navigator.geolocation.getCurrentPosition` triggers the browser's own
-/// permission prompt (the opt-in gate) and returns a single fix — no watch, no
+/// permission prompt (the opt-in gate) and returns a single fix, no watch, no
 /// background tracking. `enableHighAccuracy` is requested so a user who chose
 /// "precise" gets a GPS-grade fix; the coarse/approximate decision is applied
 /// afterwards (server-side rounding + the client `precise` flag), so requesting

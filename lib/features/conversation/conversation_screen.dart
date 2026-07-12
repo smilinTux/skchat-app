@@ -31,7 +31,7 @@ import 'message_dedup.dart';
 import 'location/location_geo.dart';
 import 'location/location_payload.dart';
 
-/// Conversation screen — shows message bubbles for a 1:1 or group chat.
+/// Conversation screen, shows message bubbles for a 1:1 or group chat.
 /// AppBar: soul-color avatar, name, presence, encryption indicator, and a
 /// header menu opening the Media / Files / Links / Pinned sub-views.
 /// Message rows carry the full interaction kit (swipe-reply, react, edit,
@@ -134,7 +134,7 @@ class ConversationScreen extends ConsumerWidget {
               // Clear the reply chip immediately (the optimistic bubble is in).
               ref.read(replyStateProvider(peerId).notifier).clear();
               // Send to the daemon; carry reply_to_id/thread_id. The contract
-              // returns the persisted user turn AND the agent's reply — fold
+              // returns the persisted user turn AND the agent's reply, fold
               // both in so the reply bubble appears without waiting for the
               // next 4s history poll. (Native CLI sends carry no reply here;
               // the history poll renders them instead.)
@@ -181,7 +181,7 @@ class ConversationScreen extends ConsumerWidget {
   /// approximate chooser (Approximate is the default + the recommended option).
   /// ONLY after a choice do we read the browser geolocation (which itself
   /// prompts for permission). The payload coarsens client-side for an
-  /// approximate share; the server re-coarsens (defence in depth). No tracking —
+  /// approximate share; the server re-coarsens (defence in depth). No tracking,
   /// a single one-shot pin.
   Future<void> _shareLocation(
     BuildContext context,
@@ -252,7 +252,7 @@ class ConversationScreen extends ConsumerWidget {
     } on GeoError catch (e) {
       messenger.showSnackBar(SnackBar(
         content: Text(e.denied
-            ? 'Location permission denied — nothing was shared.'
+            ? 'Location permission denied, nothing was shared.'
             : 'Could not get your location: ${e.message}'),
       ));
       return;
@@ -461,13 +461,13 @@ class ConversationScreen extends ConsumerWidget {
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final chats = ref.read(chatsProvider);
-    // Don't promote an AGENT (Lumina) 1:1 in place — a same-id group would
+    // Don't promote an AGENT (Lumina) 1:1 in place, a same-id group would
     // shadow her brain DM and stop her replies. Direct to a fresh group.
     final isAgentChat = chats.any((c) => c.peerId == peerId && c.isAgent);
     if (isAgentChat) {
       messenger.showSnackBar(const SnackBar(
         content: Text('To include an agent in a group, use New Group (the ✎ '
-            'button) and add them — this keeps your 1:1 with them working.'),
+            'button) and add them, this keeps your 1:1 with them working.'),
       ));
       return;
     }
@@ -713,7 +713,7 @@ class ConversationScreen extends ConsumerWidget {
             );
           },
         ),
-        // Header menu — per-conversation sub-views.
+        // Header menu, per-conversation sub-views.
         PopupMenuButton<int>(
           icon: const Icon(Icons.more_vert_rounded),
           tooltip: 'More options',
@@ -802,7 +802,7 @@ class _MessageListState extends State<_MessageList> {
   void initState() {
     super.initState();
     // Bottom-anchored (reverse:true) list: the bottom is offset 0, so a fresh
-    // list already starts pinned to the newest message — no jump needed. Keep
+    // list already starts pinned to the newest message, no jump needed. Keep
     // an explicit pin for safety on the first frame.
     _scrollToBottom(animate: false);
   }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Native (mobile / desktop) PDF surface — the non-web side of the conditional
+/// Native (mobile / desktop) PDF surface, the non-web side of the conditional
 /// import seam in `skos_files_screen.dart`
 /// (`skos_pdf_view_stub.dart if (dart.library.html) skos_pdf_view_web.dart`).
 ///

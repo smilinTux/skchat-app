@@ -11,7 +11,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 /// For a NATIVE app on a machine that runs the daemon locally, the default
 /// `http://localhost:9384` is correct.  For a WEB build served to a browser
 /// on a *different* device (e.g. over the tailnet), `localhost` resolves to
-/// the user's own device — which has no daemon — so the URL MUST point at a
+/// the user's own device, which has no daemon, so the URL MUST point at a
 /// network-reachable daemon (a tailnet host) with CORS enabled.
 const kDefaultDaemonUrl = String.fromEnvironment(
   'SKCOMMS_URL',
@@ -101,7 +101,7 @@ class DaemonConfigNotifier extends Notifier<String> {
         if (normalized != state) state = normalized;
       }
     } catch (_) {
-      // Hive unavailable — keep the compile-time default.
+      // Hive unavailable, keep the compile-time default.
     }
   }
 

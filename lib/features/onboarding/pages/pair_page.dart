@@ -6,7 +6,7 @@ import '../../../core/theme/sovereign_colors.dart';
 import '../../../core/theme/glass_widgets.dart';
 import '../onboarding_provider.dart';
 
-/// Onboarding step 4 — display a QR code for this node and optionally scan
+/// Onboarding step 4, display a QR code for this node and optionally scan
 /// another device to establish an initial peer pairing.
 class PairPage extends ConsumerStatefulWidget {
   const PairPage({super.key, this.onNext});

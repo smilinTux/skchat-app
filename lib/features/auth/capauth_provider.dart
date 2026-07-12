@@ -142,7 +142,7 @@ class CapAuthNotifier extends Notifier<CapAuthState> {
 final capAuthProvider =
     NotifierProvider<CapAuthNotifier, CapAuthState>(CapAuthNotifier.new);
 
-/// Convenience provider — true while the user has an active session.
+/// Convenience provider, true while the user has an active session.
 final isCapAuthenticatedProvider = Provider<bool>((ref) {
   return ref.watch(capAuthProvider).isAuthenticated;
 });

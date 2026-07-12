@@ -147,7 +147,7 @@ class GroupTile extends StatelessWidget {
   }
 }
 
-/// Group avatar — shows group icon with soul-color ring.
+/// Group avatar, shows group icon with soul-color ring.
 class _GroupAvatar extends StatelessWidget {
   const _GroupAvatar({required this.soulColor, required this.memberCount});
 
