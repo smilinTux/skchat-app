@@ -169,6 +169,7 @@ class SpaceRoomNotifier
 
   Future<void> leave() async {
     _cancel();
+    await stopActiveCast(ref);
     await ref.read(liveKitCallServiceProvider).leaveRoom();
   }
 

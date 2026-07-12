@@ -18,6 +18,20 @@ import "cast_stage_stub.dart" if (dart.library.html) "cast_stage_web.dart";
 final activeCastSessionProvider =
     StateProvider<HlsCastSession?>((ref) => null);
 
+/// Stop the app's active HLS cast (if any) and clear the shared session state.
+///
+/// Called from the call / conf / space leave paths so leaving a room ends the
+/// TV cast and resets the control-bar button for the next room. Best-effort:
+/// the provider is cleared first (so the UI updates immediately even if the
+/// user is on the way out), and a backend error on stop is swallowed by
+/// [CastService.stop] (the egress also self-stops when the room empties).
+Future<void> stopActiveCast(Ref ref) async {
+  final session = ref.read(activeCastSessionProvider);
+  if (session == null) return;
+  ref.read(activeCastSessionProvider.notifier).state = null;
+  await ref.read(castServiceProvider).stop(session.egressId);
+}
+
 /// Open the "Cast to TV" sheet for [room].
 ///
 /// Starts (or reuses) an HLS egress for the room and presents a preview plus the

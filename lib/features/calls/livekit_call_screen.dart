@@ -373,6 +373,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
 
   Future<void> leave(BuildContext context) async {
     _cancelSubs();
+    await stopActiveCast(ref);
     final svc = ref.read(liveKitCallServiceProvider);
     await svc.leaveRoom();
     state = null;
