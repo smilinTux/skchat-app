@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/spaces_service.dart";
+import "../call_shared/reactions.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
@@ -241,7 +242,14 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                   ),
                   Expanded(
                     child: st.isConnected
-                        ? _Stage(join: join, state: st)
+                        ? Stack(
+                            children: [
+                              _Stage(join: join, state: st),
+                              // Floating emoji reactions (great for a watch
+                              // party) over the stage.
+                              const Positioned.fill(child: ReactionsOverlay()),
+                            ],
+                          )
                         : _buildConnecting(),
                   ),
                   _ControlBar(
@@ -1122,6 +1130,8 @@ class _ControlBar extends ConsumerWidget {
                 }
               },
             ),
+          // Quick emoji reactions — floats to everyone in the Space.
+          ReactionsButton(identity: join.identity),
           if (join.isHost)
             _RoundButton(
               icon: Icons.stop_circle_outlined,
