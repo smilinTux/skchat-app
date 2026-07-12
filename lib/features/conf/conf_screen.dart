@@ -11,6 +11,7 @@ import "../../services/livekit_call_service.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
+import "../call_shared/reactions.dart";
 import "../calls/call_device_picker.dart";
 import "../profile/profile_screen.dart" show localIdentityProvider;
 
@@ -505,7 +506,13 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
                   _Header(state: st, onClose: _leave),
                   Expanded(
                     child: st.isConnected
-                        ? _Body(args: widget.args, state: st)
+                        ? Stack(
+                            children: [
+                              _Body(args: widget.args, state: st),
+                              // Floating emoji reactions over the participants.
+                              const Positioned.fill(child: ReactionsOverlay()),
+                            ],
+                          )
                         : st.isPending
                             ? _WaitingLobby(state: st, onCancel: _leave)
                             : _buildConnecting(),
@@ -994,6 +1001,8 @@ class _ControlBar extends ConsumerWidget {
           ),
           // Camera / mic device picker (self-contained control widget).
           const CallDevicePickerButton(),
+          // Quick emoji reactions: floats to everyone in the conf.
+          ReactionsButton(identity: args.identity),
           if (state.isHost)
             _RoundButton(
               icon: Icons.smart_toy_rounded,
