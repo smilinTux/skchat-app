@@ -624,7 +624,7 @@ class LiveKitCallService {
     //
     // Live roster wire: [Room.addListener] (a ChangeNotifier) does NOT reliably
     // fire for REMOTE ParticipantConnected / Disconnected in livekit_client
-    // 2.2.6 — the notifier largely reflects LOCAL state. A roster driven only by
+    // 2.2.6. The notifier largely reflects LOCAL state. A roster driven only by
     // [_onRoomChanged] therefore shows each device the participant list AS OF
     // WHEN IT JOINED and never updates when others join or leave later (device 1
     // stuck at 1, device 2 at 2, device 3 saw all 3). Subscribe to the explicit
