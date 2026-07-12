@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:flutter/material.dart" hide ConnectionState;
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -142,5 +144,75 @@ void main() {
     expect(find.text("RAISED HANDS"), findsOneWidget);
     expect(find.text("evan"), findsWidgets);
     expect(find.text("tap to invite"), findsWidgets);
+  });
+
+  testWidgets(
+      "late remote join refreshes the roster live (new speaker appears without a rejoin)",
+      (tester) async {
+    // Reproduces the reported bug at the UI-consumption layer: a device that has
+    // ALREADY joined must see a peer who joins LATER. The screen is driven purely
+    // by svc.participants, and the service now re-emits the snapshot on the
+    // explicit ParticipantConnected RoomEvent, so a later emission must add the
+    // tile without the user rejoining. A broadcast StreamController stands in for
+    // that live re-emit.
+    final controller =
+        StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+    addTearDown(controller.close);
+    final initial = <LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", isLocal: true, canPublish: true), // host
+      _snap("alice", canPublish: true), // speaker already in the room
+    ];
+    when(() => svc.participants).thenAnswer((_) => controller.stream);
+    when(() => svc.currentParticipants).thenReturn(initial);
+
+    await tester.pumpWidget(wrap());
+    await tester.pump(); // post-frame connect
+    controller.add(initial);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Before the late join, alice is on the grid and bob is nowhere.
+    expect(find.text("alice"), findsOneWidget);
+    expect(find.text("bob"), findsNothing);
+
+    // A third participant joins AFTER we were already in the room.
+    controller.add(<LiveKitParticipantSnapshot>[
+      ...initial,
+      _snap("bob", canPublish: true),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // The roster refreshed live: bob is now on the speaker grid, no rejoin.
+    expect(find.text("bob"), findsOneWidget);
+    expect(find.text("alice"), findsOneWidget);
+  });
+
+  testWidgets(
+      "a remote leave refreshes the roster live (tile disappears without a rejoin)",
+      (tester) async {
+    final controller =
+        StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+    addTearDown(controller.close);
+    final full = <LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+      _snap("alice", canPublish: true),
+      _snap("bob", canPublish: true),
+    ];
+    when(() => svc.participants).thenAnswer((_) => controller.stream);
+    when(() => svc.currentParticipants).thenReturn(full);
+
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    controller.add(full);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text("bob"), findsOneWidget);
+
+    // bob leaves; ParticipantDisconnected re-emits the shrunk snapshot.
+    controller.add(<LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+      _snap("alice", canPublish: true),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text("bob"), findsNothing);
+    expect(find.text("alice"), findsOneWidget);
   });
 }
