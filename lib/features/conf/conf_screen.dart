@@ -999,7 +999,22 @@ class _ControlBar extends ConsumerWidget {
             label: "Share",
             active: state.isScreenSharing,
             activeColor: SovereignColors.soulLumina,
-            onTap: notifier.toggleScreenShare,
+            // Wrap the toggle so a capture failure (denied picker, lost user
+            // gesture, no capture surface) is SURFACED, not swallowed as a
+            // silent unhandled async error. The notifier only flips the
+            // sharing flag on success, so a failure leaves the button showing
+            // "not sharing" (never a stuck "sharing" state).
+            onTap: () async {
+              try {
+                await notifier.toggleScreenShare();
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Screen share failed: $e")),
+                  );
+                }
+              }
+            },
           ),
           // Camera / mic device picker (self-contained control widget).
           const CallDevicePickerButton(),

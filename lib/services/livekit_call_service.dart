@@ -540,42 +540,139 @@ class LiveKitCallService {
     _emitParticipants();
   }
 
-  /// Start / stop sharing the local screen, WITH audio.
+  /// Publish options for the local screen-share track.
+  ///
+  /// simulcast is deliberately OFF: screen-share simulcast is unreliable on
+  /// web (the SFU can end up with NO usable layer, so the track never surfaces
+  /// for viewers, which is exactly the silent "nothing appears in the room"
+  /// failure this path fixes). The content-friendly quality (1080p30, 4 Mbps
+  /// ceiling) and the resolution-first degradation policy live HERE, on the
+  /// publish side, NOT forced onto the capture (getDisplayMedia) constraints,
+  /// so the browser is free to hand us whatever surface/resolution the user
+  /// picks without rejecting the capture.
+  static const VideoPublishOptions _screenSharePublishOptions =
+      VideoPublishOptions(
+    name: VideoPublishOptions.defaultScreenShareName,
+    simulcast: false,
+    screenShareEncoding: VideoEncoding(
+      maxFramerate: 30,
+      maxBitrate: 4 * 1000 * 1000,
+    ),
+    degradationPreference: DegradationPreference.maintainResolution,
+  );
+
+  /// Start / stop sharing the local screen, WITH audio (best-effort).
   ///
   /// Publishes (or unpublishes) a screen-share video track on the local
   /// participant. On platforms that require a capture prompt (desktop/web),
-  /// the LiveKit client surfaces it; on mobile a foreground-service /
-  /// broadcast-extension flow applies. Guarded for a null local participant
-  /// (no-op until [joinRoom] / [connectWithToken] completes).
+  /// the browser surfaces it; on mobile a foreground-service / broadcast-
+  /// extension flow applies. Guarded for a null local participant (no-op until
+  /// [joinRoom] / [connectWithToken] completes).
   ///
-  /// Audio: when [withAudio] is true (the default) we ask the browser to also
-  /// capture the shared surface's audio (`captureScreenAudio`). Chromium
-  /// reliably delivers this for a shared browser TAB, so a tab-shared video
-  /// plays with sound on every viewer. For a DESKTOP app (e.g. Kodi on Linux)
-  /// full system-audio capture through getDisplayMedia is unreliable, so the
-  /// robust path there is to select a PulseAudio `Monitor of ...` source as
-  /// the microphone in the device picker: that publishes desktop audio as a
-  /// normal mic track alongside this screen video. See docs for the exact
-  /// `pactl` / monitor-source steps.
+  /// GESTURE SAFETY (web): Chrome only allows `getDisplayMedia` inside the
+  /// transient user activation of the tap. To keep that activation alive we do
+  /// the capture as the FIRST `await` in this method (no `ref.read` chains, no
+  /// pre-capture network calls), so the display-capture prompt fires while the
+  /// gesture is still valid. Callers must likewise `await` this directly out of
+  /// the tap handler with no preceding awaits.
   ///
-  /// The screen video is captured/published at up to 1080p30 with a
-  /// resolution-first degradation policy (set on the room's
-  /// [VideoPublishOptions]) so content looks decent.
+  /// CONSTRAINT SAFETY: we do NOT force 1080p (or any exact resolution) onto
+  /// the capture. Forcing capture constraints can make `getDisplayMedia` reject
+  /// on some surfaces. Quality/encoding is set on the PUBLISH side via
+  /// [_screenSharePublishOptions] instead.
+  ///
+  /// AUDIO (best-effort): when [withAudio] is true (the default) we ask the
+  /// browser to also capture the shared surface's audio in the SAME
+  /// `getDisplayMedia` call. Chromium reliably delivers this for a shared
+  /// browser TAB. For a whole screen / desktop app (e.g. Kodi on Linux) the
+  /// browser simply returns no audio track, and a failure to publish the audio
+  /// never kills the video share (the audio publish is wrapped). On Linux the
+  /// robust way to stream desktop audio is to pick a PulseAudio `Monitor of ...`
+  /// source as the mic in the device picker.
+  ///
+  /// Throws on capture denial / failure (e.g. NotAllowedError when the user
+  /// cancels the picker or the gesture was lost) so the caller can surface a
+  /// SnackBar and revert the sharing UI state instead of failing silently.
   Future<void> setScreenShareEnabled(bool enabled,
       {bool withAudio = true}) async {
-    if (enabled) {
-      await _localParticipant?.setScreenShareEnabled(
-        true,
-        captureScreenAudio: withAudio,
-        screenShareCaptureOptions: const ScreenShareCaptureOptions(
-          captureScreenAudio: true,
-          params: VideoParametersPresets.screenShareH1080FPS30,
-        ),
-      );
+    final lp = _localParticipant;
+    if (lp == null) return;
+
+    if (!enabled) {
+      // The SDK helper removes BOTH the screen-share video and its paired
+      // screen-share audio publication by source.
+      await lp.setScreenShareEnabled(false);
+      _emitParticipants();
+      return;
+    }
+
+    // Capture options: request screen audio in the single getDisplayMedia call.
+    // The preset only supplies "ideal" web hints (never an exact/mandatory
+    // constraint), so it does not cause the capture to reject.
+    const captureOptions = ScreenShareCaptureOptions(
+      captureScreenAudio: true,
+      params: VideoParametersPresets.screenShareH1080FPS15,
+    );
+
+    // Capture the display. This is the FIRST await, so the getDisplayMedia
+    // prompt fires inside the tap's transient activation. One call returns the
+    // video track (+ the surface audio track when the browser provides one).
+    late final List<LocalTrack> tracks;
+    if (withAudio) {
+      try {
+        tracks = await LocalVideoTrack.createScreenShareTracksWithAudio(
+          captureOptions,
+        );
+      } catch (e) {
+        // A genuine denial / gesture loss must bubble up so the caller can
+        // show it. Only a NON-permission failure (e.g. an audio-capable
+        // capture that a surface refused) falls back to a video-only capture
+        // so the share still goes live without sound.
+        if (_isCaptureDenied(e)) rethrow;
+        final videoTrack = await LocalVideoTrack.createScreenShareTrack(
+          captureOptions.copyWith(captureScreenAudio: false),
+        );
+        tracks = [videoTrack];
+      }
     } else {
-      await _localParticipant?.setScreenShareEnabled(false);
+      final videoTrack = await LocalVideoTrack.createScreenShareTrack(
+        captureOptions.copyWith(captureScreenAudio: false),
+      );
+      tracks = [videoTrack];
+    }
+
+    // Publish. Video first (this is the track viewers need); screen audio is
+    // strictly best-effort and never allowed to abort the video share.
+    for (final track in tracks) {
+      if (track is LocalVideoTrack) {
+        await lp.publishVideoTrack(
+          track,
+          publishOptions: _screenSharePublishOptions,
+        );
+      } else if (track is LocalAudioTrack) {
+        try {
+          await lp.publishAudioTrack(track);
+        } catch (_) {
+          try {
+            await track.stop();
+          } catch (_) {}
+        }
+      }
     }
     _emitParticipants();
+  }
+
+  /// True when [error] looks like a display-capture denial / cancellation
+  /// (the user dismissed the picker, or the browser refused the capture, e.g.
+  /// because the gesture was lost). Used to decide whether to bubble the error
+  /// up (denial) or fall back to a video-only capture (a non-permission
+  /// failure). Matches the WebRTC DOMException names case-insensitively.
+  static bool _isCaptureDenied(Object error) {
+    final s = error.toString().toLowerCase();
+    return s.contains('notallowed') ||
+        s.contains('permission') ||
+        s.contains('denied') ||
+        s.contains('dismiss');
   }
 
   // ── Data channel ──────────────────────────────────────────────────────────
