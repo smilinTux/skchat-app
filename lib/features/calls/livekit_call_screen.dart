@@ -11,6 +11,7 @@ import '../call_shared/call_elapsed_timer.dart';
 import '../call_shared/connection_quality_bars.dart';
 import '../call_shared/in_call_panels.dart';
 import 'call_device_picker.dart';
+import 'cast_sheet.dart';
 
 // ── Soul-color map for well-known agents ───────────────────────────────────
 
@@ -1244,6 +1245,20 @@ class _LiveKitControlBar extends ConsumerWidget {
             active: callState.isRecording,
             activeColor: SovereignColors.accentDanger,
             onTap: notifier.toggleRecording,
+          ),
+
+          // Cast the shared video to a TV (Chromecast / AirPlay) via HLS. Keeps
+          // the LiveKit mic + chat live; only the separate HLS stream goes to
+          // the TV. Watches the active-cast session so the button reads "live".
+          _LKControlButton(
+            icon: Icons.cast_rounded,
+            label: ref.watch(activeCastSessionProvider) != null
+                ? 'Casting'
+                : 'Cast to TV',
+            active: ref.watch(activeCastSessionProvider) != null,
+            activeColor: SovereignColors.soulLumina,
+            onTap: () =>
+                showCastToTvSheet(context, ref, room: callState.roomName),
           ),
 
           // Invite Lumina (AI agent) into this room so she joins the call.

@@ -10,6 +10,7 @@ import "../../services/livekit_call_service.dart";
 import "../../services/spaces_service.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/reactions.dart";
+import "../calls/cast_sheet.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
@@ -1147,6 +1148,17 @@ class _ControlBar extends ConsumerWidget {
             ),
           // Quick emoji reactions: floats to everyone in the Space.
           ReactionsButton(identity: join.identity),
+          // Cast the Space's shared video to a TV (Chromecast / AirPlay) over
+          // HLS. The Space's live audio + chat stay on the phone.
+          _RoundButton(
+            icon: Icons.cast_rounded,
+            label: ref.watch(activeCastSessionProvider) != null
+                ? "Casting"
+                : "Cast",
+            active: ref.watch(activeCastSessionProvider) != null,
+            activeColor: SovereignColors.soulLumina,
+            onTap: () => showCastToTvSheet(context, ref, room: join.room),
+          ),
           if (join.isHost)
             _RoundButton(
               icon: Icons.stop_circle_outlined,
