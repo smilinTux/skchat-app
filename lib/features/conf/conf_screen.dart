@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
+import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
 import "../calls/call_device_picker.dart";
 import "../profile/profile_screen.dart" show localIdentityProvider;
@@ -918,6 +919,11 @@ class _ParticipantTile extends StatelessWidget {
                 ),
               ),
             ),
+            // Connection-quality signal bars (subtle; hidden until known).
+            if (snapshot.connectionQuality != ConnectionQuality.unknown) ...[
+              const SizedBox(height: 4),
+              ConnectionQualityBars(quality: snapshot.connectionQuality),
+            ],
           ],
         ),
       ),

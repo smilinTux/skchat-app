@@ -67,6 +67,7 @@ class LiveKitParticipantSnapshot {
     this.canPublish = false,
     this.handRaised = false,
     this.isSpeaking = false,
+    this.connectionQuality = ConnectionQuality.unknown,
     this.metadata,
   });
 
@@ -95,6 +96,13 @@ class LiveKitParticipantSnapshot {
 
   /// True when LiveKit detects active audio from this participant.
   final bool isSpeaking;
+
+  /// LiveKit's connection-quality estimate for this participant (the link
+  /// between them and the SFU). Sourced from `Participant.connectionQuality`
+  /// and refreshed on every [ParticipantConnectionQualityUpdatedEvent]. The UI
+  /// renders this as a subtle signal-bars icon. Defaults to
+  /// [ConnectionQuality.unknown] until the first server estimate arrives.
+  final ConnectionQuality connectionQuality;
 
   /// Raw participant metadata JSON (as written by the Space moderation API).
   final String? metadata;
@@ -629,7 +637,12 @@ class LiveKitCallService {
           payload: event.data,
           senderIdentity: event.participant?.identity ?? '',
         ));
-      });
+      })
+      // Connection-quality changes are NOT surfaced by the plain
+      // Room.addListener change signal, so re-emit the participant snapshots
+      // here whenever the SFU updates a participant's link quality. This keeps
+      // the per-tile signal-bars indicator live without extra polling.
+      ..on<ParticipantConnectionQualityUpdatedEvent>((_) => _emitParticipants());
   }
 
   void _onRoomChanged() {
@@ -656,6 +669,7 @@ class LiveKitCallService {
       canPublish: p.permissions.canPublish,
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       isSpeaking: p.isSpeaking,
+      connectionQuality: p.connectionQuality,
       metadata: p.metadata,
     );
   }
@@ -671,6 +685,7 @@ class LiveKitCallService {
       canPublish: p.permissions.canPublish,
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       isSpeaking: p.isSpeaking,
+      connectionQuality: p.connectionQuality,
       metadata: p.metadata,
     );
   }
