@@ -325,7 +325,7 @@ class _ScanTab extends StatelessWidget {
               onReset: onReset,
             ),
           ] else ...[
-            // Idle state — scanner invite
+            // Idle state, scanner invite
             Container(
               width: double.infinity,
               height: 260,

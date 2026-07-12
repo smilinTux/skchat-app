@@ -73,7 +73,7 @@ class GroupsNotifier extends Notifier<List<Conversation>> {
         await repo.saveAll(groups);
       }
     } catch (_) {
-      // Daemon offline — keep whatever we have.
+      // Daemon offline, keep whatever we have.
     }
   }
 

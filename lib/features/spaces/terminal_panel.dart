@@ -10,7 +10,7 @@ import "../../services/spaces_service.dart";
 /// typed here are broadcast over the "term" data-lane to the room; an agent with
 /// a term execution backend (skreachd) responds with streamed output + an exit
 /// code. State is persisted + replayed (catch-up) for late joiners. No command
-/// is executed locally — this client only broadcasts and renders.
+/// is executed locally, this client only broadcasts and renders.
 class TerminalPanel extends ConsumerStatefulWidget {
   const TerminalPanel({super.key, required this.spaceId, required this.identity});
 
@@ -157,7 +157,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Text(
-              "⚠ No exec backend connected — commands are broadcast to the "
+              "⚠ No exec backend connected, commands are broadcast to the "
               "room; an agent with the term backend will respond.",
               style: TextStyle(
                 color: SovereignColors.accentWarning,

@@ -10,17 +10,17 @@ import "watch_sync.dart";
 ///
 /// Supports three source kinds, auto-detected from the URL passed to [load]:
 ///
-///  * **YouTube** — `youtube.com/watch?v=ID`, `youtu.be/ID`,
+///  * **YouTube**, `youtube.com/watch?v=ID`, `youtu.be/ID`,
 ///    `youtube.com/shorts/ID`. Rendered as an IFrame API embed
 ///    (`/embed/<ID>?enablejsapi=1&playsinline=1`). play/pause/seek are driven
 ///    via `iframe.contentWindow.postMessage` using the YouTube IFrame API
 ///    command protocol, so inbound lane events keep every participant aligned.
-///  * **Rumble** — `rumble.com/...`. Rendered as a Rumble embed iframe when an
+///  * **Rumble**, `rumble.com/...`. Rendered as a Rumble embed iframe when an
 ///    embed id can be derived, otherwise the page URL is embedded best-effort.
 ///    NOTE: Rumble's embed does not expose a stable, documented cross-origin
 ///    postMessage control API. `load` works; play/pause/seek are best-effort
 ///    no-ops (we cannot reliably command the Rumble player from another origin).
-///  * **Direct file** — anything else (incl. `.mp4`/`.webm`/`.ogg`). Rendered
+///  * **Direct file**, anything else (incl. `.mp4`/`.webm`/`.ogg`). Rendered
 ///    as a native HTML5 `<video>` element with full play/pause/seek control.
 ///
 /// The controller registers ONE platform view: a container `<div>` that holds

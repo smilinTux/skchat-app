@@ -50,9 +50,9 @@ class WebRTCCallService {
 
   /// Connects to the signaling broker and sets up the peer connection.
   ///
-  /// [iceServers] — list from GET /api/v1/webrtc/ice-config.
-  /// [roomId]    — signaling room, e.g. 'call-<callerFp>-<calleeFp>'.
-  /// [isOfferer] — true for the caller; false for the callee.
+  /// [iceServers], list from GET /api/v1/webrtc/ice-config.
+  /// [roomId]   , signaling room, e.g. 'call-<callerFp>-<calleeFp>'.
+  /// [isOfferer], true for the caller; false for the callee.
   Future<void> connect({
     required String roomId,
     required List<Map<String, dynamic>> iceServers,

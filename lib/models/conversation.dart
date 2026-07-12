@@ -41,7 +41,7 @@ class Conversation {
   final String? initials;
   final String? avatarUrl;
 
-  /// Resolved soul-color — derives from fingerprint if [soulColor] is not set.
+  /// Resolved soul-color, derives from fingerprint if [soulColor] is not set.
   Color get resolvedSoulColor {
     if (soulColor != null) return soulColor!;
     if (soulFingerprint != null) {

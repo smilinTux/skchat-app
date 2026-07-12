@@ -20,7 +20,7 @@ const Map<String, Color> _kSoulColors = {
   'lumina':   SovereignColors.soulLumina,
   'jarvis':   SovereignColors.soulJarvis,
   'chef':     SovereignColors.soulChef,
-  'opus':     Color(0xFFFFA726), // amber — distinct from Jarvis cyan
+  'opus':     Color(0xFFFFA726), // amber, distinct from Jarvis cyan
   'ava':      Color(0xFFEC407A), // rose
   'ara':      Color(0xFF26C6DA), // teal-cyan
   'sentinel': Color(0xFFFF7043), // deep-orange
@@ -200,7 +200,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
   @override
   LiveKitCallState? build() => null;
 
-  /// Join the room — mints a token, connects, publishes mic (+ optional cam).
+  /// Join the room, mints a token, connects, publishes mic (+ optional cam).
   Future<void> join({
     required String roomName,
     required String identity,
@@ -252,7 +252,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
   }
 
   /// Join using a **pre-minted, role-scoped** token (guest/sovereign conf
-  /// join) — connects via [LiveKitCallService.connectWithToken] rather than
+  /// join), connects via [LiveKitCallService.connectWithToken] rather than
   /// minting a generic token. Publishes the mic once connected.
   Future<void> joinWithToken({
     required String roomName,
@@ -378,7 +378,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
     if (context.mounted && context.canPop()) context.pop();
   }
 
-  // Called by ref.onDispose path via AutoDispose — no @override needed.
+  // Called by ref.onDispose path via AutoDispose, no @override needed.
   void _cancelSubs() {
     _participantSub?.cancel();
     _connSub?.cancel();
@@ -426,7 +426,7 @@ class LiveKitCallArgs {
 
 /// Full-screen LiveKit SFU call screen.
 ///
-/// Usage — navigate via GoRouter with extra args:
+/// Usage, navigate via GoRouter with extra args:
 /// ```dart
 /// context.push(
 ///   AppRoutes.livekitCall,
@@ -605,7 +605,7 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
           ),
         ),
 
-        // Top bar — room name + connection badge.
+        // Top bar, room name + connection badge.
         Positioned(
           top: 0,
           left: 0,
@@ -616,7 +616,7 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
           ),
         ),
 
-        // Bottom control bar — mic / cam / leave.
+        // Bottom control bar, mic / cam / leave.
         Positioned(
           bottom: 0,
           left: 0,
@@ -724,7 +724,7 @@ class _TopBar extends ConsumerWidget {
             ),
           ),
 
-          // REC badge — shown while a server-side recording is active.
+          // REC badge, shown while a server-side recording is active.
           if (callState.isRecording) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -952,7 +952,7 @@ class _EmptyRoomPlaceholder extends StatelessWidget {
 
 // ── Participant tile ───────────────────────────────────────────────────────
 
-/// One tile in the grid — video or avatar fallback.
+/// One tile in the grid, video or avatar fallback.
 class _ParticipantTile extends StatelessWidget {
   const _ParticipantTile({
     required this.snapshot,
@@ -1003,7 +1003,7 @@ class _ParticipantTile extends StatelessWidget {
               isLocal: snapshot.isLocal,
             ),
 
-          // Bottom info strip — name + mic state.
+          // Bottom info strip, name + mic state.
           Positioned(
             bottom: 0,
             left: 0,
@@ -1072,7 +1072,7 @@ class _ParticipantTile extends StatelessWidget {
             ),
           ),
 
-          // Soul-color corner ring — 3px arc on top-left when not full-screen.
+          // Soul-color corner ring, 3px arc on top-left when not full-screen.
           if (!fullScreen)
             Positioned(
               top: 0,
@@ -1224,7 +1224,7 @@ class _LiveKitControlBar extends ConsumerWidget {
             onTap: notifier.toggleCamera,
           ),
 
-          // Screen-share toggle — publishes a getDisplayMedia track (web).
+          // Screen-share toggle, publishes a getDisplayMedia track (web).
           _LKControlButton(
             icon: callState.isScreenSharing
                 ? Icons.stop_screen_share_rounded
@@ -1235,7 +1235,7 @@ class _LiveKitControlBar extends ConsumerWidget {
             onTap: notifier.toggleScreenShare,
           ),
 
-          // Record toggle — drives POST /livekit/record/start|stop.
+          // Record toggle, drives POST /livekit/record/start|stop.
           _LKControlButton(
             icon: callState.isRecording
                 ? Icons.stop_circle_rounded

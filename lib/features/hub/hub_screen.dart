@@ -8,16 +8,16 @@ import '../../services/consent_service.dart';
 import '../conf/conf_screen.dart' show ConfArgs;
 import '../profile/profile_screen.dart' show localIdentityProvider;
 
-/// HubScreen — the operator "Ops" surface.
+/// HubScreen, the operator "Ops" surface.
 ///
 /// The bottom nav stays small (5 items), so the operator-control surfaces that
 /// don't fit there live here as discoverable glass tiles. Every destination is
 /// reachable in <= 2 taps (Ops tab -> tile).
 ///
 /// Tiles route to: /cluster, /coord, /recordings, /conf, /groups.
-/// (SkMap moved to the swipe-up app drawer — it is now a registry module.)
+/// (SkMap moved to the swipe-up app drawer, it is now a registry module.)
 /// Room is intentionally left for a future /facetime tile (added by a parallel
-/// branch) — see [_OpsTile] list below.
+/// branch), see [_OpsTile] list below.
 class HubScreen extends ConsumerWidget {
   const HubScreen({super.key});
 

@@ -13,7 +13,7 @@ import "watch_sync.dart";
 /// It mirrors the public API of the web controller (`watch_video_web.dart`) so
 /// the conditional import compiles identically on every target, and it is
 /// driven by the SAME "watch" lane events the web client consumes (via
-/// [applyWatchEvent]) — emitting the same events on local control — so
+/// [applyWatchEvent]), emitting the same events on local control, so
 /// web <-> native participants stay in sync.
 ///
 /// Source handling, parity with web:

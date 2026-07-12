@@ -380,7 +380,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
       final list = await ref.read(confServiceProvider).waitingList(state.room);
       state = state.copyWith(waiting: list);
     } on Object {
-      // Best-effort — keep last known waiting list.
+      // Best-effort, keep last known waiting list.
     }
   }
 
@@ -452,7 +452,7 @@ final confProvider =
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-/// Conference screen — video/audio conf over the sovereign /conf REST surface.
+/// Conference screen, video/audio conf over the sovereign /conf REST surface.
 ///
 /// Creates or joins a conference, joins media via [LiveKitCallService] using a
 /// role-scoped token from POST /conf/{room}/token, shows participants, and

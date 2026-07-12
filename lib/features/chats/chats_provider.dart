@@ -34,7 +34,7 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
   Future<void> _loadPersistedThenDaemon() async {
     final repo = ref.read(conversationRepositoryProvider);
 
-    // Try Hive first — instant, no network.
+    // Try Hive first, instant, no network.
     final persisted = await repo.getAll();
     if (persisted.isNotEmpty) {
       state = persisted;
@@ -54,7 +54,7 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
       final seen = <String>{};
       final conversations = <Conversation>[];
 
-      // 1) REAL conversations first — /api/v1/conversations returns Lumina
+      // 1) REAL conversations first, /api/v1/conversations returns Lumina
       //    (pinned, named, with her last message) + any other live threads.
       //    This is the source of truth for the list; getPeers() is only a
       //    fallback for discovered peers that don't have a thread yet.
@@ -70,10 +70,10 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
           conversations.add(c);
         }
       } catch (_) {
-        // conversations endpoint unavailable — fall through to peers only
+        // conversations endpoint unavailable, fall through to peers only
       }
 
-      // 2) Discovered peers WITHOUT a conversation yet — show them as
+      // 2) Discovered peers WITHOUT a conversation yet, show them as
       //    startable chats (named, not the old "Peer discovered" placeholder).
       try {
         final peers = await client.getPeers();
@@ -93,7 +93,7 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
             isAgent: _knownAgents.contains(key),
           ));
         }
-      } catch (_) {/* peers unavailable — conversations alone is fine */}
+      } catch (_) {/* peers unavailable, conversations alone is fine */}
 
       if (conversations.isNotEmpty) {
         // Lumina pinned first (the operator's companion), then other agents,
@@ -109,7 +109,7 @@ class ChatsNotifier extends Notifier<List<Conversation>> {
         await repo.saveAll(conversations);
       }
     } catch (_) {
-      // Daemon offline — keep whatever we have.
+      // Daemon offline, keep whatever we have.
     }
   }
 

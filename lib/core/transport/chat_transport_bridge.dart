@@ -69,7 +69,7 @@ class ChatTransportBridge {
         );
         wirePayload = envelope.toWireFormat();
       } else {
-        // No local key — send raw content (unsigned).
+        // No local key, send raw content (unsigned).
         wirePayload = message.content;
       }
 

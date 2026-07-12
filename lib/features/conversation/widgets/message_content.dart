@@ -47,7 +47,7 @@ class MessageContent extends StatelessWidget {
     switch (ct) {
       case 'location':
         // Phase 4: render a map-pin card. If the rich payload is missing/garbled
-        // we fall through to the body fallback (Golden rule) — a location with no
+        // we fall through to the body fallback (Golden rule), a location with no
         // coordinates still shows its `body` text.
         final loc = LocationPayload.tryParse(message.rich);
         if (loc != null) {
@@ -60,7 +60,7 @@ class MessageContent extends StatelessWidget {
       case 'plain':
       case 'markdown':
       case 'md':
-        // Render Markdown — agent (Lumina) replies are LLM output and almost
+        // Render Markdown, agent (Lumina) replies are LLM output and almost
         // always Markdown (bold, headers, lists, code, links, tables). Plain
         // text with no markdown markers renders as-is, so routing text/plain
         // through here is safe and fixes raw `**` / `#` showing in bubbles.
@@ -106,7 +106,7 @@ class _PlainBody extends StatelessWidget {
 }
 
 /// Renders Markdown (bold/italic/headers/lists/code/links/tables) for chat
-/// bubbles — used for text + markdown messages so Lumina's LLM output renders
+/// bubbles, used for text + markdown messages so Lumina's LLM output renders
 /// instead of showing raw `**`/`#`. Selectable; links open externally.
 class _MarkdownBody extends StatelessWidget {
   const _MarkdownBody({required this.text, required this.color});

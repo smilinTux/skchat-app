@@ -5,7 +5,7 @@ import "spaces_service.dart" show kDefaultWebuiUrl;
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
-/// Result of POST /conf/create — the newly minted conference room id.
+/// Result of POST /conf/create, the newly minted conference room id.
 class ConfRoom {
   const ConfRoom({required this.room, this.title = "", this.hostFqid = ""});
 
@@ -128,7 +128,7 @@ class WaitingStatus {
 /// Talks to the sovereign conference REST surface on the SKChat web-UI.
 ///
 /// Shares the same configurable web-UI base URL as [SpacesService] /
-/// [LiveKitCallService] — the LiveKit token mint host. Override at build time
+/// [LiveKitCallService], the LiveKit token mint host. Override at build time
 /// with `--dart-define=SKCHAT_WEBUI_URL=https://host.tail-net.ts.net`.
 ///
 /// Endpoints wrapped:

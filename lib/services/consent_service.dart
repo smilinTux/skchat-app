@@ -39,22 +39,22 @@ class ContactRequest {
 ///
 /// Wraps the loopback-gated consent endpoints on the SKComms daemon
 /// (`:9384`): list / accept / decline / block / unblock / known. Because those
-/// endpoints mutate the node's OWN consent state they are local/operator-only —
+/// endpoints mutate the node's OWN consent state they are local/operator-only,
 /// the daemon rejects any non-loopback caller (HTTP 403) unless
 /// `SKCOMMS_DEV_AUTH` is set. The app reaches them via the same daemon origin
 /// the rest of the app uses ([daemonUrlProvider]); on a native build that is
 /// `http://localhost:9384` (true loopback), and on the web build it is the
 /// host the app was served from, which the webui reverse-proxies to the daemon
 /// over loopback. The recipient agent is resolved daemon-side (the node's
-/// SKAGENT / self identity) — the client never passes an agent.
+/// SKAGENT / self identity), the client never passes an agent.
 ///
 /// Additive + opt-in: the consent GATE itself stays OFF until
 /// `SKCOMMS_CONSENT_MODE` is set on the daemon, in which case
 /// [listRequests] simply returns an empty queue. This surface is safe to ship
-/// dark — it shows "no requests" until consent mode is enabled.
+/// dark, it shows "no requests" until consent mode is enabled.
 class ConsentService {
   /// [dio] may be injected (tests) to supply a canned [HttpClientAdapter];
-  /// its [BaseOptions.baseUrl] is set from [baseUrl] when both are provided —
+  /// its [BaseOptions.baseUrl] is set from [baseUrl] when both are provided,
   /// matching [SKCommsClient]'s constructor contract.
   ConsentService({String? baseUrl, Dio? dio})
       : _dio = dio ??
@@ -75,7 +75,7 @@ class ConsentService {
 
   // ── Read ───────────────────────────────────────────────────────────────────
 
-  /// GET /api/v1/consent/requests — list pending first-contact knocks.
+  /// GET /api/v1/consent/requests, list pending first-contact knocks.
   ///
   /// Tolerates either the `{agent, requests:[...]}` envelope or a bare list,
   /// and returns the oldest-first queue (empty when consent mode is off).
@@ -88,7 +88,7 @@ class ConsentService {
         .toList();
   }
 
-  /// GET /api/v1/consent/known — list the accepted-contact roster (FQIDs).
+  /// GET /api/v1/consent/known, list the accepted-contact roster (FQIDs).
   Future<List<String>> listKnown() async {
     final resp = await _dio.get<dynamic>("/api/v1/consent/known");
     return _listField(resp.data, "known")
@@ -98,7 +98,7 @@ class ConsentService {
 
   // ── Mutations ───────────────────────────────────────────────────────────────
 
-  /// POST /api/v1/consent/accept — promote [sender] to known + mint its
+  /// POST /api/v1/consent/accept, promote [sender] to known + mint its
   /// per-contact delivery token. Returns the minted token (or `null` if the
   /// daemon did not return one).
   Future<String?> accept(String sender) async {
@@ -111,7 +111,7 @@ class ConsentService {
     return null;
   }
 
-  /// POST /api/v1/consent/decline — clear [sender]'s queued knock. When
+  /// POST /api/v1/consent/decline, clear [sender]'s queued knock. When
   /// [block] is true the sender is also blocked (gate 5 → DROP); otherwise it
   /// returns to UNKNOWN.
   Future<void> decline(String sender, {bool block = false}) async {
@@ -121,7 +121,7 @@ class ConsentService {
     );
   }
 
-  /// POST /api/v1/consent/block — block [sender] outright.
+  /// POST /api/v1/consent/block, block [sender] outright.
   Future<void> block(String sender) async {
     await _dio.post<dynamic>(
       "/api/v1/consent/block",
@@ -129,7 +129,7 @@ class ConsentService {
     );
   }
 
-  /// POST /api/v1/consent/unblock — lift a block on [sender] (→ UNKNOWN).
+  /// POST /api/v1/consent/unblock, lift a block on [sender] (→ UNKNOWN).
   Future<void> unblock(String sender) async {
     await _dio.post<dynamic>(
       "/api/v1/consent/unblock",
@@ -171,7 +171,7 @@ final consentRequestsProvider =
   return svc.listRequests();
 });
 
-/// Count of pending requests for the nav badge — 0 while loading / on error /
+/// Count of pending requests for the nav badge, 0 while loading / on error /
 /// when consent mode is off (empty queue).
 final consentPendingCountProvider = Provider.autoDispose<int>((ref) {
   return ref.watch(consentRequestsProvider).maybeWhen(

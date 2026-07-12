@@ -20,7 +20,7 @@ Future<void> main() async {
   if (!kDebugMode) {
     debugPrint = (String? message, {int? wrapWidth}) {};
     FlutterError.onError = (FlutterErrorDetails details) {
-      // Swallow — a sovereign release build must not write to the host console.
+      // Swallow, a sovereign release build must not write to the host console.
     };
   }
 
@@ -29,7 +29,7 @@ Future<void> main() async {
   Hive.registerAdapter(ChatMessageAdapter());
   Hive.registerAdapter(ConversationAdapter());
 
-  // Full-screen OLED experience — hide system UI chrome.
+  // Full-screen OLED experience, hide system UI chrome.
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -45,7 +45,7 @@ Future<void> main() async {
   );
 }
 
-/// Root widget — wires Riverpod, GoRouter, and the Sovereign Glass theme.
+/// Root widget, wires Riverpod, GoRouter, and the Sovereign Glass theme.
 class SKChatApp extends ConsumerWidget {
   const SKChatApp({super.key});
 

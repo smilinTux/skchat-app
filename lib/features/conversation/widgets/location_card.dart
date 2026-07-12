@@ -9,10 +9,10 @@ import '../location/location_payload.dart';
 /// Renders a lightweight static OSM thumbnail + the lat/lon (and label, if any)
 /// + an "Open in Maps" affordance. Tapping anywhere opens the external map
 /// (OpenStreetMap) via `url_launcher`. No native map SDK is pulled in for this
-/// phase — the thumbnail is a static tile image with a drawn-pin fallback.
+/// phase, the thumbnail is a static tile image with a drawn-pin fallback.
 ///
 /// If [payload] is null (a location message with no/garbled `rich`), the caller
-/// should fall back to the body text (Golden rule) — this widget only renders a
+/// should fall back to the body text (Golden rule), this widget only renders a
 /// real pin.
 class LocationCard extends StatelessWidget {
   const LocationCard({

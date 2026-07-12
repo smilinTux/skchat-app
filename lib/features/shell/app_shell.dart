@@ -35,7 +35,7 @@ class AppShell extends ConsumerWidget {
       activeIcon: Icons.notifications_rounded,
       path: AppRoutes.activity,
     ),
-    // Ops hub — gateway to the operator control surfaces (Cluster, Coord,
+    // Ops hub, gateway to the operator control surfaces (Cluster, Coord,
     // Recordings, Conferences, Groups). Keeps the bottom bar at 5 items while
     // making every operator route reachable in <= 2 taps.
     _TabItem(
@@ -94,7 +94,7 @@ class AppShell extends ConsumerWidget {
       extendBody: true,
       body: Column(
         children: [
-          // Offline banner — shown when daemon is unreachable.
+          // Offline banner, shown when daemon is unreachable.
           if (isOffline)
             Material(
               color: SovereignColors.accentWarning.withValues(alpha: 0.15),
@@ -111,7 +111,7 @@ class AppShell extends ConsumerWidget {
                       ),
                       SizedBox(width: 6),
                       Text(
-                        'SKComms daemon offline — messages will queue',
+                        'SKComms daemon offline, messages will queue',
                         style: TextStyle(
                           fontSize: 12,
                           color: SovereignColors.accentWarning,
@@ -143,7 +143,7 @@ class AppShell extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Tappable grip — opens the swipe-up app drawer (discoverability for
+            // Tappable grip, opens the swipe-up app drawer (discoverability for
             // the swipe-up gesture).
             GestureDetector(
               behavior: HitTestBehavior.opaque,

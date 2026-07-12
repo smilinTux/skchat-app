@@ -7,7 +7,7 @@ import '../../core/modules/module_registry.dart';
 import '../../core/theme/theme.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// Swipe-up app drawer — the "all enabled sub-apps" grid.
+/// Swipe-up app drawer, the "all enabled sub-apps" grid.
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// A [DraggableScrollableSheet] (the 2026 bottom-sheet standard) fed by
@@ -15,12 +15,12 @@ import '../../core/theme/theme.dart';
 /// `drawer` slot, grouped by role (Everyone / Operator).
 ///
 /// Availability honesty: an enabled-but-capability-down module renders greyed
-/// with its reason instead of vanishing — tapping it is disabled and a snack
+/// with its reason instead of vanishing, tapping it is disabled and a snack
 /// explains why.
 ///
 /// Z-order: presented via `showModalBottomSheet`, which sits *below* the app's
 /// Overlay-based PiP / incoming-call surfaces (those use OverlayEntry in the
-/// root Overlay) — so an active call's PiP window keeps floating above the
+/// root Overlay), so an active call's PiP window keeps floating above the
 /// drawer rather than being covered. No manual stacking needed.
 class AppDrawerSheet extends ConsumerWidget {
   const AppDrawerSheet({super.key});
@@ -169,7 +169,7 @@ class _DrawerModuleTile extends StatelessWidget {
         if (!available) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${m.title} unavailable — ${placed.reason}'),
+              content: Text('${m.title} unavailable, ${placed.reason}'),
               duration: const Duration(seconds: 2),
             ),
           );

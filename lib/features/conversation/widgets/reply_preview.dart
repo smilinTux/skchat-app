@@ -5,7 +5,7 @@ import '../../../models/chat_message.dart';
 
 /// Quoted-reply preview strip shown above the input bar when the user has
 /// swiped to reply a message.  Jarvis will wire [replyMessage] into the
-/// provider and conversation screen — this widget is purely presentational.
+/// provider and conversation screen, this widget is purely presentational.
 class ReplyPreview extends StatelessWidget {
   const ReplyPreview({
     super.key,

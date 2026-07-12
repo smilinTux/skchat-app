@@ -70,7 +70,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     _checkDaemon();
     // NOTE: chat-message ingestion is owned solely by conversation_provider
     // (which polls `skchat history`, both directions). We do NOT ingest chat
-    // messages here — a second path created duplicates under different ids and
+    // messages here, a second path created duplicates under different ids and
     // rendered the operator's own message as a green inbound copy. _pollInbox
     // now forwards ONLY the call-request sentinel.
     _pollInbox();
@@ -86,7 +86,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   /// Check daemon health and update connection status.
   ///
   /// TRUTH RULE: the daemon is ONLINE iff `/health` answers 2xx. The richer
-  /// `/api/v1/status` payload is decorative — a slow/failed status fetch must
+  /// `/api/v1/status` payload is decorative, a slow/failed status fetch must
   /// NOT flip the UI to "offline" (that was the false-offline banner bug). So
   /// status info is fetched best-effort and only ever decorates an already
   /// established online state.
@@ -134,7 +134,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   ///
   /// Chat-message ingestion is owned solely by [ConversationNotifier] (which
   /// polls `skchat history`, both directions). If we also dispatched inbox
-  /// messages here they would be re-injected as `isOutbound: false` — producing
+  /// messages here they would be re-injected as `isOutbound: false`, producing
   /// a green inbound duplicate of the operator's own message AND a second copy
   /// of every agent reply. So this path now forwards ONLY `__CALL_REQUEST__`
   /// envelopes and drops all normal chat traffic.
@@ -181,7 +181,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     String? contentType,
     Map<String, dynamic>? rich,
   }) async {
-    // Primary: skchat CLI — local store + transport delivery (native only).
+    // Primary: skchat CLI, local store + transport delivery (native only).
     final daemon = ref.read(daemonServiceProvider);
     final cliResult = await daemon.sendMessage(
       recipient: peerId,
@@ -311,7 +311,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
   ///
   /// Encoded as a `__TYPING__:{json}` control sentinel (see [TypingSignal]).
   /// Not persisted as a visible message; the receiver only flips a transient
-  /// "is composing" flag. Failures are swallowed — typing is non-critical.
+  /// "is composing" flag. Failures are swallowed, typing is non-critical.
   Future<void> sendTyping({
     required String peerId,
     bool start = true,

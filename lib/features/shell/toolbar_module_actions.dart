@@ -32,13 +32,13 @@ class ToolbarModuleActions extends ConsumerWidget {
                 : SovereignColors.textTertiary.withValues(alpha: 0.5),
             tooltip: p.available
                 ? p.manifest.title
-                : '${p.manifest.title} — ${p.reason}',
+                : '${p.manifest.title}, ${p.reason}',
             onPressed: () {
               if (!p.available) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
-                      '${p.manifest.title} unavailable — ${p.reason}',
+                      '${p.manifest.title} unavailable, ${p.reason}',
                     ),
                     duration: const Duration(seconds: 2),
                   ),

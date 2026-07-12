@@ -3,7 +3,7 @@
 ///
 /// The web half (`location_geo_web.dart`) calls the browser **Geolocation API**
 /// (`navigator.geolocation.getCurrentPosition`) which itself shows the browser's
-/// permission prompt — so a location read NEVER happens without (a) the user
+/// permission prompt, so a location read NEVER happens without (a) the user
 /// tapping "Share location" and (b) granting the browser prompt. There is no
 /// watch/stream here: one-shot only (Phase 4 = static pin, no live tracking).
 ///

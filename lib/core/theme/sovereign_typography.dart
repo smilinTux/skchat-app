@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'sovereign_colors.dart';
 
-/// Sovereign Glass typography — Inter Variable + JetBrains Mono for code.
+/// Sovereign Glass typography, Inter Variable + JetBrains Mono for code.
 /// Sizes, weights, and line heights match the PRD spec exactly.
 class SovereignTypography {
   SovereignTypography._();
@@ -18,7 +18,7 @@ class SovereignTypography {
         dark ? SovereignColors.textTertiary : const Color(0xFF909090);
 
     return TextTheme(
-      // display — 28sp 700
+      // display, 28sp 700
       displayLarge: TextStyle(
         fontFamily: _fontFamily,
         fontSize: 28,
@@ -27,7 +27,7 @@ class SovereignTypography {
         color: baseColor,
         letterSpacing: -0.5,
       ),
-      // heading — 20sp 600
+      // heading, 20sp 600
       titleLarge: TextStyle(
         fontFamily: _fontFamily,
         fontSize: 20,
@@ -50,7 +50,7 @@ class SovereignTypography {
         height: 1.4,
         color: baseColor,
       ),
-      // body — 15sp 400
+      // body, 15sp 400
       bodyLarge: TextStyle(
         fontFamily: _fontFamily,
         fontSize: 15,
@@ -72,7 +72,7 @@ class SovereignTypography {
         height: 1.5,
         color: mutedColor,
       ),
-      // caption — 12sp 400
+      // caption, 12sp 400
       labelSmall: TextStyle(
         fontFamily: _fontFamily,
         fontSize: 12,

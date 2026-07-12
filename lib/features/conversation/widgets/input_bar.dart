@@ -134,7 +134,7 @@ class _InputBarState extends State<InputBar> {
               title: const Text('Share location',
                   style: TextStyle(color: SovereignColors.textPrimary)),
               subtitle: const Text(
-                'Approximate by default — you choose precise',
+                'Approximate by default, you choose precise',
                 style: TextStyle(
                     color: SovereignColors.textTertiary, fontSize: 12),
               ),
@@ -184,7 +184,7 @@ class _InputBarState extends State<InputBar> {
               ),
             ),
           ),
-          // Bottom inset (home indicator) is handled by SafeArea below — do
+          // Bottom inset (home indicator) is handled by SafeArea below, do
           // NOT also add MediaQuery.padding.bottom here or the composer floats
           // up with a gap beneath it ("input too high").
           padding: const EdgeInsets.all(8),

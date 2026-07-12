@@ -7,7 +7,7 @@ import '../shell/toolbar_module_actions.dart';
 import 'chats_provider.dart';
 import 'widgets/conversation_tile.dart';
 
-/// Chat list screen — shows all conversations sorted by recency.
+/// Chat list screen, shows all conversations sorted by recency.
 /// Each row is a GlassCard with soul-color avatar, encryption badge,
 /// last message preview, and delivery status.
 class ChatsScreen extends ConsumerWidget {
@@ -33,7 +33,7 @@ class ChatsScreen extends ConsumerWidget {
   }
 
   /// Compose menu: start a 1:1 message OR create a new group. (Create-group was
-  /// previously unreachable — the only entry points went to the peer picker.)
+  /// previously unreachable, the only entry points went to the peer picker.)
   void _showComposeMenu(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -82,7 +82,7 @@ class ChatsScreen extends ConsumerWidget {
       actions: [
         const ToolbarModuleActions(),
         // Direct, discoverable entry to the dedicated Groups list/section
-        // (the operator couldn't find a way to their groups — they were only
+        // (the operator couldn't find a way to their groups, they were only
         // mixed into the Chats list). Reachable from the primary screen.
         IconButton(
           key: const Key('chats-open-groups'),

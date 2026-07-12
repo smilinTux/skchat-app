@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/sovereign_colors.dart';
 
-/// First onboarding page — branding, tagline, soul-gradient animation.
+/// First onboarding page, branding, tagline, soul-gradient animation.
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key, this.onNext});
 
@@ -83,7 +83,7 @@ class _WelcomePageState extends State<WelcomePage>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Spacer(),
-                // Penguin mascot — placeholder icon until asset is bundled.
+                // Penguin mascot, placeholder icon until asset is bundled.
                 Container(
                   width: 120,
                   height: 120,

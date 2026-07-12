@@ -4,7 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'notification_config.dart';
 
-/// Sovereign local notification service — no Firebase, no Google, no tokens.
+/// Sovereign local notification service, no Firebase, no Google, no tokens.
 ///
 /// Use [NotificationService.instance] to access the singleton. Call
 /// [initialize] once from your app entry point before showing any
@@ -28,7 +28,7 @@ class NotificationService {
 
   bool _initialized = false;
 
-  // Notification ID counter — wraps at 2^31-1 to stay within Android's int limit.
+  // Notification ID counter, wraps at 2^31-1 to stay within Android's int limit.
   static int _nextId = 1;
   static int _allocateId() {
     final id = _nextId;
@@ -130,7 +130,7 @@ class NotificationService {
 
   /// Cancels every notification that was shown for the given [peerId].
   ///
-  /// Useful when the user opens a conversation — clears the unread badge.
+  /// Useful when the user opens a conversation, clears the unread badge.
   Future<void> cancelForPeer(String peerId) async {
     final ids = _peerNotificationIds.remove(peerId);
     if (ids == null) return;
@@ -153,7 +153,7 @@ class NotificationService {
   }
 
   /// Called when the user taps a notification while the app is terminated.
-  /// Must be a top-level or static function — Flutter constraint.
+  /// Must be a top-level or static function, Flutter constraint.
   @pragma('vm:entry-point')
   static void _onBackgroundNotificationTap(NotificationResponse response) {
     // Handled on next app launch via getNotificationAppLaunchDetails().

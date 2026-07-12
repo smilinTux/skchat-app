@@ -13,7 +13,7 @@ import 'daemon_config.dart';
 ///
 /// On native (daemon on the same device) the default works.  On a WEB build
 /// served to a remote browser, the URL must point at a network-reachable
-/// daemon (e.g. a tailnet host) — set it via the profile/settings screen or
+/// daemon (e.g. a tailnet host), set it via the profile/settings screen or
 /// `--dart-define=SKCOMMS_URL=...` at build time.
 class SKCommsClient {
   /// [dio] may be injected (tests) to supply a canned [HttpClientAdapter];
@@ -37,9 +37,9 @@ class SKCommsClient {
 
   // ── Health ────────────────────────────────────────────────────────────────
 
-  /// GET /health — verify the daemon is running.
+  /// GET /health, verify the daemon is running.
   ///
-  /// Uses /health (a clean 200) not / — the webui root 307-redirects to /app/,
+  /// Uses /health (a clean 200) not /, the webui root 307-redirects to /app/,
   /// which made the health check flaky and showed a false "SKComms offline".
   Future<bool> isAlive() async {
     try {
@@ -51,12 +51,12 @@ class SKCommsClient {
     }
   }
 
-  /// GET /api/v1/status — full transport health report.
+  /// GET /api/v1/status, full transport health report.
   ///
   /// Returns a normalized `Map<String, dynamic>` and NEVER throws on a benign
   /// shape mismatch: Dio's JSON decode can hand back a `Map<dynamic, dynamic>`
   /// (or a non-map on some proxies), and a hard `as Map<String, dynamic>` cast
-  /// on that throws — which previously bubbled up to `_checkDaemon` and flipped
+  /// on that throws, which previously bubbled up to `_checkDaemon` and flipped
   /// the UI to a FALSE "daemon offline" even though `/health` + `/api/v1/status`
   /// were both 200. We accept any 2xx body and coerce it; a non-map 200 yields
   /// an empty map (still "online"), not an exception.
@@ -69,13 +69,13 @@ class SKCommsClient {
 
   // ── Messaging ─────────────────────────────────────────────────────────────
 
-  /// POST /api/v1/send — send a message to a peer.
+  /// POST /api/v1/send, send a message to a peer.
   ///
   /// [recipient] is the peer's fqid / name / fingerprint (e.g.
   /// `lumina@chef.skworld`). [message] is the plaintext content.
   ///
   /// The live contract returns `{ok, reply:{full message}, message:{full
-  /// message}}` — the echoed user turn AND the agent's reply, both already
+  /// message}}`, the echoed user turn AND the agent's reply, both already
   /// persisted server-side. We surface BOTH (parsed) so the caller can render
   /// the reply bubble immediately, without waiting for the next history poll.
   /// We also tolerate the OLDER daemon shape (`{delivered, envelope_id,
@@ -127,7 +127,7 @@ class SKCommsClient {
     );
   }
 
-  /// GET /api/v1/inbox — poll for new incoming messages.
+  /// GET /api/v1/inbox, poll for new incoming messages.
   Future<List<InboxMessage>> getInbox() async {
     final resp = await _dio.get('/api/v1/inbox');
     final list = resp.data as List<dynamic>;
@@ -136,7 +136,7 @@ class SKCommsClient {
         .toList();
   }
 
-  /// GET /api/v1/conversations — list known conversations.
+  /// GET /api/v1/conversations, list known conversations.
   Future<List<Map<String, dynamic>>> getConversations() async {
     final resp = await _dio.get('/api/v1/conversations');
     return (resp.data as List<dynamic>)
@@ -146,7 +146,7 @@ class SKCommsClient {
 
   // ── Peers ─────────────────────────────────────────────────────────────────
 
-  /// GET /api/v1/peers — list all known peers.
+  /// GET /api/v1/peers, list all known peers.
   Future<List<PeerInfo>> getPeers() async {
     final resp = await _dio.get('/api/v1/peers');
     final list = resp.data as List<dynamic>;
@@ -157,7 +157,7 @@ class SKCommsClient {
 
   // ── Agents ────────────────────────────────────────────────────────────────
 
-  /// GET /api/v1/agents — list known agents.
+  /// GET /api/v1/agents, list known agents.
   Future<List<Map<String, dynamic>>> getAgents() async {
     final resp = await _dio.get('/api/v1/agents');
     return (resp.data as List<dynamic>)
@@ -167,7 +167,7 @@ class SKCommsClient {
 
   // ── Groups ──────────────────────────────────────────────────────────────
 
-  /// GET /api/v1/groups/:groupId/members — list members of a group.
+  /// GET /api/v1/groups/:groupId/members, list members of a group.
   Future<List<Map<String, dynamic>>> getGroupMembers(String groupId) async {
     final resp = await _dio.get('/api/v1/groups/$groupId/members');
     return (resp.data as List<dynamic>)
@@ -175,7 +175,7 @@ class SKCommsClient {
         .toList();
   }
 
-  /// POST /api/v1/groups — create a new group chat.
+  /// POST /api/v1/groups, create a new group chat.
   ///
   /// [name] is required. [description] and [memberUris] are optional.
   /// Returns a [CreateGroupResult] with the group ID and AES-256-GCM key info.
@@ -196,7 +196,7 @@ class SKCommsClient {
     return CreateGroupResult.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  /// POST /api/v1/groups/:groupId/members — add a member.
+  /// POST /api/v1/groups/:groupId/members, add a member.
   Future<void> addGroupMember(
     String groupId, {
     required String identity,
@@ -208,12 +208,12 @@ class SKCommsClient {
     );
   }
 
-  /// DELETE /api/v1/groups/:groupId/members/:identity — remove a member.
+  /// DELETE /api/v1/groups/:groupId/members/:identity, remove a member.
   Future<void> removeGroupMember(String groupId, String identity) async {
     await _dio.delete('/api/v1/groups/$groupId/members/$identity');
   }
 
-  /// PUT /api/v1/groups/:groupId — update group name or description.
+  /// PUT /api/v1/groups/:groupId, update group name or description.
   Future<void> updateGroupInfo(
     String groupId, {
     String? name,
@@ -225,12 +225,12 @@ class SKCommsClient {
     await _dio.put('/api/v1/groups/$groupId', data: body);
   }
 
-  /// DELETE /api/v1/groups/:groupId/members/self — leave a group.
+  /// DELETE /api/v1/groups/:groupId/members/self, leave a group.
   Future<void> leaveGroup(String groupId) async {
     await _dio.delete('/api/v1/groups/$groupId/members/self');
   }
 
-  /// DELETE /api/v1/groups/:groupId — delete a whole group (admin-only).
+  /// DELETE /api/v1/groups/:groupId, delete a whole group (admin-only).
   ///
   /// The server gates this to an admin (the creator); a non-admin caller gets
   /// a 403. Throws on any non-2xx so the caller can surface "not allowed".
@@ -240,7 +240,7 @@ class SKCommsClient {
 
   // ── Presence ──────────────────────────────────────────────────────────────
 
-  /// POST /api/v1/presence — broadcast presence status.
+  /// POST /api/v1/presence, broadcast presence status.
   Future<void> updatePresence({
     required String status,
     String? message,
@@ -253,7 +253,7 @@ class SKCommsClient {
 
   // ── Identity ──────────────────────────────────────────────────────────────
 
-  /// GET /api/v1/identity — return this node's PGP fingerprint and name.
+  /// GET /api/v1/identity, return this node's PGP fingerprint and name.
   Future<IdentityInfo> getIdentity() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/v1/identity');
     return IdentityInfo.fromJson(resp.data ?? {});
@@ -261,7 +261,7 @@ class SKCommsClient {
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
-  /// GET /api/v1/webrtc/ice-config — ICE server list with TURN credentials.
+  /// GET /api/v1/webrtc/ice-config, ICE server list with TURN credentials.
   ///
   /// Returns the list ready to pass to RTCPeerConnection config['iceServers'].
   /// Falls back to Google STUN when the daemon is unreachable.
@@ -283,7 +283,7 @@ class SKCommsClient {
     }
   }
 
-  /// GET /api/v1/webrtc/peers — list peers in a signaling room.
+  /// GET /api/v1/webrtc/peers, list peers in a signaling room.
   Future<Map<String, dynamic>> getWebRTCPeers({String? room}) async {
     final resp = await _dio.get<Map<String, dynamic>>(
       '/api/v1/webrtc/peers',
@@ -294,7 +294,7 @@ class SKCommsClient {
 
   // ── Signing ───────────────────────────────────────────────────────────────
 
-  /// POST /api/v1/sign — ask the daemon to sign [nonce] with the local PGP key.
+  /// POST /api/v1/sign, ask the daemon to sign [nonce] with the local PGP key.
   ///
   /// The private key never leaves the daemon; the app only receives the
   /// armored PGP signature.
@@ -411,7 +411,7 @@ class SKCommsClient {
 
   // ── File Transfers ────────────────────────────────────────────────────────
 
-  /// GET /api/v1/file_status?transfer_id={id} — poll file transfer progress.
+  /// GET /api/v1/file_status?transfer_id={id}, poll file transfer progress.
   ///
   /// Returns a [FileTransferStatus] or throws on HTTP error.
   Future<FileTransferStatus> getFileStatus(String transferId) async {
@@ -422,7 +422,7 @@ class SKCommsClient {
     return FileTransferStatus.fromJson(resp.data ?? {});
   }
 
-  /// POST /upload — upload a file as multipart to [recipient].
+  /// POST /upload, upload a file as multipart to [recipient].
   ///
   /// The daemon stores the file, starts the transfer, and returns
   /// `{id, transfer_id, filename}`.  Pass the raw [bytes] plus a [filename]
@@ -453,7 +453,7 @@ class SKCommsClient {
 
   /// Absolute URL for downloading a completed transfer's file payload.
   ///
-  /// `GET /file/{transferId}` — used as an `<img>`/download src.  Built from
+  /// `GET /file/{transferId}`, used as an `<img>`/download src.  Built from
   /// the client's configured [baseUrl] so it honours the runtime daemon URL.
   String fileUrl(String transferId) =>
       '${_baseUrl()}/file/${Uri.encodeComponent(transferId)}';
@@ -605,7 +605,7 @@ class CreateGroupResult {
   }
 }
 
-/// Result of a successful `POST /upload` — the daemon's handle for the file.
+/// Result of a successful `POST /upload`, the daemon's handle for the file.
 ///
 /// `transferId` is what the file-transfer bubble polls and what
 /// [SKCommsClient.fileUrl] / [SKCommsClient.thumbUrl] reference.

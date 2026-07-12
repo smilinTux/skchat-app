@@ -6,7 +6,7 @@ import '../../core/theme/theme.dart';
 import 'groups_provider.dart';
 import 'widgets/group_tile.dart';
 
-/// Groups screen — lists all group conversations sorted by recency.
+/// Groups screen, lists all group conversations sorted by recency.
 /// Each group shows member count, last message, and encryption status.
 class GroupsScreen extends ConsumerWidget {
   const GroupsScreen({super.key});

@@ -11,7 +11,7 @@ import '../../services/skcomms_client.dart';
 /// Agent Identity Card screen.
 ///
 /// Displays a rich profile for any CapAuth-identified peer (human or agent).
-/// Navigation is handled by the caller (Jarvis) — this screen receives the
+/// Navigation is handled by the caller (Jarvis), this screen receives the
 /// [Conversation] it describes and an optional [onSendMessage] callback.
 ///
 /// Route: `/identity/:peerId`
@@ -350,7 +350,7 @@ class _IdentitySection extends StatelessWidget {
             label: 'Verified',
             value: isVerified
                 ? 'Key on file'
-                : 'Unverified — no key on file',
+                : 'Unverified, no key on file',
             soulColor: soulColor,
             valueColor: isVerified
                 ? SovereignColors.accentEncrypt
@@ -430,7 +430,7 @@ class _FingerprintRow extends StatelessWidget {
               GestureDetector(
                 onTap: hasFp ? () => _copyToClipboard(context) : null,
                 child: Text(
-                  hasFp ? fingerprint! : 'Unknown — no key on file',
+                  hasFp ? fingerprint! : 'Unknown, no key on file',
                   style: TextStyle(
                     color: hasFp
                         ? SovereignColors.textPrimary
@@ -507,7 +507,7 @@ class _EncryptionSection extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: () {
-                // Placeholder — Jarvis wires the fingerprint comparison screen.
+                // Placeholder, Jarvis wires the fingerprint comparison screen.
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: const Text('Fingerprint comparison coming soon'),

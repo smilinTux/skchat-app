@@ -8,7 +8,7 @@ import 'daemon_config.dart';
 /// The daemon advertises *which* transports + services this deployment actually
 /// has (availability varies by config/access). The app reads it at
 /// `{daemonBase}/api/v1/capabilities` (same-origin on web via the webui proxy)
-/// and renders honest status — rather than the old hardcoded `[file]` fallback.
+/// and renders honest status, rather than the old hardcoded `[file]` fallback.
 
 /// A coarse availability state shared by transports and services.
 ///
@@ -100,7 +100,7 @@ class NodeCapabilities {
   final String? host;
 
   /// Daemon API version (top-level `api` integer). Null on older daemons that
-  /// don't advertise it — module `minDaemonApi` gating treats null as "unknown"
+  /// don't advertise it, module `minDaemonApi` gating treats null as "unknown"
   /// and only blocks modules that explicitly require a floor > 0.
   final int? api;
 
@@ -108,7 +108,7 @@ class NodeCapabilities {
   final List<ServiceCapability> services;
 
   /// Operator policy hint: module ids the *node* wants surfaced in this
-  /// deployment (the additive `modules` block). Empty on older daemons — the
+  /// deployment (the additive `modules` block). Empty on older daemons, the
   /// app falls back to its full declared registry. The client still applies
   /// capability-gating on top, so this is a coarse "ship these" filter, not a
   /// security boundary.
@@ -188,7 +188,7 @@ class CapabilitiesClient {
 
   final Dio _dio;
 
-  /// GET /api/v1/capabilities — returns the node capability document, or null
+  /// GET /api/v1/capabilities, returns the node capability document, or null
   /// when the endpoint is missing/unreachable (older daemons / offline). The
   /// caller renders gracefully on null.
   Future<NodeCapabilities?> fetch() async {

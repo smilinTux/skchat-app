@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/sovereign_colors.dart';
 import '../onboarding_provider.dart';
 
-/// Onboarding step 5 — celebration screen that marks onboarding complete and
+/// Onboarding step 5, celebration screen that marks onboarding complete and
 /// navigates to the main chat list.
 class CompletePage extends ConsumerStatefulWidget {
   const CompletePage({super.key, this.onEnterChat});
@@ -137,7 +137,7 @@ class _CompletePageState extends ConsumerState<CompletePage>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  // Confetti placeholder — rows of colored dots.
+                  // Confetti placeholder, rows of colored dots.
                   _ConfettiDots(),
                 ],
               ),

@@ -4,7 +4,7 @@ import '../../../core/theme/sovereign_colors.dart';
 import '../../../core/theme/glass_widgets.dart';
 import '../onboarding_provider.dart';
 
-/// Onboarding step 3 — detect SKComms daemon and Syncthing availability.
+/// Onboarding step 3, detect SKComms daemon and Syncthing availability.
 class TransportPage extends ConsumerStatefulWidget {
   const TransportPage({super.key, this.onNext});
 

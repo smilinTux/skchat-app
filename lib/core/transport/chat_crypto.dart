@@ -33,7 +33,7 @@ class ChatCrypto {
     try {
       signature = await PgpBridge.signAsync(content, privateKeyPem);
     } catch (_) {
-      // Key unavailable or parse error — send unsigned.
+      // Key unavailable or parse error, send unsigned.
     }
     return MessageEnvelope(
       id: id,

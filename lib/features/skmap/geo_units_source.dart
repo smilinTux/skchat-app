@@ -4,12 +4,12 @@ import 'dart:math' as math;
 import 'geo_unit.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// GeoUnitsSource — the ADAPTER SEAM for the live geo / CoT feed.
+/// GeoUnitsSource, the ADAPTER SEAM for the live geo / CoT feed.
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// The [SkMap] screen + [geoUnitsProvider] watch a *stream of unit snapshots*
 /// and never care where they come from. To wire the real feed, implement this
-/// one interface and swap which source [geoUnitsSourceProvider] returns — no
+/// one interface and swap which source [geoUnitsSourceProvider] returns, no
 /// UI changes required.
 ///
 /// The parallel CB4 backend is adding to **skcomms**:
@@ -25,11 +25,11 @@ import 'geo_unit.dart';
 ///   (b) a push stream (SSE / WebSocket) of `application/geo+json` envelopes,
 ///       or the CoT envelope stream already flowing through skcomms.
 ///
-/// Both map cleanly onto [GeoUnitsSource.watch] — see [DaemonGeoUnitsSource]
+/// Both map cleanly onto [GeoUnitsSource.watch], see [DaemonGeoUnitsSource]
 /// below for the polling skeleton (TODO marks the single line to wire).
 abstract class GeoUnitsSource {
   /// A live stream of the *full current set* of units/markers. Each event is a
-  /// complete snapshot (the provider de-dupes by uid downstream is not needed —
+  /// complete snapshot (the provider de-dupes by uid downstream is not needed,
   /// the snapshot IS the truth). Implementations should emit an initial
   /// snapshot promptly and then on every change / poll tick.
   Stream<List<GeoUnit>> watch();
@@ -43,7 +43,7 @@ abstract class GeoUnitsSource {
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// MockGeoUnitsSource — v1 demonstrable feed (no backend required).
+/// MockGeoUnitsSource, v1 demonstrable feed (no backend required).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Emits BLACK LION / PURE / LUMINA plus a marker, then gently jitters the
@@ -54,7 +54,7 @@ abstract class GeoUnitsSource {
 class MockGeoUnitsSource implements GeoUnitsSource {
   MockGeoUnitsSource({this.animate = true});
 
-  /// When false, emits a single static snapshot (deterministic — for tests).
+  /// When false, emits a single static snapshot (deterministic, for tests).
   final bool animate;
 
   static const _seedUnits = <_Seed>[
@@ -137,7 +137,7 @@ class _Seed {
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// DaemonGeoUnitsSource — LIVE-FEED SKELETON (the integration point).
+/// DaemonGeoUnitsSource, LIVE-FEED SKELETON (the integration point).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Polls a daemon/MCP endpoint that returns the current units (GeoJSON
@@ -148,7 +148,7 @@ class _Seed {
 /// Swap it in by editing [geoUnitsSourceProvider] in `skmap_providers.dart`:
 ///   return DaemonGeoUnitsSource(baseUrl: ref.watch(daemonUrlProvider));
 ///
-/// (Left intentionally transport-light here — it takes a [fetcher] callback so
+/// (Left intentionally transport-light here, it takes a [fetcher] callback so
 /// the actual HTTP/Dio call lives at the wiring site with the rest of the app's
 /// `dio` clients, and so this class stays unit-testable without a network.)
 class DaemonGeoUnitsSource implements GeoUnitsSource {

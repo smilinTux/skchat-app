@@ -21,7 +21,7 @@ final fileTransferStatusProvider =
       try {
         status = await client.getFileStatus(transferId);
       } catch (_) {
-        // Daemon temporarily unreachable — yield null, keep polling.
+        // Daemon temporarily unreachable, yield null, keep polling.
         status = null;
       }
       yield status;
@@ -171,14 +171,14 @@ class FileTransferBubble extends ConsumerWidget {
       ),
       data: (status) {
         if (status == null) {
-          // Transient polling error — show spinner with last-known filename.
+          // Transient polling error, show spinner with last-known filename.
           return _buildCard(
             tt: tt,
             fileName: fileName,
             fileSize: fileSize,
             progress: 0.0,
             speedLabel: '',
-            percentLabel: '–',
+            percentLabel: '-',
             statusIcon: _Spinner(color: soulColor),
             soulColor: soulColor,
           );

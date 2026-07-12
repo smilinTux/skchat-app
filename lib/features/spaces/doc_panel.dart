@@ -52,7 +52,7 @@ class _DocPanelState extends ConsumerState<DocPanel> {
   /// Apply an inbound doc event WITHOUT re-publishing (avoids sync loops).
   ///
   /// Skips the overwrite while the local user is actively typing (field has
-  /// focus) so we never clobber in-progress edits — unless [force] is set
+  /// focus) so we never clobber in-progress edits, unless [force] is set
   /// (used for the initial catch-up at join). No-ops if the text is unchanged.
   void _applyRemote(Map<String, dynamic> e, {bool force = false}) {
     if (!mounted) return;
@@ -154,7 +154,7 @@ class _DocPanelState extends ConsumerState<DocPanel> {
                 decoration: const InputDecoration(
                   isCollapsed: true,
                   border: InputBorder.none,
-                  hintText: "Start typing — everyone in the Space sees it…",
+                  hintText: "Start typing, everyone in the Space sees it…",
                   hintStyle: TextStyle(color: SovereignColors.textTertiary),
                 ),
               ),

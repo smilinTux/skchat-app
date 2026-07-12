@@ -6,10 +6,10 @@ import 'package:latlong2/latlong.dart';
 /// Mirrors the CoT (Cursor-on-Target) type taxonomy used by the skcomms CoT
 /// bridge (see `skcomms/docs/cot-bridge.md` + `src/skcomms/cot.py`):
 ///   * `a-f-*`  → a **friendly unit** (an affiliated entity: a person/vehicle
-///                with a callsign and a live position) — e.g. BLACK LION, PURE,
+///                with a callsign and a live position), e.g. BLACK LION, PURE,
 ///                LUMINA.
 ///   * `b-m-*`  → a **marker** (a map graphic / point of interest placed by an
-///                operator) — e.g. a waypoint, an objective.
+///                operator), e.g. a waypoint, an objective.
 ///   * `a-h-*`  → a **hostile** unit (affiliation = hostile).
 ///   * `a-n-*`  → a **neutral** unit.
 ///   * `a-u-*`  → an **unknown** affiliation.
@@ -48,7 +48,7 @@ GeoUnitKind geoUnitKindFromCotType(String? cotType) {
 /// A single live entity on the tactical map: a unit or a marker.
 ///
 /// This is the app-side view model the [SkMap] watches. It is intentionally
-/// transport-agnostic — it is produced by an adapter ([GeoUnitsSource]) from
+/// transport-agnostic, it is produced by an adapter ([GeoUnitsSource]) from
 /// whatever the geo feed delivers (a daemon REST poll, an SSE/WebSocket stream,
 /// a CoT envelope, or the v1 mock). The fields map 1:1 onto the backend
 /// `GeoUnit` being added in skcomms `geo.py` (callsign / lat / lon / last_seen)

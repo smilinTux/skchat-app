@@ -150,7 +150,7 @@ final onboardingProvider =
   OnboardingNotifier.new,
 );
 
-/// Convenience provider — true once onboarding has been completed.
+/// Convenience provider, true once onboarding has been completed.
 final onboardingCompleteProvider = Provider<bool>((ref) {
   return ref.watch(onboardingProvider).isComplete;
 });

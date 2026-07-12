@@ -50,7 +50,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen>
     ref.listen<CallState?>(callProvider, (prev, next) {
       if (!mounted) return;
       if (next == null) {
-        // Call ended / failed — return to conversation.
+        // Call ended / failed, return to conversation.
         if (context.canPop()) context.pop();
         return;
       }

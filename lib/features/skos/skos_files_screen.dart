@@ -22,12 +22,12 @@ import 'media_actions_stub.dart'
     if (dart.library.html) 'media_actions_web.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// SkosFilesScreen — the skos Files browser + corpus search (P9, on the P7
+/// SkosFilesScreen, the skos Files browser + corpus search (P9, on the P7
 /// access plane).
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// One sovereign disk + one sovereign brain, addressable from the app:
-///   * a node picker (`.158` / `.41`) — which node's access MCP to talk to,
+///   * a node picker (`.158` / `.41`), which node's access MCP to talk to,
 ///   * a path breadcrumb + directory listing (tap a dir to descend),
 ///   * tap a file → a swipeable media viewer (PageView over the directory's
 ///     media) with an Edit/Save affordance that is **disabled/read-only unless
@@ -43,7 +43,7 @@ import 'media_actions_stub.dart'
 /// extension. Drives [SkosFileViewer]: text/markdown go through the existing
 /// `file_read` (text) path; the binary kinds (image/video/audio/pdf) stream
 /// from the same-origin `/media/file` endpoint (range-capable → seek + handles
-/// the 300–380 MB AI-LIFE masters; base64-over-/tool's 8 MiB cap could not).
+/// the 300-380 MB AI-LIFE masters; base64-over-/tool's 8 MiB cap could not).
 enum MediaKind { image, video, audio, pdf, markdown, text, other }
 
 /// Map a path to its [MediaKind] by lowercased extension.
@@ -135,7 +135,7 @@ MediaKind mediaKindFor(String path) {
 }
 
 /// True for the swipeable-gallery kinds (image/video/audio). pdf/text/other are
-/// excluded — they open standalone, not in the PageView.
+/// excluded, they open standalone, not in the PageView.
 @visibleForTesting
 bool isGalleryKind(MediaKind kind) =>
     kind == MediaKind.image ||
@@ -161,7 +161,7 @@ class MediaItem {
 /// (`currentDir + '/' + name`, or the entry's own absolute path when present).
 /// If [openPath] is itself a gallery item the returned index points at it; if
 /// it is NOT in the list (e.g. a pdf/text tapped, or no listing yet) the list
-/// is collapsed to just that single open item at index 0 — the viewer then
+/// is collapsed to just that single open item at index 0, the viewer then
 /// shows it alone with no neighbours to swipe to.
 @visibleForTesting
 ({List<MediaItem> items, int index}) buildMediaGallery({
@@ -208,7 +208,7 @@ String mediaStreamUrl(String node, String path) =>
 /// The origin the app is served from. On web this is the http(s) origin (same
 /// as the daemon base). `Uri.base.origin` throws for non-http(s) schemes (e.g.
 /// the `file:` base under the Dart VM test runner), so fall back to a relative
-/// (same-origin) URL there — harmless since this surface only ships on web.
+/// (same-origin) URL there, harmless since this surface only ships on web.
 String _servedOrigin() {
   final base = Uri.base;
   if (base.scheme == 'http' || base.scheme == 'https') return base.origin;
@@ -261,14 +261,14 @@ class SkosFilesScreen extends ConsumerWidget {
 /// dragging RIGHT slides the whole listing to the right (following the finger,
 /// with rubber-band resistance past a clamp), revealing a "going up" peek on the
 /// LEFT (a back chevron + the parent folder's name). Releasing PAST the commit
-/// threshold — or a rightward fling — animates the page the rest of the way out
+/// threshold, or a rightward fling, animates the page the rest of the way out
 /// and navigates up one folder ([parentPathWithinRoots]); a release UNDER the
 /// threshold springs back to rest (the "peek and let go → stays" feel). At an
 /// exposed root (nowhere further up) the drag always rubber-bands back.
 ///
 /// Vertical list scrolling is untouched: this owns only the HORIZONTAL drag, so
 /// the inner [ListView] keeps the vertical axis. The peek + commit-threshold
-/// emphasis make it obvious, mid-gesture, what releasing will do — fixing the
+/// emphasis make it obvious, mid-gesture, what releasing will do, fixing the
 /// old fire-on-fling version the user could not tell was working.
 class _SwipeUpDir extends ConsumerStatefulWidget {
   const _SwipeUpDir({
@@ -284,7 +284,7 @@ class _SwipeUpDir extends ConsumerStatefulWidget {
   /// The current directory path (null = already at the roots list).
   final String? path;
 
-  /// The exposed-root paths for [node] (warmed in the parent build) — used to
+  /// The exposed-root paths for [node] (warmed in the parent build), used to
   /// clamp the parent navigation so it never escapes an allowlisted root.
   final List<String> roots;
 
@@ -313,7 +313,7 @@ class _SwipeUpDirState extends ConsumerState<_SwipeUpDir>
 
   // Fraction of the width the page must be dragged past to COMMIT on release.
   static const double _kCommitFraction = 1 / 3;
-  // Hard clamp on how far the page can slide (fraction of width) — beyond the
+  // Hard clamp on how far the page can slide (fraction of width), beyond the
   // clamp the drag rubber-bands (logarithmic falloff) so it never runs away.
   static const double _kMaxFraction = 0.6;
   // Fling velocity (px/s) that commits regardless of distance (a quick flick).
@@ -339,7 +339,7 @@ class _SwipeUpDirState extends ConsumerState<_SwipeUpDir>
 
   /// Whether there IS a folder to go up to from the current path (clamped to the
   /// roots). When false (already at the roots list) the gesture only rubber-
-  /// bands — it never navigates.
+  /// bands, it never navigates.
   bool get _canGoUp =>
       parentPathWithinRoots(widget.path, widget.roots) != null;
 
@@ -395,7 +395,7 @@ class _SwipeUpDirState extends ConsumerState<_SwipeUpDir>
     }
   }
 
-  /// Spring the page back to rest (0) — the "peek and let go → stays" behaviour
+  /// Spring the page back to rest (0), the "peek and let go → stays" behaviour
   /// (also the rubber-band at the root, and any sub-threshold release).
   void _snapBack() {
     _slide = Tween<double>(begin: _offset, end: 0).animate(
@@ -772,7 +772,7 @@ class _DirListing extends ConsumerWidget {
             final e = entries[i];
             // file_list entries carry only `name` (no full path), so build the
             // child path from the current dir + name. Root entries (from
-            // list_roots) already have an absolute path — prefer it.
+            // list_roots) already have an absolute path, prefer it.
             final cur = ref.read(currentPathProvider);
             final base = (cur == null || cur.isEmpty)
                 ? ''
@@ -985,7 +985,7 @@ class _NodeChip extends StatelessWidget {
 /// re-resolved GoRouter's own stack and dumped the user back at the root
 /// listing instead of the directory they were browsing. Pushing the route
 /// through GoRouter ([context.push]) means [Navigator.pop] / the back gesture
-/// pop exactly this route, returning to the live `/skos/files` screen — which
+/// pop exactly this route, returning to the live `/skos/files` screen, which
 /// still holds [currentPathProvider], so we land back in the SAME folder.
 ///
 /// We do NOT touch [currentPathProvider] here; only [openFileProvider] (set by
@@ -1003,7 +1003,7 @@ void _openViewer(BuildContext context) {
 ///     same-origin stream URL, inside an [InteractiveViewer] for pinch/zoom,
 ///     with a loading spinner + error fallback.
 ///   * **video** (mp4/mov/webm/m4v/mkv) → `VideoPlayerController.networkUrl`
-///     (streams + seeks on web; handles the 300–380 MB masters) with
+///     (streams + seeks on web; handles the 300-380 MB masters) with
 ///     play/pause + a scrubbable [VideoProgressIndicator]. Off-screen page
 ///     controllers are disposed so N videos never play at once.
 ///   * **audio** (mp3/wav/m4a/ogg/flac) → same `VideoPlayerController` (it
@@ -1144,7 +1144,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12),
                 child: Tooltip(
-                  message: 'Read-only — no write scope granted',
+                  message: 'Read-only, no write scope granted',
                   child: Icon(Icons.lock_outline_rounded,
                       color: SovereignColors.textSecondary, size: 20),
                 ),
@@ -1246,10 +1246,10 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
         // Opaque black backdrop. The route itself is also opaque so the shell
         // never shows through (the dragged content fades onto this black).
         backgroundColor: Colors.black,
-        // Do NOT add a bottomNavigationBar / AppBar — this is the WHOLE screen.
+        // Do NOT add a bottomNavigationBar / AppBar, this is the WHOLE screen.
         body: GestureDetector(
           // ONE tap on the surface toggles the chrome (top bar with ✕ + bottom
-          // controls) — decoupled from play/pause, so the user can always
+          // controls), decoupled from play/pause, so the user can always
           // summon the close button. `deferToChild` lets taps on the actual
           // buttons (✕ / ⋮ / play) win.
           behavior: HitTestBehavior.deferToChild,
@@ -1324,7 +1324,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
                 },
               ),
 
-              // ── Bottom control bar (video/audio) — pinned above safe area. ──
+              // ── Bottom control bar (video/audio), pinned above safe area. ──
               if (_activeController != null && current.kind != MediaKind.image)
                 _AnimatedChrome(
                   visible: _chromeVisible,
@@ -1344,7 +1344,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
                   child: _CenterPlayButton(onTap: _togglePlayActive),
                 ),
 
-              // ── Top bar (close · title+counter · options) — over safe area. ─
+              // ── Top bar (close · title+counter · options), over safe area. ─
               _AnimatedChrome(
                 visible: _chromeVisible,
                 alignment: Alignment.topCenter,
@@ -1355,7 +1355,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
                       ? '${current.node} · ${_pageIndex + 1} / ${items.length}'
                       : '${current.node} · ${current.path}',
                   // Close via GoRouter pop so push/pop stay in sync with
-                  // browser history — returns to the live /skos/files screen,
+                  // browser history, returns to the live /skos/files screen,
                   // which still shows the same browsed dir (currentPathProvider).
                   onClose: _closeViewer,
                   onOptions: () => showMediaOptionsSheet(context, current),
@@ -1401,7 +1401,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   }
 
   /// Toggle the play/pause state of the active page's controller (the gesture
-  /// that unlocks web audio — see [_MediaPlayerState._togglePlay] notes). On
+  /// that unlocks web audio, see [_MediaPlayerState._togglePlay] notes). On
   /// PLAY we start the auto-hide timer; on PAUSE we keep chrome up.
   void _togglePlayActive() {
     final c = _activeController;
@@ -1417,7 +1417,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
 
   /// Rebuild on the active controller's ticks so the bottom bar + center play
   /// button reflect real playback state. Also re-shows the chrome whenever the
-  /// video transitions to PAUSED or ENDED — so a user is never left on a stopped
+  /// video transitions to PAUSED or ENDED, so a user is never left on a stopped
   /// video with the ✕ auto-hidden (the close button is always re-summoned).
   void _onActiveTick() {
     if (!mounted) return;
@@ -1451,7 +1451,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
     if (autoHide && c != null && c.value.isPlaying) {
       _hideTimer = Timer(const Duration(seconds: 3), () {
         if (!mounted) return;
-        // Only auto-hide while still playing — never strand a paused user.
+        // Only auto-hide while still playing, never strand a paused user.
         if (_activeController?.value.isPlaying ?? false) {
           setState(() => _chromeVisible = false);
         }
@@ -1460,13 +1460,13 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
   }
 
   /// A single tap on the media surface TOGGLES the chrome (top bar with ✕ +
-  /// bottom controls). This is fully decoupled from playback — it never
+  /// bottom controls). This is fully decoupled from playback, it never
   /// plays/pauses. Toggling works the same for images and video:
   ///   * if the chrome is hidden → show it (and, if a video is playing, re-arm
   ///     the 3 s auto-hide so it can fade again),
   ///   * if the chrome is shown → hide it.
   /// The user can always bring back the ✕ with one tap, and pausing/ending a
-  /// video re-shows the chrome ([_onActiveTick]) — so they are never stranded.
+  /// video re-shows the chrome ([_onActiveTick]), so they are never stranded.
   void _toggleChrome() {
     if (_chromeVisible) {
       _hideTimer?.cancel();
@@ -1477,7 +1477,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
     }
   }
 
-  /// Tap on the video/audio surface ONLY toggles the chrome — it never controls
+  /// Tap on the video/audio surface ONLY toggles the chrome, it never controls
   /// playback. Play/pause is driven exclusively by the center ▶ button and the
   /// bottom bar's play/pause button, so a tap to find the ✕ can never
   /// accidentally pause (or play) the media.
@@ -1557,7 +1557,7 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
 /// media with `BoxFit.contain` inside the box BETWEEN the bars (the parent
 /// passes [topInset] / [bottomInset]) so it is NEVER clipped or overlapped. The
 /// video/audio player is only mounted when [active] (the visible page) so
-/// off-screen pages never decode/play — swiping away disposes the controller.
+/// off-screen pages never decode/play, swiping away disposes the controller.
 class _GalleryPage extends StatelessWidget {
   const _GalleryPage({
     required this.item,
@@ -1581,7 +1581,7 @@ class _GalleryPage extends StatelessWidget {
     final url = mediaStreamUrl(item.node, item.path);
     // The fit-box: media lives between the top bar and the bottom control bar.
     final body = switch (item.kind) {
-      // Image taps must toggle the chrome too — InteractiveViewer owns pan/zoom
+      // Image taps must toggle the chrome too, InteractiveViewer owns pan/zoom
       // gestures, so the parent's deferToChild tap never reaches it. A
       // translucent GestureDetector here catches the tap (chrome toggle) while
       // letting pinch/pan flow through to the InteractiveViewer underneath.
@@ -1710,8 +1710,8 @@ class _MediaOptionsSheetState extends State<_MediaOptionsSheet> {
 
   void _sendToChat() {
     // TODO(skchat): wire to the skchat send lane (attach this {node,path} as a
-    // media message). Stubbed for now — does not block the gallery UX.
-    _snack('Send to chat — coming soon');
+    // media message). Stubbed for now, does not block the gallery UX.
+    _snack('Send to chat, coming soon');
     _close();
   }
 
@@ -2051,7 +2051,7 @@ class _MediaPlayerState extends State<_MediaPlayer> {
 
     // The surface fills the box BETWEEN the bars (the gallery already inset us);
     // BoxFit.contain via AspectRatio keeps the whole frame visible. A tap is a
-    // user gesture (unlocks web audio) — the parent decides play vs toggle.
+    // user gesture (unlocks web audio), the parent decides play vs toggle.
     return GestureDetector(
       onTap: widget.onTapSurface,
       behavior: HitTestBehavior.opaque,
@@ -2076,7 +2076,7 @@ String _fmtDuration(Duration d) {
 
 /// Heights of the translucent bars (excluding the safe-area insets the parent
 /// adds). Used both to size the bars and to inset the media's contain-box so
-/// the media is shrunk to fit BETWEEN them — never overlapped.
+/// the media is shrunk to fit BETWEEN them, never overlapped.
 const double _kTopBarHeight = 56;
 const double _kBottomBarHeight = 96;
 
@@ -2264,7 +2264,7 @@ class _BottomControlBar extends StatelessWidget {
   }
 }
 
-/// The large circular center play overlay shown on a paused video — the
+/// The large circular center play overlay shown on a paused video, the
 /// standard gallery affordance. Tapping it starts playback (+ sound).
 class _CenterPlayButton extends StatelessWidget {
   const _CenterPlayButton({required this.onTap});

@@ -23,7 +23,7 @@ class PrekeyBundle {
 
   final String suite;
   final String hybridPublicHex; // hex of the 1216-byte hybrid public key
-  final String? signature; // classical signature (Phase 2 — opaque here)
+  final String? signature; // classical signature (Phase 2, opaque here)
   final String? keyId;
   final String? deviceId;
 
@@ -193,7 +193,7 @@ class PqPrekeyService {
       _peerCache[key] = bundle;
       return bundle;
     } catch (e) {
-      // Do NOT cache a failed fetch — a transient timeout must not permanently
+      // Do NOT cache a failed fetch, a transient timeout must not permanently
       // pin the conversation to classical. The next send retries the fetch.
       return const PrekeyBundle();
     }
@@ -207,7 +207,7 @@ class PqPrekeyService {
   }
 
   static String _shortId(Uint8List pub) {
-    // 8-hex prefix of the public key — stable per device, opaque (rotation id).
+    // 8-hex prefix of the public key, stable per device, opaque (rotation id).
     final h = _bytesToHex(pub);
     return h.substring(0, h.length < 16 ? h.length : 16);
   }
@@ -256,7 +256,7 @@ final pqPrekeyServiceProvider = Provider<PqPrekeyService>((ref) {
 
 /// Startup bootstrap: ensure the per-device hybrid keypair exists and publish
 /// this device's prekey bundle so peers (and Lumina) can seal to it. Best-effort
-/// — returns false if no PQ backend is available (web without noble bundled),
+///, returns false if no PQ backend is available (web without noble bundled),
 /// in which case the app stays classical-only (negotiated downgrade). Watched
 /// eagerly in `main` so the prekey is published before the first send.
 final pqBootstrapProvider = FutureProvider<bool>((ref) async {

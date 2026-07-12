@@ -16,7 +16,7 @@ final recordingsListProvider =
   return svc.list();
 });
 
-/// Recordings browser — lists call/space recordings served by the SKChat
+/// Recordings browser, lists call/space recordings served by the SKChat
 /// web-UI and offers a playback/download link (GET /recordings/{name}) for each.
 class RecordingsScreen extends ConsumerWidget {
   const RecordingsScreen({super.key});

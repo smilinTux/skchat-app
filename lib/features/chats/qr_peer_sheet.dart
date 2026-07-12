@@ -63,8 +63,8 @@ Future<void> showQrPeerSheet(
 }
 
 /// QR add-peer bottom sheet with two tabs:
-///   • My QR — shows your own QR code so peers can scan you
-///   • Scan  — scans a peer's QR code to add them
+///   • My QR, shows your own QR code so peers can scan you
+///   • Scan , scans a peer's QR code to add them
 class QrPeerSheet extends ConsumerStatefulWidget {
   const QrPeerSheet({super.key, required this.onPeerAdded});
 
@@ -92,10 +92,10 @@ class _QrPeerSheetState extends ConsumerState<QrPeerSheet>
     if (!_tabController.indexIsChanging) return;
     setState(() {});
     if (_tabController.index == 1) {
-      // Entering scan tab — initialise scanner lazily.
+      // Entering scan tab, initialise scanner lazily.
       _scanner ??= MobileScannerController();
     } else {
-      // Leaving scan tab — pause camera to save resources.
+      // Leaving scan tab, pause camera to save resources.
       _scanner?.stop();
     }
   }
@@ -371,7 +371,7 @@ class _MyQrTab extends ConsumerWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // QR code — white background required for scanner contrast
+            // QR code, white background required for scanner contrast
             Container(
               decoration: BoxDecoration(
                 color: Colors.white,

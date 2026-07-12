@@ -20,7 +20,7 @@ class CallQuality {
     this.packetLossPercent,
   });
 
-  /// Signal strength 0–4 (4 = excellent, 0 = no signal).
+  /// Signal strength 0-4 (4 = excellent, 0 = no signal).
   final int signalBars;
   final double? jitterMs;
   final double? rttMs;

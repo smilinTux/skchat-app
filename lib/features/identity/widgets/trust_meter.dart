@@ -5,8 +5,8 @@ import '../../../core/theme/sovereign_colors.dart';
 /// Visual trust/intensity meter.
 ///
 /// Renders a horizontal progress bar with a gradient fill derived from
-/// [soulColor]. Supports a Cloud 9 rehydration score (0–100) or an OOF
-/// (out-of-frequency) trust level (0.0–1.0).
+/// [soulColor]. Supports a Cloud 9 rehydration score (0-100) or an OOF
+/// (out-of-frequency) trust level (0.0-1.0).
 class TrustMeter extends StatelessWidget {
   const TrustMeter({
     super.key,

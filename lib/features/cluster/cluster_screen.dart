@@ -6,7 +6,7 @@ import '../../core/theme/sovereign_colors.dart';
 import '../../services/cluster_service.dart';
 import 'cluster_provider.dart';
 
-/// Cluster control screen — the operator hub for the sovereign stack.
+/// Cluster control screen, the operator hub for the sovereign stack.
 ///
 /// A second native client to skbloom's existing JSON/SSE control plane
 /// ([ClusterService]). Lets you, from your phone:

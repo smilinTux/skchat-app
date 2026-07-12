@@ -32,7 +32,7 @@ class ClusterOverview {
 
 /// Loads (and re-loads) the cluster overview from skbloom's JSON API.
 ///
-/// Null is never returned — instead a failed load surfaces as
+/// Null is never returned, instead a failed load surfaces as
 /// [AsyncError] so the screen can show an offline state with the base URL.
 class ClusterOverviewNotifier extends AsyncNotifier<ClusterOverview> {
   @override
@@ -48,7 +48,7 @@ class ClusterOverviewNotifier extends AsyncNotifier<ClusterOverview> {
     try {
       health = await svc.health(cluster: kDefaultClusterName);
     } catch (_) {
-      // No live cluster reachable — leave health empty.
+      // No live cluster reachable, leave health empty.
     }
     return ClusterOverview(
       services: services,

@@ -369,7 +369,7 @@ class GroupInfoScreen extends ConsumerWidget {
 
   /// True when the local operator is an admin of this group (so the destructive
   /// "Delete group" action is offered). The operator is admin when the group's
-  /// admin member resolves to my local identity — the creator always does.
+  /// admin member resolves to my local identity, the creator always does.
   /// Returns false until members have loaded (conservative: no delete shown).
   bool _isOperatorAdmin(WidgetRef ref, List<GroupMemberInfo>? members) {
     if (members == null || members.isEmpty) return false;
@@ -472,7 +472,7 @@ class GroupInfoScreen extends ConsumerWidget {
   /// Mint a shareable guest invite link for this group and show it to copy.
   ///
   /// Calls POST /api/v1/groups/{id}/invite (operator-gated server-side). When
-  /// the guest-links feature is disabled on the server the call 404s — surfaced
+  /// the guest-links feature is disabled on the server the call 404s, surfaced
   /// here as a friendly "guests are disabled" message.
   Future<void> _shareInviteLink(BuildContext context, WidgetRef ref) async {
     final svc = ref.read(guestInviteServiceProvider);
@@ -696,7 +696,7 @@ class GroupInfoScreen extends ConsumerWidget {
                           },
                         ),
                       ),
-                    // The confirm ("go") button — adds everyone selected.
+                    // The confirm ("go") button, adds everyone selected.
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                       child: SizedBox(
@@ -751,7 +751,7 @@ class GroupInfoScreen extends ConsumerWidget {
     try {
       await client.addGroupMember(groupId, identity: peer.peerId);
     } on Object {
-      // Daemon offline — proceed locally so UX isn't blocked.
+      // Daemon offline, proceed locally so UX isn't blocked.
     }
 
     // Update local member count and refresh member list.
@@ -814,7 +814,7 @@ class GroupInfoScreen extends ConsumerWidget {
     try {
       await client.removeGroupMember(groupId, member.identityUri);
     } on Object {
-      // Daemon offline — proceed locally.
+      // Daemon offline, proceed locally.
     }
 
     final groups = ref.read(groupsProvider);
@@ -846,7 +846,7 @@ class GroupInfoScreen extends ConsumerWidget {
     try {
       await client.updateGroupInfo(groupId, name: newName);
     } on Object {
-      // Daemon offline — update locally.
+      // Daemon offline, update locally.
     }
 
     final groups = ref.read(groupsProvider);
@@ -893,7 +893,7 @@ class GroupInfoScreen extends ConsumerWidget {
                       role: roleName,
                     );
                   } on Object {
-                    // Daemon offline — show optimistic feedback.
+                    // Daemon offline, show optimistic feedback.
                   }
                   ref.invalidate(groupMembersProvider(groupId));
                   if (context.mounted) {
@@ -938,7 +938,7 @@ class GroupInfoScreen extends ConsumerWidget {
               try {
                 await client.leaveGroup(groupId);
               } on Object {
-                // Daemon offline — remove locally.
+                // Daemon offline, remove locally.
               }
               await ref.read(groupsProvider.notifier).removeGroup(groupId);
               if (context.mounted) context.go('/groups');
@@ -985,7 +985,7 @@ class GroupInfoScreen extends ConsumerWidget {
                 await client.deleteGroup(groupId);
               } on Object catch (e) {
                 deletedServerSide = false;
-                // A 403 means we are not actually an admin — keep the group.
+                // A 403 means we are not actually an admin, keep the group.
                 final s = e.toString();
                 if (s.contains('403')) {
                   errorMsg = 'Only an admin can delete this group.';

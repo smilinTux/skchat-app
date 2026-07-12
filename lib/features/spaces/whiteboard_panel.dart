@@ -10,7 +10,7 @@ import "../../services/spaces_service.dart";
 
 /// Collaborative whiteboard lane (Tier 4): a shared freehand drawing surface
 /// synced across the Space over the data-lane substrate. The "whiteboard" lane
-/// is a SNAPSHOT lane — each stroke-end publishes the full current state and the
+/// is a SNAPSHOT lane, each stroke-end publishes the full current state and the
 /// latest snapshot wins. State is persisted + replayed (catch-up) for late
 /// joiners, who receive the latest snapshot as a 1-element list.
 class WhiteboardPanel extends ConsumerStatefulWidget {
@@ -39,7 +39,7 @@ class _WhiteboardPanelState extends ConsumerState<WhiteboardPanel> {
       spaceId: widget.spaceId,
     );
     _lane.catchUp("whiteboard").then((events) {
-      // Snapshot lane: the latest snapshot wins — apply the last event.
+      // Snapshot lane: the latest snapshot wins, apply the last event.
       if (events.isNotEmpty) {
         _applyRemote(events.last);
       }
@@ -60,7 +60,7 @@ class _WhiteboardPanelState extends ConsumerState<WhiteboardPanel> {
     });
   }
 
-  /// strokes wire shape: List<List<Map<String,double>>> — each point {"x","y"}.
+  /// strokes wire shape: List<List<Map<String,double>>>, each point {"x","y"}.
   List<List<Offset>> _deserialize(List raw) {
     final out = <List<Offset>>[];
     for (final stroke in raw) {
@@ -85,7 +85,7 @@ class _WhiteboardPanelState extends ConsumerState<WhiteboardPanel> {
         .toList();
   }
 
-  /// Publish the full current snapshot (snapshot lane — latest full state wins).
+  /// Publish the full current snapshot (snapshot lane, latest full state wins).
   Future<void> _publishSnapshot() async {
     await _lane.publish({
       "lane": "whiteboard",

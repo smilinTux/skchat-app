@@ -15,7 +15,7 @@ class PgpKeyPair {
   });
 
   /// 40-hex-char fingerprint formatted as five groups of four, split at the
-  /// midpoint with a double space — matching OpenPGP display convention.
+  /// midpoint with a double space, matching OpenPGP display convention.
   final String fingerprint;
 
   /// PKCS#1 PEM-encoded RSA public key.
@@ -174,7 +174,7 @@ class PgpBridge {
   /// Reconstruct a [PgpKeyPair] from a PKCS#1 PEM-encoded RSA private key.
   ///
   /// The private key already contains the public parameters (n, e), so this
-  /// re-encodes the public key and recomputes the fingerprint — no separate
+  /// re-encodes the public key and recomputes the fingerprint, no separate
   /// public key file is needed.
   ///
   /// Throws [FormatException] if [privateKeyPem] cannot be parsed.

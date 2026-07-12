@@ -10,7 +10,7 @@ import 'geo_unit.dart';
 import 'skmap_providers.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-/// SkMapScreen — the tactical map ("ours, ATAK-style").
+/// SkMapScreen, the tactical map ("ours, ATAK-style").
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Renders the live CoT / geo unit picture on an OpenStreetMap base layer:
@@ -116,7 +116,7 @@ class _SkMapScreenState extends ConsumerState<SkMapScreen> {
       ),
       children: [
         TileLayer(
-          // OpenStreetMap — no API key. Offline-tile capable: point urlTemplate
+          // OpenStreetMap, no API key. Offline-tile capable: point urlTemplate
           // at a local mbtiles/file provider for fully sovereign operation.
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'io.skworld.skchat',

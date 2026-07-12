@@ -1,4 +1,4 @@
-/// Guest identity — an ephemeral WebCrypto keypair persisted in localStorage so
+/// Guest identity, an ephemeral WebCrypto keypair persisted in localStorage so
 /// the SAME shareable link maps to the SAME guest on a return visit.
 ///
 /// Platform seam: the real implementation lives in [guest_identity_web.dart]
@@ -14,7 +14,7 @@ import 'guest_identity_stub.dart'
 class GuestKeypair {
   const GuestKeypair({required this.publicKeyB64, required this.fingerprint});
 
-  /// Base64 SPKI export of the public key — sent to the server at join time.
+  /// Base64 SPKI export of the public key, sent to the server at join time.
   /// The server fingerprints this to derive the stable `guest:<name>#<fp>` id.
   final String publicKeyB64;
 

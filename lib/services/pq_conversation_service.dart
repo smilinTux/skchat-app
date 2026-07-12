@@ -13,11 +13,11 @@ enum PqConversationState {
   /// Not yet negotiated / unknown.
   unknown,
 
-  /// Classical path — peer published no hybrid prekey (negotiated downgrade) or
+  /// Classical path, peer published no hybrid prekey (negotiated downgrade) or
   /// this device has no PQ backend (web without noble bundled).
   classical,
 
-  /// Hybrid-pq negotiated — both sides advertise `x25519-mlkem768`. DMs sealed +
+  /// Hybrid-pq negotiated, both sides advertise `x25519-mlkem768`. DMs sealed +
   /// opened via the hybrid KEM.
   hybridPq,
 }
@@ -27,7 +27,7 @@ enum PqConversationState {
 /// - [sealOutgoing]: on send, fetch the peer's prekey; if hybrid AND this device
 ///   has a keypair, seal the body into a `pqdm1:` token (the recorded negotiated
 ///   suite flips `hybrid-pq`). Otherwise return the body unchanged (classical
-///   path, byte-for-byte). NEVER silently downgrades a previously-hybrid convo —
+///   path, byte-for-byte). NEVER silently downgrades a previously-hybrid convo,
 ///   a fetch failure keeps the last known hybrid state.
 /// - [openIncoming]: on receive, detect a `pqdm1:` token and open it with the
 ///   device private key (flips the convo `hybrid-pq`). Non-token bodies pass
@@ -41,9 +41,9 @@ enum PqConversationState {
 /// persisted **token → plaintext** map ([recordOutbound]/[recallOutbound]):
 /// every token this device seals is remembered (in-memory + Hive, so it
 /// survives a page reload), keyed by the exact token string. When a `pqdm1:`
-/// token arrives from history, the render path FIRST asks [recallOutbound] — a
+/// token arrives from history, the render path FIRST asks [recallOutbound], a
 /// hit means "this is our own sent message; show this plaintext as outbound,
-/// deduped" — and only a miss is treated as a peer message to [openIncoming].
+/// deduped", and only a miss is treated as a peer message to [openIncoming].
 /// This removes the dependency on (often-wrong) directionality detection for our
 /// own messages: an own-outbound sealed token always renders as its original
 /// plaintext, deduped against the optimistic bubble.
@@ -112,7 +112,7 @@ class PqConversationService {
   /// `Hive.openBox` throws synchronously AND rejects an internal future in a
   /// separate microtask; the sync throw is caught by the caller, but the stray
   /// async rejection would otherwise surface as an unhandled error. A guarded
-  /// zone swallows it and we stay in-memory only — best-effort persistence.
+  /// zone swallows it and we stay in-memory only, best-effort persistence.
   Future<Box<String>?> _safeOpenBox() async {
     final completer = Completer<Box<String>?>();
     runZonedGuarded(() async {
@@ -170,7 +170,7 @@ class PqConversationService {
   /// seal at send time uses the cached bundle and doesn't race a busy webui
   /// (BUG 2). If the peer advertises hybrid, the conversation is recorded
   /// hybrid-pq up front (the badge can show immediately). A failed prefetch is a
-  /// no-op — it never downgrades a conversation, and the send-time fetch retries.
+  /// no-op, it never downgrades a conversation, and the send-time fetch retries.
   Future<void> prefetchPeer(String peer) async {
     final peerShort = _short(peer);
     // Make sure this device has a keypair (so a hybrid peer actually negotiates
@@ -183,7 +183,7 @@ class PqConversationService {
         _state[peerShort] = PqConversationState.hybridPq;
       }
     } catch (_) {
-      // Never downgrade on a prefetch failure — leave the last known state.
+      // Never downgrade on a prefetch failure, leave the last known state.
     }
   }
 
@@ -194,9 +194,9 @@ class PqConversationService {
   Future<String> sealOutgoing(String peer, String content) async {
     final peerShort = _short(peer);
     // Control sentinels (__REACT__/__TYPING__/… and __CALL_REQUEST__) must stay
-    // cleartext so the existing dispatch keeps working — never seal them.
+    // cleartext so the existing dispatch keeps working, never seal them.
     if (content.startsWith('__')) return content;
-    // Already a token (re-send) — pass through.
+    // Already a token (re-send), pass through.
     if (PqDmCodec.isHybridToken(content)) return content;
 
     final haveKey = await _prekeys.ensureKeyPair();
@@ -244,7 +244,7 @@ class PqConversationService {
   }
 
   /// Open an incoming [body] from [peer]. If it's a `pqdm1:` token, FIRST check
-  /// whether it's one WE sealed (own outbound echoed back from history) — if so
+  /// whether it's one WE sealed (own outbound echoed back from history), if so
   /// return the remembered plaintext (it can't be decapsulated with our key, it
   /// was sealed to the peer). Otherwise decapsulate + decrypt with this device's
   /// private key and flip the convo `hybrid-pq`. Non-token bodies are returned
@@ -254,7 +254,7 @@ class PqConversationService {
     if (!PqDmCodec.isHybridToken(body)) return body;
     final peerShort = _short(peer);
 
-    // Own-outbound? (sealed to the peer's key — not openable here). Render the
+    // Own-outbound? (sealed to the peer's key, not openable here). Render the
     // remembered plaintext and flip the convo hybrid (we DID seal hybrid).
     final mine = await recallOutbound(body);
     if (mine != null) {
@@ -265,7 +265,7 @@ class PqConversationService {
     final haveKey = await _prekeys.ensureKeyPair();
     final priv = _prekeys.privateKey;
     if (!haveKey || priv == null) {
-      return '🔐 [post-quantum message — no key on this device]';
+      return '🔐 [post-quantum message, no key on this device]';
     }
     try {
       // The sender bound (sender=them, recipient=us). The token's expected suite
@@ -279,8 +279,8 @@ class PqConversationService {
       _state[peerShort] = PqConversationState.hybridPq;
       return utf8.decode(clear);
     } catch (_) {
-      // DowngradeDetected / malformed — surface, don't crash.
-      return '🔐 [post-quantum message — could not decrypt]';
+      // DowngradeDetected / malformed, surface, don't crash.
+      return '🔐 [post-quantum message, could not decrypt]';
     }
   }
 

@@ -9,7 +9,7 @@ import 'guest_identity.dart';
 
 /// On web, use the actual served ORIGIN (correct host AND port, e.g. the
 /// tailscale `:9443`) so guest/invite calls are same-origin and work over the
-/// tunnel — not the compile-time default which omits the port. Null on native
+/// tunnel, not the compile-time default which omits the port. Null on native
 /// (falls back to the configured default).
 String? _webOriginOrNull() {
   if (!kIsWeb) return null;
@@ -122,7 +122,7 @@ class GuestGroupService {
     return GuestJoinResult.fromJson(r.data ?? const {});
   }
 
-  /// Fetch the bound group's conversation (token-scoped — no group id needed).
+  /// Fetch the bound group's conversation (token-scoped, no group id needed).
   Future<List<Map<String, dynamic>>> conversation(String sessionToken) async {
     final r = await _dio.get<Map<String, dynamic>>(
       '$_base/api/v1/guest/conversation',
@@ -228,7 +228,7 @@ final guestGroupServiceProvider = Provider<GuestGroupService>(
 /// Mint a shareable guest invite link for [groupId]. Operator-gated server-side
 /// (tailnet/loopback or SKCHAT_GUEST_OPERATOR_TOKEN). Returns the relative
 /// join_url + token. Requires SKCHAT_GUEST_LINKS_ENABLED on the server (404
-/// when off — surfaced to the caller as an error).
+/// when off, surfaced to the caller as an error).
 class GuestInviteService {
   GuestInviteService({Dio? dio, String? webuiBaseUrl})
       : _dio = dio ?? Dio(),
@@ -239,7 +239,7 @@ class GuestInviteService {
 
   String get baseUrl => _base;
 
-  /// Returns `{token, join_url, ...}`. [joinUrl] is relative — the caller
+  /// Returns `{token, join_url, ...}`. [joinUrl] is relative, the caller
   /// prefixes [baseUrl] (or the live origin on web) to build the full link.
   Future<Map<String, dynamic>> createInvite({
     required String groupId,

@@ -46,7 +46,7 @@ class ConsciousnessState {
   final List<BackendStatus> backends;
   final DateTime lastUpdated;
 
-  /// All-offline placeholder — used when the daemon is unreachable.
+  /// All-offline placeholder, used when the daemon is unreachable.
   factory ConsciousnessState.offline() => ConsciousnessState(
         status: ConsciousnessStatus.offline,
         messagesProcessed: 0,

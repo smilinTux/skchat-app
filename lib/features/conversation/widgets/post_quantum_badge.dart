@@ -7,7 +7,7 @@ import '../../../services/pq_conversation_service.dart';
 /// 🔐 Post-quantum indicator for a conversation.
 ///
 /// Renders a small shield + "PQ" pill ONLY when the conversation has been
-/// hybrid-negotiated (`x25519-mlkem768` — both sides advertise a prekey and a
+/// hybrid-negotiated (`x25519-mlkem768`, both sides advertise a prekey and a
 /// hybrid DM has been sealed/opened). For classical / not-yet-negotiated
 /// conversations it renders nothing, so the existing 🔒 [EncryptBadge] still
 /// communicates classical E2E without implying post-quantum.
@@ -36,7 +36,7 @@ class PostQuantumBadge extends ConsumerWidget {
       );
     }
     return Tooltip(
-      message: 'Hybrid post-quantum — X25519 + ML-KEM-768',
+      message: 'Hybrid post-quantum: X25519 + ML-KEM-768',
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
