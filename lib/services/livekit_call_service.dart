@@ -621,6 +621,19 @@ class LiveKitCallService {
     // [_dataCtl] so [dataChannel] (and the lane substrate that maps over it)
     // actually receives peer-published lane events. `participant` is null when
     // the data originates from the server API, hence the empty-string fallback.
+    //
+    // Live roster wire: [Room.addListener] (a ChangeNotifier) does NOT reliably
+    // fire for REMOTE ParticipantConnected / Disconnected in livekit_client
+    // 2.2.6. The notifier largely reflects LOCAL state. A roster driven only by
+    // [_onRoomChanged] therefore shows each device the participant list AS OF
+    // WHEN IT JOINED and never updates when others join or leave later (device 1
+    // stuck at 1, device 2 at 2, device 3 saw all 3). Subscribe to the explicit
+    // RoomEvents below and re-emit the snapshot on every membership or track
+    // change so the participant count, tiles, and the screen-share stage stay
+    // live for everyone. The (un)publish / (un)subscribe events also make a LATE
+    // screen-share appear on the stage for people already in the room, with no
+    // rejoin: when the host starts sharing, viewers get TrackPublished /
+    // TrackSubscribed and re-snapshot with the sharer's isScreenSharing flag set.
     _roomEvents = _room!.createListener()
       ..on<DataReceivedEvent>((event) {
         if (_dataCtl.isClosed) return;
@@ -629,7 +642,27 @@ class LiveKitCallService {
           payload: event.data,
           senderIdentity: event.participant?.identity ?? '',
         ));
-      });
+      })
+      // Membership: someone joined or left the room.
+      ..on<ParticipantConnectedEvent>((_) => _emitParticipants())
+      ..on<ParticipantDisconnectedEvent>((_) => _emitParticipants())
+      // Remote tracks: (un)published and (un)subscribed. TrackSubscribed is what
+      // surfaces a remote screen-share on the stage; TrackPublished covers the
+      // pre-subscribe beat so the roster reflects the new publication promptly.
+      ..on<TrackPublishedEvent>((_) => _emitParticipants())
+      ..on<TrackUnpublishedEvent>((_) => _emitParticipants())
+      ..on<TrackSubscribedEvent>((_) => _emitParticipants())
+      ..on<TrackUnsubscribedEvent>((_) => _emitParticipants())
+      // Local tracks: our own screen-share start / stop must re-snapshot so the
+      // local stage tile appears / clears without waiting on a remote round-trip.
+      ..on<LocalTrackPublishedEvent>((_) => _emitParticipants())
+      ..on<LocalTrackUnpublishedEvent>((_) => _emitParticipants())
+      // Mute state: keep the muted / speaking dot on every tile current.
+      ..on<TrackMutedEvent>((_) => _emitParticipants())
+      ..on<TrackUnmutedEvent>((_) => _emitParticipants())
+      // Metadata: hand-raise / stage-invite changes written by the Space
+      // moderation layer drive the handRaised flag on the snapshot.
+      ..on<ParticipantMetadataUpdatedEvent>((_) => _emitParticipants());
   }
 
   void _onRoomChanged() {
