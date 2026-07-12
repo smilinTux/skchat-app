@@ -13,6 +13,7 @@ import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
 import "../call_shared/reactions.dart";
 import "../calls/call_device_picker.dart";
+import "../calls/cast_sheet.dart";
 import "../profile/profile_screen.dart" show localIdentityProvider;
 
 // ── Route args ────────────────────────────────────────────────────────────────
@@ -1003,6 +1004,17 @@ class _ControlBar extends ConsumerWidget {
           const CallDevicePickerButton(),
           // Quick emoji reactions: floats to everyone in the conf.
           ReactionsButton(identity: args.identity),
+          // Cast the shared video to a TV (Chromecast / AirPlay) over HLS. The
+          // conf's WebRTC audio + chat stay live on the phone.
+          _RoundButton(
+            icon: Icons.cast_rounded,
+            label: ref.watch(activeCastSessionProvider) != null
+                ? "Casting"
+                : "Cast",
+            active: ref.watch(activeCastSessionProvider) != null,
+            activeColor: SovereignColors.soulLumina,
+            onTap: () => showCastToTvSheet(context, ref, room: state.room),
+          ),
           if (state.isHost)
             _RoundButton(
               icon: Icons.smart_toy_rounded,
