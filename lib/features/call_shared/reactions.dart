@@ -95,7 +95,7 @@ class ReactionsController {
         from: (decoded["from"] as String?) ?? m.senderIdentity,
       ));
     } catch (_) {
-      // Malformed reaction packet — ignore.
+      // Malformed reaction packet: ignore.
     }
   }
 
@@ -121,7 +121,7 @@ class ReactionsController {
         reliable: false,
       );
     } catch (_) {
-      // Best-effort — the local echo already animated for the sender.
+      // Best-effort: the local echo already animated for the sender.
     }
   }
 

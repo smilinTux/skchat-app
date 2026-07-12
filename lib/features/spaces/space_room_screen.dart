@@ -1130,7 +1130,7 @@ class _ControlBar extends ConsumerWidget {
                 }
               },
             ),
-          // Quick emoji reactions — floats to everyone in the Space.
+          // Quick emoji reactions: floats to everyone in the Space.
           ReactionsButton(identity: join.identity),
           if (join.isHost)
             _RoundButton(

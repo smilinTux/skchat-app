@@ -980,7 +980,7 @@ class _ControlBar extends ConsumerWidget {
           ),
           // Camera / mic device picker (self-contained control widget).
           const CallDevicePickerButton(),
-          // Quick emoji reactions — floats to everyone in the conf.
+          // Quick emoji reactions: floats to everyone in the conf.
           ReactionsButton(identity: args.identity),
           if (state.isHost)
             _RoundButton(
