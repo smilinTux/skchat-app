@@ -8,6 +8,7 @@ import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
 import '../../services/recordings_service.dart';
 import '../call_shared/call_elapsed_timer.dart';
+import '../call_shared/connection_quality_bars.dart';
 import '../call_shared/in_call_panels.dart';
 import 'call_device_picker.dart';
 
@@ -1054,12 +1055,17 @@ class _ParticipantTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  // Connection-quality signal bars (subtle; hidden until known).
+                  ConnectionQualityBars(quality: snapshot.connectionQuality),
                   // Mic icon.
                   if (snapshot.isMuted)
-                    const Icon(
-                      Icons.mic_off_rounded,
-                      color: SovereignColors.accentWarning,
-                      size: 14,
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4),
+                      child: Icon(
+                        Icons.mic_off_rounded,
+                        color: SovereignColors.accentWarning,
+                        size: 14,
+                      ),
                     ),
                 ],
               ),
