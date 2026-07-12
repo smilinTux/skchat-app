@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/spaces_service.dart";
+import "../call_shared/call_elapsed_timer.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
@@ -424,14 +425,28 @@ class _Header extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  state.isConnected
-                      ? "$listeners listening"
-                      : "connecting...",
-                  style: const TextStyle(
-                    color: SovereignColors.textSecondary,
-                    fontSize: 12,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      state.isConnected
+                          ? "$listeners listening"
+                          : "connecting...",
+                      style: const TextStyle(
+                        color: SovereignColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (state.isConnected) ...[
+                      const Text(
+                        "  ·  ",
+                        style: TextStyle(
+                          color: SovereignColors.textTertiary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      CallElapsedTimer(isConnected: state.isConnected),
+                    ],
+                  ],
                 ),
               ],
             ),

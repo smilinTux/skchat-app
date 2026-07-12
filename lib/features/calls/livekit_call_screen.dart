@@ -7,6 +7,7 @@ import 'package:livekit_client/livekit_client.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
 import '../../services/recordings_service.dart';
+import '../call_shared/call_elapsed_timer.dart';
 import '../call_shared/in_call_panels.dart';
 import 'call_device_picker.dart';
 
@@ -706,6 +707,16 @@ class _TopBar extends ConsumerWidget {
                         fontFamily: 'Inter',
                       ),
                     ),
+                    if (callState.isConnected) ...[
+                      const Text(
+                        '  ·  ',
+                        style: TextStyle(
+                          color: SovereignColors.textTertiary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      CallElapsedTimer(isConnected: callState.isConnected),
+                    ],
                   ],
                 ),
               ],
