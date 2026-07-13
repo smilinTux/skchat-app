@@ -135,6 +135,11 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     final join = await showModalBottomSheet<SpaceJoin>(
       context: context,
       isScrollControlled: true,
+      // Present on the ROOT navigator so the sheet overlays the ENTIRE app,
+      // including the app-shell GlassNavBar. Without this the persistent bottom
+      // nav paints on top of the sheet and hides the "Go live" button below the
+      // Slug field (the exact bug Chef hit).
+      useRootNavigator: true,
       backgroundColor: SovereignColors.surfaceRaised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -412,10 +417,15 @@ class _CreateSpaceSheetState extends ConsumerState<_CreateSpaceSheet> {
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final mq = MediaQuery.of(context);
+    // viewInsets.bottom = keyboard height; viewPadding.bottom = home-indicator
+    // safe area. Pad by both so the "Go live" button is always reachable, above
+    // the keyboard when typing and above the home indicator when it is dismissed.
+    final bottomInset = mq.viewInsets.bottom;
+    final safeBottom = mq.viewPadding.bottom;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + bottomInset),
+      padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + bottomInset + safeBottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
