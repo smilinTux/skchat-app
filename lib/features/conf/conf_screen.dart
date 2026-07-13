@@ -105,6 +105,7 @@ class ConfState {
     this.isPending = false,
     this.pendingMessage = "",
     this.title = "",
+    this.token = "",
     this.error,
   });
 
@@ -123,6 +124,10 @@ class ConfState {
   /// Human-readable lobby status shown to a pending guest.
   final String pendingMessage;
   final String title;
+
+  /// The caller's LiveKit room token, kept so "Cast to TV" can authorize the
+  /// HLS egress from a phone over the public Funnel (room-token auth path).
+  final String token;
   final String? error;
 
   static const empty = ConfState(
@@ -148,6 +153,7 @@ class ConfState {
     bool? isPending,
     String? pendingMessage,
     String? title,
+    String? token,
     Object? error = _sentinel,
   }) {
     return ConfState(
@@ -162,6 +168,7 @@ class ConfState {
       isPending: isPending ?? this.isPending,
       pendingMessage: pendingMessage ?? this.pendingMessage,
       title: title ?? this.title,
+      token: token ?? this.token,
       error: identical(error, _sentinel) ? this.error : error as String?,
     );
   }
@@ -308,6 +315,7 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
       isHost: isHost,
       isPending: false,
       title: title.isNotEmpty ? title : state.title,
+      token: token,
     );
 
     // Wire media streams.
@@ -1029,7 +1037,12 @@ class _ControlBar extends ConsumerWidget {
                 : "Cast",
             active: ref.watch(activeCastSessionProvider) != null,
             activeColor: SovereignColors.soulLumina,
-            onTap: () => showCastToTvSheet(context, ref, room: state.room),
+            onTap: () => showCastToTvSheet(
+              context,
+              ref,
+              room: state.room,
+              token: state.token,
+            ),
           ),
           if (state.isHost)
             _RoundButton(

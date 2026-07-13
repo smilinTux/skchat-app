@@ -167,6 +167,13 @@ class LiveKitCallService {
   Room? _room;
   LocalParticipant? _localParticipant;
 
+  /// The LiveKit token used for the current room connection (minted by
+  /// [joinRoom] or supplied to [connectWithToken]). Exposed so the UI can
+  /// forward it to the cast control plane, which authorizes an HLS egress by a
+  /// valid room token when the caller is off-tailnet (over the Funnel).
+  String? _lastToken;
+  String? get lastToken => _lastToken;
+
   /// Room event subscription, carries the data-channel receive-wire that
   /// feeds [_dataCtl] (and therefore [dataChannel] / the lane substrate).
   /// Without this, [sendData] publishes fine but inbound lane events (in-call
@@ -403,6 +410,7 @@ class LiveKitCallService {
     required String token,
     String? identity,
   }) async {
+    _lastToken = token;
     _room = Room(
       roomOptions: RoomOptions(
         adaptiveStream: true,

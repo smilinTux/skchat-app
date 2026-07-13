@@ -152,6 +152,7 @@ class LiveKitCallState {
     required this.isConnected,
     this.isRecording = false,
     this.isScreenSharing = false,
+    this.token = "",
     this.error,
   });
 
@@ -167,6 +168,10 @@ class LiveKitCallState {
 
   /// True while the local participant is publishing a screen-share track.
   final bool isScreenSharing;
+
+  /// The LiveKit room token, kept so "Cast to TV" can authorize the HLS egress
+  /// from a phone over the public Funnel (room-token auth path).
+  final String token;
   final String? error;
 
   LiveKitCallState copyWith({
@@ -176,6 +181,7 @@ class LiveKitCallState {
     bool? isConnected,
     bool? isRecording,
     bool? isScreenSharing,
+    String? token,
     String? error,
   }) {
     return LiveKitCallState(
@@ -187,6 +193,7 @@ class LiveKitCallState {
       isConnected: isConnected ?? this.isConnected,
       isRecording: isRecording ?? this.isRecording,
       isScreenSharing: isScreenSharing ?? this.isScreenSharing,
+      token: token ?? this.token,
       error: error,
     );
   }
@@ -245,6 +252,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
         state = state!.copyWith(
           participants: svc.currentParticipants,
           isConnected: true,
+          token: svc.lastToken ?? "",
         );
       }
     } catch (e) {
@@ -269,6 +277,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
       isMicEnabled: true,
       isCameraEnabled: withVideo,
       isConnected: false,
+      token: token,
     );
 
     ref.onDispose(_cancelSubs);
@@ -1258,8 +1267,12 @@ class _LiveKitControlBar extends ConsumerWidget {
                 : 'Cast to TV',
             active: ref.watch(activeCastSessionProvider) != null,
             activeColor: SovereignColors.soulLumina,
-            onTap: () =>
-                showCastToTvSheet(context, ref, room: callState.roomName),
+            onTap: () => showCastToTvSheet(
+              context,
+              ref,
+              room: callState.roomName,
+              token: callState.token,
+            ),
           ),
 
           // Invite Lumina (AI agent) into this room so she joins the call.
