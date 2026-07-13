@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:math";
 
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -10,6 +11,18 @@ import "../../core/theme/theme.dart";
 import "../../services/spaces_service.dart";
 import "../profile/profile_screen.dart";
 import "space_models.dart";
+
+/// A per-app-launch suffix that makes THIS device's LiveKit participant identity
+/// unique. Two of the same user's devices resolve to the same capauth
+/// fingerprint; without a per-device suffix LiveKit treats both connections as
+/// one participant and evicts whichever joined first, so the two devices
+/// ping-pong and only one stays connected. Stable for the process lifetime so a
+/// reconnect keeps the same identity. The human display name is unaffected;
+/// only the internal LiveKit identity carries the suffix.
+final String _deviceParticipantSuffix = () {
+  final r = Random();
+  return List<String>.generate(4, (_) => r.nextInt(16).toRadixString(16)).join();
+}();
 
 /// Polls the sovereign /spaces API for live Spaces every 5s.
 ///
@@ -112,11 +125,17 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     final identity = ref.read(localIdentityProvider).fingerprint;
     final name = ref.read(localIdentityProvider).displayName;
     final ident = identity.isNotEmpty ? identity : name;
+    // Make the LiveKit participant identity unique per device so joining from
+    // two of the user's own devices does not collide (same capauth fingerprint
+    // -> LiveKit evicts the duplicate -> the "only one connects, they ping-pong"
+    // bug). The display name stays clean; only this internal identity is suffixed.
+    final uniqueIdent = "$ident~$_deviceParticipantSuffix";
+    final displayName = name.isNotEmpty ? name : ident;
     try {
       final join = await svc.joinListener(
         space.spaceId,
-        identity: ident,
-        name: name,
+        identity: uniqueIdent,
+        name: displayName,
       );
       if (!context.mounted) return;
       context.push(AppRoutes.spaceRoomPath(space.spaceId), extra: join);
