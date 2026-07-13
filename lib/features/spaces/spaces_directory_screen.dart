@@ -43,6 +43,23 @@ class SpacesDirectoryScreen extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: SovereignColors.surfaceBase,
         title: Text("Spaces", style: tt.displayLarge?.copyWith(fontSize: 24)),
+        actions: [
+          // PRIMARY create affordance. The extended FAB below can be obscured by
+          // the app-shell bottom nav bar on some viewports (that is why "start a
+          // space" was hard to find), so the always-visible entry lives here in
+          // the AppBar where the bottom nav can never cover it.
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              onPressed: () => _showCreateSheet(context, ref),
+              icon: const Icon(Icons.add_rounded, size: 20),
+              label: const Text("New Space"),
+              style: TextButton.styleFrom(
+                foregroundColor: SovereignColors.soulLumina,
+              ),
+            ),
+          ),
+        ],
       ),
       body: spacesAsync.when(
         loading: () => const Center(
@@ -53,7 +70,7 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         ),
         error: (e, _) => _buildError(context, tt, e),
         data: (spaces) => spaces.isEmpty
-            ? _buildEmpty(context, tt)
+            ? _buildEmpty(context, tt, () => _showCreateSheet(context, ref))
             : _buildList(context, ref, spaces),
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -128,7 +145,7 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     context.push(AppRoutes.spaceRoomPath(join.spaceId), extra: join);
   }
 
-  Widget _buildEmpty(BuildContext context, TextTheme tt) {
+  Widget _buildEmpty(BuildContext context, TextTheme tt, VoidCallback onCreate) {
     return ListView(
       // ListView so pull-to-refresh works even when empty.
       children: [
@@ -143,9 +160,24 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         const SizedBox(height: 8),
         Center(
           child: Text(
-            "Start one with the + button.",
+            "Nobody's live yet. Start one:",
             style: tt.bodyMedium?.copyWith(
               color: SovereignColors.textSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Center(
+          // Explicit tappable button so starting a Space never depends on the
+          // FAB (which the bottom nav can hide).
+          child: FilledButton.icon(
+            onPressed: onCreate,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text("Start a Space"),
+            style: FilledButton.styleFrom(
+              backgroundColor: SovereignColors.soulLumina,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
           ),
         ),
