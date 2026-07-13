@@ -442,6 +442,20 @@ class LiveKitCallService {
       token,
       connectOptions: ConnectOptions(
         rtcConfiguration: iceConfig ?? const RTCConfiguration(),
+        // The confirmed screen-share failure is a publish-ACK timeout
+        // (TrackPublishException 'Failed to publish track'): the client sent
+        // AddTrack but the SFU did not return the publish response within the
+        // SDK's default 10s. A cold first-publish (publisher peerconnection
+        // negotiating + ICE, possibly relayed) can exceed 10s, so give the
+        // publish and the publisher peerconnection more headroom. Every other
+        // field keeps its SDK default (see Timeouts.defaultTimeouts).
+        timeouts: const Timeouts(
+          connection: Duration(seconds: 15),
+          debounce: Duration(milliseconds: 100),
+          publish: Duration(seconds: 25),
+          peerConnection: Duration(seconds: 15),
+          iceRestart: Duration(seconds: 10),
+        ),
       ),
     );
     _localParticipant = _room!.localParticipant;
@@ -645,10 +659,27 @@ class LiveKitCallService {
     // strictly best-effort and never allowed to abort the video share.
     for (final track in tracks) {
       if (track is LocalVideoTrack) {
-        await lp.publishVideoTrack(
-          track,
-          publishOptions: _screenSharePublishOptions,
-        );
+        try {
+          await lp.publishVideoTrack(
+            track,
+            publishOptions: _screenSharePublishOptions,
+          );
+        } catch (e) {
+          // Boundary diagnostic: the video publish IS the user-visible share, so
+          // a failure here is what surfaces as "screen share failed". The
+          // confirmed failure mode is a publish-ACK timeout
+          // (TrackPublishException 'Failed to publish track'). Rethrow WITH the
+          // room connection state + the failing boundary so the caller's
+          // SnackBar tells us whether the room was actually connected and which
+          // exception type fired (a browser build has no easy console access).
+          try {
+            await track.stop();
+          } catch (_) {}
+          throw Exception(
+            'screen-share publishVideoTrack failed '
+            '[room=${_room?.connectionState}, err=${e.runtimeType}]: $e',
+          );
+        }
       } else if (track is LocalAudioTrack) {
         try {
           await lp.publishAudioTrack(track);

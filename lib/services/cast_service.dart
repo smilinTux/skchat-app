@@ -59,10 +59,18 @@ class CastService {
   /// Idempotent per room server-side: two people tapping "Cast to TV" for the
   /// same room share ONE egress (the second call returns [HlsCastSession.reused]
   /// == true with the same egress id + URL).
-  Future<HlsCastSession> start(String room) async {
+  ///
+  /// [token] is the caller's LiveKit room token. The backend authorizes the
+  /// egress start by operator/tailnet OR a valid token for this room, so passing
+  /// it lets a participant start casting from their phone over the public Funnel
+  /// (where they are not on the tailnet).
+  Future<HlsCastSession> start(String room, {String? token}) async {
     final r = await _dio.post<Map<String, dynamic>>(
       "$_base/livekit/hls/start",
-      data: {"room": room},
+      data: {
+        "room": room,
+        if (token != null && token.isNotEmpty) "token": token,
+      },
       options: Options(headers: {"Content-Type": "application/json"}),
     );
     return HlsCastSession.fromJson(r.data ?? const {});
@@ -73,12 +81,16 @@ class CastService {
   /// Best-effort: swallows a backend error so leaving a call while casting can
   /// never throw out of the leave path. The egress also has a server-side idle
   /// stop as a backstop.
-  Future<void> stop(String egressId) async {
+  Future<void> stop(String egressId, {String? room, String? token}) async {
     if (egressId.isEmpty) return;
     try {
       await _dio.post<Map<String, dynamic>>(
         "$_base/livekit/hls/stop",
-        data: {"egress_id": egressId},
+        data: {
+          "egress_id": egressId,
+          if (room != null && room.isNotEmpty) "room": room,
+          if (token != null && token.isNotEmpty) "token": token,
+        },
         options: Options(headers: {"Content-Type": "application/json"}),
       );
     } catch (_) {

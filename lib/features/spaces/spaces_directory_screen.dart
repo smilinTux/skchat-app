@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:math";
 
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -10,6 +11,18 @@ import "../../core/theme/theme.dart";
 import "../../services/spaces_service.dart";
 import "../profile/profile_screen.dart";
 import "space_models.dart";
+
+/// A per-app-launch suffix that makes THIS device's LiveKit participant identity
+/// unique. Two of the same user's devices resolve to the same capauth
+/// fingerprint; without a per-device suffix LiveKit treats both connections as
+/// one participant and evicts whichever joined first, so the two devices
+/// ping-pong and only one stays connected. Stable for the process lifetime so a
+/// reconnect keeps the same identity. The human display name is unaffected;
+/// only the internal LiveKit identity carries the suffix.
+final String _deviceParticipantSuffix = () {
+  final r = Random();
+  return List<String>.generate(4, (_) => r.nextInt(16).toRadixString(16)).join();
+}();
 
 /// Polls the sovereign /spaces API for live Spaces every 5s.
 ///
@@ -43,6 +56,23 @@ class SpacesDirectoryScreen extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: SovereignColors.surfaceBase,
         title: Text("Spaces", style: tt.displayLarge?.copyWith(fontSize: 24)),
+        actions: [
+          // PRIMARY create affordance. The extended FAB below can be obscured by
+          // the app-shell bottom nav bar on some viewports (that is why "start a
+          // space" was hard to find), so the always-visible entry lives here in
+          // the AppBar where the bottom nav can never cover it.
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              onPressed: () => _showCreateSheet(context, ref),
+              icon: const Icon(Icons.add_rounded, size: 20),
+              label: const Text("New Space"),
+              style: TextButton.styleFrom(
+                foregroundColor: SovereignColors.soulLumina,
+              ),
+            ),
+          ),
+        ],
       ),
       body: spacesAsync.when(
         loading: () => const Center(
@@ -53,7 +83,7 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         ),
         error: (e, _) => _buildError(context, tt, e),
         data: (spaces) => spaces.isEmpty
-            ? _buildEmpty(context, tt)
+            ? _buildEmpty(context, tt, () => _showCreateSheet(context, ref))
             : _buildList(context, ref, spaces),
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -95,11 +125,17 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     final identity = ref.read(localIdentityProvider).fingerprint;
     final name = ref.read(localIdentityProvider).displayName;
     final ident = identity.isNotEmpty ? identity : name;
+    // Make the LiveKit participant identity unique per device so joining from
+    // two of the user's own devices does not collide (same capauth fingerprint
+    // -> LiveKit evicts the duplicate -> the "only one connects, they ping-pong"
+    // bug). The display name stays clean; only this internal identity is suffixed.
+    final uniqueIdent = "$ident~$_deviceParticipantSuffix";
+    final displayName = name.isNotEmpty ? name : ident;
     try {
       final join = await svc.joinListener(
         space.spaceId,
-        identity: ident,
-        name: name,
+        identity: uniqueIdent,
+        name: displayName,
       );
       if (!context.mounted) return;
       context.push(AppRoutes.spaceRoomPath(space.spaceId), extra: join);
@@ -118,6 +154,11 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     final join = await showModalBottomSheet<SpaceJoin>(
       context: context,
       isScrollControlled: true,
+      // Present on the ROOT navigator so the sheet overlays the ENTIRE app,
+      // including the app-shell GlassNavBar. Without this the persistent bottom
+      // nav paints on top of the sheet and hides the "Go live" button below the
+      // Slug field (the exact bug Chef hit).
+      useRootNavigator: true,
       backgroundColor: SovereignColors.surfaceRaised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -128,7 +169,7 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     context.push(AppRoutes.spaceRoomPath(join.spaceId), extra: join);
   }
 
-  Widget _buildEmpty(BuildContext context, TextTheme tt) {
+  Widget _buildEmpty(BuildContext context, TextTheme tt, VoidCallback onCreate) {
     return ListView(
       // ListView so pull-to-refresh works even when empty.
       children: [
@@ -143,9 +184,24 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         const SizedBox(height: 8),
         Center(
           child: Text(
-            "Start one with the + button.",
+            "Nobody's live yet. Start one:",
             style: tt.bodyMedium?.copyWith(
               color: SovereignColors.textSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Center(
+          // Explicit tappable button so starting a Space never depends on the
+          // FAB (which the bottom nav can hide).
+          child: FilledButton.icon(
+            onPressed: onCreate,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text("Start a Space"),
+            style: FilledButton.styleFrom(
+              backgroundColor: SovereignColors.soulLumina,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
           ),
         ),
@@ -380,10 +436,15 @@ class _CreateSpaceSheetState extends ConsumerState<_CreateSpaceSheet> {
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final mq = MediaQuery.of(context);
+    // viewInsets.bottom = keyboard height; viewPadding.bottom = home-indicator
+    // safe area. Pad by both so the "Go live" button is always reachable, above
+    // the keyboard when typing and above the home indicator when it is dismissed.
+    final bottomInset = mq.viewInsets.bottom;
+    final safeBottom = mq.viewPadding.bottom;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + bottomInset),
+      padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + bottomInset + safeBottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
