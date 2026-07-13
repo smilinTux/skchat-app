@@ -42,6 +42,7 @@ Future<void> showCastToTvSheet(
   BuildContext context,
   WidgetRef ref, {
   required String room,
+  String? token,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -50,14 +51,18 @@ Future<void> showCastToTvSheet(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
-    builder: (_) => _CastSheetBody(room: room),
+    builder: (_) => _CastSheetBody(room: room, token: token),
   );
 }
 
 class _CastSheetBody extends ConsumerStatefulWidget {
-  const _CastSheetBody({required this.room});
+  const _CastSheetBody({required this.room, this.token});
 
   final String room;
+
+  /// The caller's LiveKit room token, forwarded to the backend so a participant
+  /// on the public Funnel is authorized to start/stop the room's HLS egress.
+  final String? token;
 
   @override
   ConsumerState<_CastSheetBody> createState() => _CastSheetBodyState();
@@ -78,7 +83,7 @@ class _CastSheetBodyState extends ConsumerState<_CastSheetBody> {
   Future<void> _start() async {
     try {
       final svc = ref.read(castServiceProvider);
-      final session = await svc.start(widget.room);
+      final session = await svc.start(widget.room, token: widget.token);
       if (!mounted) return;
       if (session.hlsUrl.isEmpty) {
         setState(() {
@@ -118,7 +123,11 @@ class _CastSheetBodyState extends ConsumerState<_CastSheetBody> {
     _controller?.dispose();
     _controller = null;
     if (session != null) {
-      await ref.read(castServiceProvider).stop(session.egressId);
+      await ref.read(castServiceProvider).stop(
+            session.egressId,
+            room: widget.room,
+            token: widget.token,
+          );
     }
     ref.read(activeCastSessionProvider.notifier).state = null;
     if (mounted) Navigator.of(context).pop();

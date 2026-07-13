@@ -1158,7 +1158,14 @@ class _ControlBar extends ConsumerWidget {
                 : "Cast",
             active: ref.watch(activeCastSessionProvider) != null,
             activeColor: SovereignColors.soulLumina,
-            onTap: () => showCastToTvSheet(context, ref, room: join.room),
+            onTap: () => showCastToTvSheet(
+              context,
+              ref,
+              room: join.room,
+              // Forward the room token so the backend authorizes the egress
+              // start even when casting from a phone over the public Funnel.
+              token: join.token,
+            ),
           ),
           if (join.isHost)
             _RoundButton(
