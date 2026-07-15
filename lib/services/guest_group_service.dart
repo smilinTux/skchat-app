@@ -108,15 +108,32 @@ class GuestGroupService {
   Future<GuestJoinResult> join({
     required String inviteToken,
     required String displayName,
+    String? jti,
+    String? bc,
   }) async {
     final kp = await _identity.ensure();
+    final data = <String, dynamic>{
+      'invite_token': inviteToken,
+      'display_name': displayName,
+      'guest_pubkey': kp.publicKeyB64,
+    };
+    // Phase 1 (SKCHAT_PQ_INVITES_ENABLED): bind this freshly-generated guest key
+    // to THIS invite by signing the canonical {bc, guest_pubkey, jti}. Keys are
+    // inserted alphabetically so jsonEncode reproduces the server's `_canonical`
+    // (sort_keys + compact separators) byte-for-byte. A stolen link replayed by
+    // a party who lacks this key -> server 401. When the operator hasn't enabled
+    // signed invites, jti/bc are absent and no guest_sig is sent (not required).
+    if (jti != null && jti.isNotEmpty && bc != null && bc.isNotEmpty) {
+      final canonical = jsonEncode({
+        'bc': bc,
+        'guest_pubkey': kp.publicKeyB64,
+        'jti': jti,
+      });
+      data['guest_sig'] = await _identity.sign(canonical);
+    }
     final r = await _dio.post<Map<String, dynamic>>(
       '$_base/api/v1/guest/join',
-      data: {
-        'invite_token': inviteToken,
-        'display_name': displayName,
-        'guest_pubkey': kp.publicKeyB64,
-      },
+      data: data,
       options: Options(headers: {'Content-Type': 'application/json'}),
     );
     return GuestJoinResult.fromJson(r.data ?? const {});

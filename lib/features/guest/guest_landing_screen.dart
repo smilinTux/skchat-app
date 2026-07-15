@@ -31,6 +31,10 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
   String? _error;
   String? _groupName;
   bool _validInvite = false;
+  // Phase 1 (SKCHAT_PQ_INVITES_ENABLED) operator claims from the preview; absent
+  // when the operator hasn't enabled signed invites.
+  String? _jti;
+  String? _bc;
 
   @override
   void initState() {
@@ -50,6 +54,8 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
       final preview = await svc.previewInvite(widget.token);
       _validInvite = preview['valid'] == true;
       _groupName = preview['group_name'] as String?;
+      _jti = preview['jti'] as String?;
+      _bc = preview['bc'] as String?;
       if (!_validInvite) {
         setState(() {
           _busy = false;
@@ -85,6 +91,8 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
       final result = await ref.read(guestGroupServiceProvider).join(
             inviteToken: widget.token,
             displayName: name,
+            jti: _jti,
+            bc: _bc,
           );
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
