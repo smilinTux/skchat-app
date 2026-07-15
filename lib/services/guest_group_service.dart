@@ -1,11 +1,14 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart' show Sha256;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
 import 'guest_identity.dart';
+import 'pq_dm_codec.dart';
 
 /// On web, use the actual served ORIGIN (correct host AND port, e.g. the
 /// tailscale `:9443`) so guest/invite calls are same-origin and work over the
@@ -88,8 +91,30 @@ class GuestGroupService {
   final String _base;
   final GuestIdentity _identity;
 
+  // Phase 2 (SKCHAT_PQ_INVITES_ENABLED): PQ-seal the guest's outgoing messages
+  // to the operator's bc-verified hybrid prekey. The guest holds no hybrid key
+  // of its own (pqdm encapsulates an ephemeral inside each seal), so this is the
+  // send direction only; the operator opens with its hybrid private key.
+  final PqDmCodec _pqCodec = PqDmCodec();
+  // token -> plaintext for THIS guest's own sealed sends, so `conversation()`
+  // can render our own ciphertext (we sealed to the operator, we cannot open it)
+  // as the original text when history echoes it back.
+  final Map<String, String> _ownEcho = {};
+  String? _opSignedPrekeyHex; // operator 1216-byte hybrid prekey, hex
+  String? _opBc; // bundle commitment b64u(sha256(canonical{identity,prekey}))
+  String? _opIdentityKey; // operator full identity pubkey (commitment input)
+
   GuestIdentity get identity => _identity;
   String get baseUrl => _base;
+
+  /// Phase 2: stash the operator's PQ sealing material from the invite preview.
+  /// `send()` PQ-seals only when all three are present AND the bc commitment
+  /// verifies; otherwise it sends cleartext (backward-compatible, flag off).
+  void configureSealing({String? signedPrekey, String? bc, String? identityKey}) {
+    _opSignedPrekeyHex = (signedPrekey ?? '').isEmpty ? null : signedPrekey;
+    _opBc = (bc ?? '').isEmpty ? null : bc;
+    _opIdentityKey = (identityKey ?? '').isEmpty ? null : identityKey;
+  }
 
   static String _strip(String s) =>
       s.endsWith('/') ? s.substring(0, s.length - 1) : s;
@@ -150,6 +175,15 @@ class GuestGroupService {
             .map((m) => m.cast<String, dynamic>())
             .toList() ??
         const <Map<String, dynamic>>[];
+    // Phase 2: our own sends were sealed to the operator (we cannot open them),
+    // so render them from the local token->plaintext echo when history returns
+    // our ciphertext. Operator->guest messages are handled by the reverse leg.
+    for (final m in msgs) {
+      final c = m['content'];
+      if (c is String && _ownEcho.containsKey(c)) {
+        m['content'] = _ownEcho[c];
+      }
+    }
     return msgs;
   }
 
@@ -161,13 +195,17 @@ class GuestGroupService {
     required String body,
     String? replyToId,
   }) async {
+    // Phase 2: PQ-seal to the operator BEFORE signing/sending, so the advisory
+    // signature covers the exact wire bytes and the stored content is the pqdm1
+    // ciphertext (not plaintext). No-op when sealing is not configured.
+    final wireBody = await _sealForOperator(body);
     final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final canonical = _canonicalSignPayload(groupId, body, ts);
+    final canonical = _canonicalSignPayload(groupId, wireBody, ts);
     final sig = await _identity.sign(canonical);
     final r = await _dio.post<Map<String, dynamic>>(
       '$_base/api/v1/guest/send',
       data: {
-        'body': body,
+        'body': wireBody,
         'ts': ts,
         'signature': sig,
         if (replyToId != null) 'reply_to_id': replyToId,
@@ -235,6 +273,55 @@ class GuestGroupService {
   /// keys, compact separators, ts stringified).
   static String _canonicalSignPayload(String groupId, String body, int ts) =>
       jsonEncode({'body': body, 'group_id': groupId, 'ts': '$ts'});
+
+  /// Phase 2: PQ-seal [body] to the operator's bc-verified hybrid prekey and
+  /// return the `pqdm1:` wire token (remembering token -> plaintext so we can
+  /// render our own send). Returns [body] unchanged when sealing is not
+  /// configured (operator has no signed invite, or the flag is off). Fail-closed:
+  /// a prekey that does not match the invite commitment ABORTS the send rather
+  /// than falling back to cleartext to a possibly-swapped prekey (H3).
+  Future<String> _sealForOperator(String body) async {
+    final spk = _opSignedPrekeyHex;
+    final bc = _opBc;
+    final idk = _opIdentityKey;
+    if (spk == null || bc == null || idk == null) return body;
+    if (PqDmCodec.isHybridToken(body)) return body; // already a token (re-send)
+    if (!await _commitmentOk(idk, spk, bc)) {
+      throw StateError(
+        'operator prekey failed the invite bundle commitment (bc); '
+        'refusing to send to an unverified prekey',
+      );
+    }
+    final token = await _pqCodec.sealToken(
+      Uint8List.fromList(utf8.encode(body)),
+      _hexToBytes(spk),
+    );
+    _ownEcho[token] = body;
+    return token;
+  }
+
+  /// H3 anti-downgrade check: `b64u(sha256(canonical{identity_key,
+  /// signed_prekey})) == bc`. The canonical matches the server's
+  /// `pq_invites._canonical` (sort_keys + compact separators); keys inserted
+  /// alphabetically so `jsonEncode` reproduces it byte-for-byte.
+  Future<bool> _commitmentOk(
+      String identityKey, String signedPrekey, String bc) async {
+    final canonical = jsonEncode({
+      'identity_key': identityKey,
+      'signed_prekey': signedPrekey,
+    });
+    final digest = await Sha256().hash(utf8.encode(canonical));
+    final got = base64Url.encode(digest.bytes).replaceAll('=', '');
+    return got == bc;
+  }
+
+  static Uint8List _hexToBytes(String hex) {
+    final out = Uint8List(hex.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+    }
+    return out;
+  }
 }
 
 final guestGroupServiceProvider = Provider<GuestGroupService>(

@@ -56,6 +56,13 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
       _groupName = preview['group_name'] as String?;
       _jti = preview['jti'] as String?;
       _bc = preview['bc'] as String?;
+      // Phase 2: hand the service the operator PQ sealing material so guest
+      // sends are pqdm1-sealed to the operator's bc-verified hybrid prekey.
+      svc.configureSealing(
+        signedPrekey: preview['signed_prekey'] as String?,
+        bc: preview['bc'] as String?,
+        identityKey: preview['full_pubkey'] as String?,
+      );
       if (!_validInvite) {
         setState(() {
           _busy = false;
