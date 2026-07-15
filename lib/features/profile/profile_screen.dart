@@ -254,6 +254,14 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                   const Divider(height: 1, indent: 56),
                   ListTile(
+                    leading: const Icon(Icons.how_to_reg_outlined),
+                    title: const Text('Join requests'),
+                    subtitle: const Text('Review + counter-sign peers (Mode C)'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => context.push(AppRoutes.modeCReview),
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
                     leading: const Icon(Icons.qr_code_scanner_rounded),
                     title: const Text('QR Login / Pair Device'),
                     subtitle: const Text('Show or scan a QR code'),
