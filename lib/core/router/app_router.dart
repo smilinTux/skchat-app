@@ -32,6 +32,7 @@ import '../../features/skos/skos_files_screen.dart';
 import '../../features/skos/skos_control_screen.dart';
 import '../../features/join/join_screen.dart';
 import '../../features/guest/guest_landing_screen.dart';
+import '../../features/join/mode_c_review_screen.dart';
 import '../../services/join_service.dart';
 
 /// Named route paths.
@@ -144,6 +145,9 @@ class AppRoutes {
 
   /// Build a guest-group landing path for an invite [token].
   static String guestGroupPath(String token) => '/g/$token';
+
+  /// Operator Mode C review: pending peer accept assertions + counter-sign.
+  static const modeCReview = '/mode-c';
 
   /// Build a guest join link/route for [room] with an [invite] token.
   static String guestJoinPath(String room, String invite) =>
@@ -375,6 +379,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           if (token.isEmpty) return const _InvalidJoinScreen();
           return GuestLandingScreen(token: token);
         },
+      ),
+
+      // Operator Mode C review: pending peer accept assertions + counter-sign.
+      GoRoute(
+        path: AppRoutes.modeCReview,
+        builder: (context, state) => const ModeCReviewScreen(),
       ),
 
       // ── Call screens ────────────────────────────────────────────────────
