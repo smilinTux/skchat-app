@@ -177,11 +177,15 @@ class GuestGroupService {
         const <Map<String, dynamic>>[];
     // Phase 2: our own sends were sealed to the operator (we cannot open them),
     // so render them from the local token->plaintext echo when history returns
-    // our ciphertext. Operator->guest messages are handled by the reverse leg.
+    // our ciphertext. The message text arrives under 'body' (what the bubble
+    // renders) or 'content'; replace whichever holds our own sealed token.
+    // Operator->guest messages are handled by the reverse leg.
     for (final m in msgs) {
-      final c = m['content'];
-      if (c is String && _ownEcho.containsKey(c)) {
-        m['content'] = _ownEcho[c];
+      for (final key in const ['body', 'content']) {
+        final c = m[key];
+        if (c is String && _ownEcho.containsKey(c)) {
+          m[key] = _ownEcho[c];
+        }
       }
     }
     return msgs;

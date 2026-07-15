@@ -92,7 +92,10 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
       );
       _composeCtl.clear();
       if (msg.isNotEmpty) {
-        setState(() => _messages = [..._messages, msg]);
+        // Show the plaintext we typed, not the sealed pqdm1 token the server
+        // echoes back (we sealed to the operator and cannot open our own send).
+        final shown = {...msg, 'body': body, 'content': body};
+        setState(() => _messages = [..._messages, shown]);
         _scrollToBottom();
       }
     } catch (e) {
