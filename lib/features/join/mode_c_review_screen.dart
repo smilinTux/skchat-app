@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/mode_c_service.dart';
+import '../../services/operator_token.dart';
 
 /// Operator review + counter-sign screen for Mode C (non-federated peer accept).
 ///
@@ -159,6 +160,43 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
     }
   }
 
+  Future<void> _operatorTokenDialog() async {
+    final ctl = TextEditingController(text: operatorToken() ?? '');
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Operator token'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+                'Set SKCHAT_GUEST_OPERATOR_TOKEN on the server, then paste it here '
+                'to use the operator screens over the public Funnel. Leave empty on '
+                'the tailnet.'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: ctl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'X-Operator-Token'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, 'clear'), child: const Text('Clear')),
+          TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, 'save'), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (action == 'save') {
+      setOperatorToken(ctl.text.trim());
+      await _refresh();
+    } else if (action == 'clear') {
+      setOperatorToken(null);
+      await _refresh();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
@@ -166,6 +204,11 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
       appBar: AppBar(
         title: const Text('Join requests'),
         actions: [
+          IconButton(
+            onPressed: _operatorTokenDialog,
+            icon: const Icon(Icons.key),
+            tooltip: 'Operator token (for Funnel access)',
+          ),
           IconButton(
             onPressed: _busy ? null : _trustOperatorDialog,
             icon: const Icon(Icons.person_add_alt_1),

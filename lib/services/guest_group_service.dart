@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
 import 'guest_identity.dart';
+import 'operator_token.dart' as op_token;
 import 'pq_dm_codec.dart';
 
 /// On web, use the actual served ORIGIN (correct host AND port, e.g. the
@@ -356,8 +357,13 @@ class GuestInviteService {
     String? operatorToken,
   }) async {
     final headers = <String, dynamic>{'Content-Type': 'application/json'};
-    if (operatorToken != null && operatorToken.isNotEmpty) {
-      headers['X-Operator-Token'] = operatorToken;
+    // Default to the app-stored operator token so minting also works over the
+    // public Funnel once SKCHAT_GUEST_OPERATOR_TOKEN is set server-side.
+    final tok = (operatorToken != null && operatorToken.isNotEmpty)
+        ? operatorToken
+        : op_token.operatorToken();
+    if (tok != null && tok.isNotEmpty) {
+      headers['X-Operator-Token'] = tok;
     }
     final r = await _dio.post<Map<String, dynamic>>(
       '$_base/api/v1/groups/$groupId/invite',
