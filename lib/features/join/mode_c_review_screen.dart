@@ -21,6 +21,7 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
   String? _error;
   List<ModeCPending> _pending = const [];
   List<Map<String, dynamic>> _admitted = const [];
+  List<Map<String, dynamic>> _trustedOps = const [];
   final Set<String> _working = {};
 
   @override
@@ -38,10 +39,12 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
       final svc = ref.read(modeCServiceProvider);
       final items = await svc.pending();
       final adm = await svc.admitted();
+      final ops = await svc.trustedOperators();
       if (!mounted) return;
       setState(() {
         _pending = items;
         _admitted = adm;
+        _trustedOps = ops;
         _busy = false;
       });
     } catch (e) {
@@ -88,6 +91,74 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
     }
   }
 
+  Future<void> _untrustOperator(String opId) async {
+    setState(() => _working.add(opId));
+    try {
+      await ref.read(modeCServiceProvider).untrustOperator(opId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Operator trust revoked.')));
+      await _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Untrust failed.')));
+    } finally {
+      if (mounted) setState(() => _working.remove(opId));
+    }
+  }
+
+  Future<void> _trustOperatorDialog() async {
+    final idCtl = TextEditingController();
+    final keyCtl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Trust a peer-operator'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: idCtl,
+              decoration: const InputDecoration(
+                  labelText: 'Operator FQID', hintText: 'agent@operator.realm'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: keyCtl,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                  labelText: 'Operator PGP public key',
+                  hintText: '-----BEGIN PGP PUBLIC KEY BLOCK-----'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true), child: const Text('Trust')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final id = idCtl.text.trim();
+    final key = keyCtl.text.trim();
+    if (id.isEmpty || key.isEmpty) return;
+    try {
+      await ref.read(modeCServiceProvider).trustOperator(id, key);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Operator trusted.')));
+      await _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Trust failed (operator origin only).')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
@@ -95,6 +166,11 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
       appBar: AppBar(
         title: const Text('Join requests'),
         actions: [
+          IconButton(
+            onPressed: _busy ? null : _trustOperatorDialog,
+            icon: const Icon(Icons.person_add_alt_1),
+            tooltip: 'Trust a peer-operator',
+          ),
           IconButton(
             onPressed: _busy ? null : _refresh,
             icon: const Icon(Icons.refresh),
@@ -140,6 +216,41 @@ class _ModeCReviewScreenState extends ConsumerState<ModeCReviewScreen> {
                             busy: _working.contains(a['peer_fp']),
                             onRevoke: () => _revoke((a['peer_fp'] as String?) ?? ''),
                           )),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Trusted operators (Mode B)', style: tt.labelLarge),
+                        TextButton.icon(
+                          onPressed: _trustOperatorDialog,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('Trust'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text('Agents under a trusted operator join without a code.',
+                        style: tt.bodySmall),
+                    const SizedBox(height: 8),
+                    if (_trustedOps.isEmpty)
+                      Text('No trusted operators.', style: tt.bodyMedium)
+                    else
+                      ..._trustedOps.map((o) {
+                        final id = (o['operator_id'] as String?) ?? '';
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.workspaces_outline),
+                          title: Text(id, style: tt.bodyMedium),
+                          trailing: _working.contains(id)
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2))
+                              : TextButton(
+                                  onPressed: () => _untrustOperator(id),
+                                  child: const Text('Untrust')),
+                        );
+                      }),
                   ],
                 ),
     );

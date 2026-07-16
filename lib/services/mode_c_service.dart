@@ -77,6 +77,34 @@ class ModeCService {
       options: Options(headers: {'Content-Type': 'application/json'}),
     );
   }
+
+  /// The opt-in-trusted peer-operators (Mode B): agents under them auto-admit.
+  Future<List<Map<String, dynamic>>> trustedOperators() async {
+    final r = await _dio.get<Map<String, dynamic>>(
+        '$_base/api/v1/mode-c/trusted-operators');
+    return ((r.data?['trusted_operators'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+  }
+
+  /// EXPLICITLY trust a peer-operator by FQID + its PGP identity pubkey (Mode B).
+  Future<void> trustOperator(String operatorId, String operatorPubkey) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$_base/api/v1/mode-c/trust-operator',
+      data: {'operator_id': operatorId, 'operator_pubkey': operatorPubkey},
+      options: Options(headers: {'Content-Type': 'application/json'}),
+    );
+  }
+
+  /// Revoke trust in a peer-operator (H5). Its agents stop inheriting.
+  Future<void> untrustOperator(String operatorId) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$_base/api/v1/mode-c/untrust-operator',
+      data: {'operator_id': operatorId},
+      options: Options(headers: {'Content-Type': 'application/json'}),
+    );
+  }
 }
 
 final modeCServiceProvider = Provider<ModeCService>(
