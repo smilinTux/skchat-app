@@ -59,6 +59,24 @@ class ModeCService {
     );
     return r.data ?? const {};
   }
+
+  /// The durably-admitted peers (TOFU pin store), newest first, non-revoked.
+  Future<List<Map<String, dynamic>>> admitted() async {
+    final r = await _dio.get<Map<String, dynamic>>('$_base/api/v1/mode-c/admitted');
+    return ((r.data?['admitted'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Revoke an admitted peer's trust pin (H5). It drops out of [admitted].
+  Future<void> revoke(String peerFp) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$_base/api/v1/mode-c/revoke',
+      data: {'peer_fp': peerFp},
+      options: Options(headers: {'Content-Type': 'application/json'}),
+    );
+  }
 }
 
 final modeCServiceProvider = Provider<ModeCService>(
