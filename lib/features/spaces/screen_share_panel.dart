@@ -63,8 +63,28 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
 
   Future<void> _toggleShare() async {
     if (_busy) return;
-    setState(() => _busy = true);
     final next = !_sharing;
+    // Z1: mobile browsers (iOS Safari, Android Chrome) have no
+    // getDisplayMedia, so a share can never actually start here.
+    // Short-circuit BEFORE the resolver / notifier so the raw
+    // livekit_client lkPlatformIsWebMobile() exception never surfaces;
+    // show the same friendly message the control-bar Go live guard shows
+    // (space_room_screen.dart). Reuses the isMobileWebProvider seam. Only
+    // gates starting a share; stopping stays available on every platform.
+    if (next && ref.read(isMobileWebProvider)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Screen sharing needs the desktop app. Native mobile screen "
+              "share is coming soon. You can still watch shares here.",
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    setState(() => _busy = true);
     try {
       String? sourceId;
       if (next) {
