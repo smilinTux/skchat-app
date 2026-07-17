@@ -44,6 +44,7 @@ class SpaceRoomState {
     required this.isMicEnabled,
     required this.handRaised,
     this.externalMuteNonce = 0,
+    this.invitePromptDismissed = false,
     this.error,
   });
 
@@ -59,6 +60,14 @@ class SpaceRoomState {
   /// notice fires exactly once per event, including two in a row with the
   /// same underlying isMicEnabled==false state.
   final int externalMuteNonce;
+
+  /// X1: true once the local participant has tapped "Not now" on the
+  /// "invited to speak" banner for the CURRENT invite. Local-only, no
+  /// endpoint call (see [SpaceRoomNotifier.dismissInvitePrompt]). Reset to
+  /// false automatically the next time the participants listener in
+  /// [SpaceRoomNotifier.connect] observes a fresh invitedToStage
+  /// false -> true transition (a new invite re-arms the prompt).
+  final bool invitePromptDismissed;
   final String? error;
 
   SpaceRoomState copyWith({
@@ -67,6 +76,7 @@ class SpaceRoomState {
     bool? isMicEnabled,
     bool? handRaised,
     int? externalMuteNonce,
+    bool? invitePromptDismissed,
     String? error,
   }) {
     return SpaceRoomState(
@@ -75,6 +85,8 @@ class SpaceRoomState {
       isMicEnabled: isMicEnabled ?? this.isMicEnabled,
       handRaised: handRaised ?? this.handRaised,
       externalMuteNonce: externalMuteNonce ?? this.externalMuteNonce,
+      invitePromptDismissed:
+          invitePromptDismissed ?? this.invitePromptDismissed,
       error: error,
     );
   }
@@ -90,6 +102,34 @@ bool _localCanPublish(List<LiveKitParticipantSnapshot> participants) {
     if (p.isLocal) return p.canPublish;
   }
   return false;
+}
+
+/// The local participant's snapshot, or null before the first participants
+/// emission arrives.
+LiveKitParticipantSnapshot? _localSnapshot(
+    List<LiveKitParticipantSnapshot> participants) {
+  for (final p in participants) {
+    if (p.isLocal) return p;
+  }
+  return null;
+}
+
+/// True when the local participant has an outstanding host invite to the
+/// stage (the moderation layer wrote `invited_to_stage: true` into their
+/// metadata). Sourced from the snapshot list the same way [_localCanPublish]
+/// is.
+bool _localInvited(List<LiveKitParticipantSnapshot> participants) {
+  return _localSnapshot(participants)?.invitedToStage ?? false;
+}
+
+/// X1: whether to offer "Join stage" (the invited-prompt banner and the
+/// control-bar button relabel) for [local] - a host invite that has not yet
+/// been acted on (hand not yet raised to accept it) and has not yet
+/// completed the publish gate (still a listener). Both surfaces share this
+/// one condition so the banner and the button never disagree.
+bool _shouldOfferJoinStage(LiveKitParticipantSnapshot? local) {
+  if (local == null) return false;
+  return local.invitedToStage && !local.handRaised && !local.canPublish;
 }
 
 /// The published mic track sid of a REMOTE participant, or null when they
@@ -141,8 +181,16 @@ class SpaceRoomNotifier
 
     _partSub = svc.participants.listen((list) async {
       final wasSpeaker = _localCanPublish(state.participants);
+      final wasInvited = _localInvited(state.participants);
       state = state.copyWith(participants: list);
       final isSpeaker = _localCanPublish(list);
+      final isInvited = _localInvited(list);
+      if (isInvited && !wasInvited) {
+        // X1: a fresh invite (false -> true). Clear any earlier dismissal
+        // so the "invited to speak" banner (re)appears for THIS invite,
+        // even if the local participant dismissed a previous one.
+        state = state.copyWith(invitePromptDismissed: false);
+      }
       if (wasSpeaker && !isSpeaker && state.isMicEnabled) {
         // Demoted mid-session: the publish grant was revoked. Stop
         // publishing and drop back to the listener control (X Spaces model,
@@ -242,6 +290,17 @@ class SpaceRoomNotifier
     } on Object {
       // Best-effort, leave hand state as-is on failure.
     }
+  }
+
+  /// X1: dismiss the "invited to speak" banner locally for the current
+  /// invite. NO endpoint call: declining to join the stage right now is a
+  /// local-only choice, the server's invited_to_stage flag (and therefore
+  /// the control-bar "Join stage" relabel) is untouched, so the guest can
+  /// still tap the control bar later to accept the same invite. Stays
+  /// dismissed until [connect]'s participants listener observes a fresh
+  /// invite (a false -> true invitedToStage transition), which re-arms it.
+  void dismissInvitePrompt() {
+    state = state.copyWith(invitePromptDismissed: true);
   }
 
   Future<void> invite(String requester, String identity) =>
@@ -392,6 +451,17 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                           )
                         : _buildConnecting(),
                   ),
+                  // X1: "The host invited you to speak" prompt. Shown above
+                  // the control bar, non-blocking, only while there is an
+                  // outstanding invite the local participant has neither
+                  // accepted nor dismissed (_shouldOfferJoinStage +
+                  // invitePromptDismissed). The control-bar "Join stage"
+                  // relabel below stays available even after a dismissal
+                  // (dismissing only hides THIS banner, not the invite).
+                  if (st.isConnected &&
+                      _shouldOfferJoinStage(_localSnapshot(st.participants)) &&
+                      !st.invitePromptDismissed)
+                    _InvitedToStageBanner(join: join),
                   _ControlBar(
                     join: join,
                     state: st,
@@ -526,6 +596,68 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Invited-to-stage banner (X1) ────────────────────────────────────────────
+
+/// "The host invited you to speak" prompt, shown above the control bar for
+/// the local participant while an invite is outstanding (see
+/// [_shouldOfferJoinStage]). Non-blocking: it does not stop the guest from
+/// doing anything else in the Space, it just offers the accept path so the
+/// invite is not otherwise-invisible (the reported X1 bug: "the guest sees
+/// NOTHING and never becomes a speaker").
+class _InvitedToStageBanner extends ConsumerWidget {
+  const _InvitedToStageBanner({required this.join});
+
+  final SpaceJoin join;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(spaceRoomProvider(join).notifier);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: SovereignColors.soulLumina.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: SovereignColors.soulLumina.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.campaign_rounded,
+            color: SovereignColors.soulLumina,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              "The host invited you to speak.",
+              style: TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: notifier.dismissInvitePrompt,
+            child: const Text("Not now"),
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            // Same accept path as the control-bar "Join stage" button
+            // (the existing raise-hand call, which completes the server's
+            // AND-gate since invited_to_stage is already true).
+            onPressed: () => notifier.raiseHand(join.identity),
+            child: const Text("Join stage"),
+          ),
+        ],
       ),
     );
   }
@@ -1286,6 +1418,10 @@ class _ControlBar extends ConsumerWidget {
     // promoted speaker), not [SpaceJoin.isHost]: a promoted speaker must get
     // real mic controls without rejoining, and a demoted one must lose them.
     final canPublish = local?.canPublish ?? false;
+    // X1: an outstanding, not-yet-accepted host invite. Independent of the
+    // banner's own dismissal (see _InvitedToStageBanner / invitePromptDismissed
+    // above): the button stays the accept path even after "Not now".
+    final isInvited = _shouldOfferJoinStage(local);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
@@ -1307,9 +1443,14 @@ class _ControlBar extends ConsumerWidget {
               icon: state.handRaised
                   ? Icons.back_hand_rounded
                   : Icons.back_hand_outlined,
-              label: state.handRaised ? "Lower" : "Raise hand",
-              active: state.handRaised,
+              label: isInvited
+                  ? "Join stage"
+                  : (state.handRaised ? "Lower" : "Raise hand"),
+              active: state.handRaised || isInvited,
               activeColor: SovereignColors.soulLumina,
+              // Same call either way (raise hand / accept invite / lower):
+              // the server's raise-hand endpoint is what completes the
+              // AND-gate when invited_to_stage is already true (X1).
               onTap: () => notifier.raiseHand(join.identity),
             ),
           // Go live: prominent screen-share affordance for the host and any

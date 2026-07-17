@@ -68,6 +68,7 @@ class LiveKitParticipantSnapshot {
     this.isScreenSharing = false,
     this.canPublish = false,
     this.handRaised = false,
+    this.invitedToStage = false,
     this.isSpeaking = false,
     this.connectionQuality = ConnectionQuality.unknown,
     this.metadata,
@@ -95,6 +96,17 @@ class LiveKitParticipantSnapshot {
   /// metadata JSON written by the Space moderation layer. Defaults to false
   /// on missing / malformed metadata.
   final bool handRaised;
+
+  /// Whether the host has invited this participant to the stage (X1: the
+  /// "Join stage" prompt). Parsed from the `invited_to_stage` key of the
+  /// same participant metadata JSON as [handRaised]. The Space moderation
+  /// layer's AND-gate flips [canPublish] only once BOTH [handRaised] and
+  /// [invitedToStage] are true; a host invite alone (this flag true, hand
+  /// not yet raised) leaves the participant a listener until they accept by
+  /// raising their hand (see [SpaceRoomNotifier.raiseHand] in
+  /// space_room_screen.dart, which re-uses the same raise-hand call to
+  /// complete the gate). Defaults to false on missing / malformed metadata.
+  final bool invitedToStage;
 
   /// True when LiveKit detects active audio from this participant.
   final bool isSpeaking;
@@ -124,6 +136,23 @@ class LiveKitParticipantSnapshot {
       }
     } on FormatException {
       // Malformed metadata, treat as no hand raised.
+    }
+    return false;
+  }
+
+  /// Parse the `invited_to_stage` boolean out of a participant metadata JSON
+  /// blob. See [parseHandRaised] for the shared shape / defensiveness notes;
+  /// this reads the sibling key the Space moderation layer writes into the
+  /// same object.
+  static bool parseInvitedToStage(String? metadata) {
+    if (metadata == null || metadata.isEmpty) return false;
+    try {
+      final decoded = jsonDecode(metadata);
+      if (decoded is Map<String, dynamic>) {
+        return decoded['invited_to_stage'] == true;
+      }
+    } on FormatException {
+      // Malformed metadata, treat as no invite.
     }
     return false;
   }
@@ -1055,8 +1084,38 @@ class LiveKitCallService {
       })
       ..on<TrackUnmutedEvent>((_) => _emitParticipants())
       // Metadata: hand-raise / stage-invite changes written by the Space
-      // moderation layer drive the handRaised flag on the snapshot.
-      ..on<ParticipantMetadataUpdatedEvent>((_) => _emitParticipants())
+      // moderation layer drive the handRaised/invitedToStage flags on the
+      // snapshot, AND accepting an invite (X1) flips the participant's
+      // canPublish permission in the SAME server-side update_participant
+      // call that clears those metadata flags.
+      //
+      // X1 host-side freshness: verified against the INSTALLED
+      // livekit_client 2.5.0+hotfix.3 source (not the 2.2.6 docs the recon
+      // read). Participant.updateFromInfo (lib/src/participant/
+      // participant.dart) calls `_setMetadata(info.metadata)` and then
+      // `setPermissions(info.permission.toLKType())` synchronously, with no
+      // `await` between them, so by the time this handler runs, canPublish
+      // is normally already fresh: EventsEmitter's backing StreamController
+      // is built with `sync: false` (lib/src/managers/event.dart), which
+      // defers listener dispatch to a microtask, and setPermissions() has
+      // already executed inside that same synchronous call before that
+      // microtask is ever processed.
+      //
+      // The real gap: ParticipantPermissionsUpdatedEvent is emitted ONLY by
+      // LocalParticipant.setPermissions (lib/src/participant/local.dart);
+      // the base Participant.setPermissions used for a REMOTE participant
+      // emits nothing. So if a permission-only change ever lands on its own
+      // (the metadata value happens to be unchanged, so _setMetadata's
+      // diff-check swallows the event, or the server ever splits the write
+      // into two signal messages), NO event fires for that update at all,
+      // and the host's roster silently holds the old canPublish until some
+      // unrelated event (e.g. TrackPublishedEvent once the guest actually
+      // publishes) forces a re-snapshot, matching the reported "does not
+      // re-render until they publish" staleness. Re-emitting once more a
+      // microtask after this handler is cheap, idempotent defense-in-depth
+      // against that gap without inventing a new event or a poll loop.
+      ..on<ParticipantMetadataUpdatedEvent>(
+          (_) => _onParticipantMetadataChanged())
       // Connection-quality changes are NOT surfaced by the plain
       // Room.addListener change signal, so re-emit the participant snapshots
       // here whenever the SFU updates a participant's link quality. This keeps
@@ -1076,6 +1135,23 @@ class LiveKitCallService {
       _participantsCtl.add(currentParticipants);
     }
   }
+
+  /// X1 freshness fix: re-emit the participant snapshot now AND once more
+  /// after a microtask. See the doc comment on the `ParticipantMetadataUpdatedEvent`
+  /// binding in [_bindRoomListeners] for the SDK-source evidence behind
+  /// this. Exposed via [debugSimulateMetadataChange] so the double-emit
+  /// timing itself is unit-testable without a live [Room].
+  void _onParticipantMetadataChanged() {
+    _emitParticipants();
+    scheduleMicrotask(_emitParticipants);
+  }
+
+  /// Test-only hook: fires the exact same re-emit path a real
+  /// `ParticipantMetadataUpdatedEvent` from `_bindRoomListeners` would
+  /// trigger, without needing a live [Room] / LiveKit connection. See
+  /// test/services/livekit_call_service_snapshot_test.dart.
+  @visibleForTesting
+  void debugSimulateMetadataChange() => _onParticipantMetadataChanged();
 
   /// Reconcile a mute event against the LOCAL mic publication, surfacing a
   /// server-initiated mute (the moderation layer's host force-mute,
@@ -1115,6 +1191,8 @@ class LiveKitCallService {
           p.getTrackPublicationBySource(TrackSource.screenShareVideo) != null,
       canPublish: p.permissions.canPublish,
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
+      invitedToStage:
+          LiveKitParticipantSnapshot.parseInvitedToStage(p.metadata),
       isSpeaking: p.isSpeaking,
       connectionQuality: p.connectionQuality,
       metadata: p.metadata,
@@ -1131,6 +1209,8 @@ class LiveKitCallService {
           p.getTrackPublicationBySource(TrackSource.screenShareVideo) != null,
       canPublish: p.permissions.canPublish,
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
+      invitedToStage:
+          LiveKitParticipantSnapshot.parseInvitedToStage(p.metadata),
       isSpeaking: p.isSpeaking,
       connectionQuality: p.connectionQuality,
       metadata: p.metadata,

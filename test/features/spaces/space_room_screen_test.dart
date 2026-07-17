@@ -35,6 +35,7 @@ LiveKitParticipantSnapshot _snap(
   bool isSpeaking = false,
   bool canPublish = false,
   bool handRaised = false,
+  bool invitedToStage = false,
 }) {
   return LiveKitParticipantSnapshot(
     identity: identity,
@@ -44,6 +45,7 @@ LiveKitParticipantSnapshot _snap(
     isSpeaking: isSpeaking,
     canPublish: canPublish,
     handRaised: handRaised,
+    invitedToStage: invitedToStage,
   );
 }
 
@@ -128,6 +130,11 @@ void main() {
           requester: any(named: "requester"),
           identity: any(named: "identity"),
         )).thenAnswer((_) async {});
+    // Default raise-hand stub: on_stage false (a plain raise, not a gate
+    // completion). X1 tests override this per-case to return true / false
+    // as needed.
+    when(() => spaces.raiseHand(any(), identity: any(named: "identity")))
+        .thenAnswer((_) async => false);
   });
 
   Widget wrapFor(SpaceJoin join, {List<Override> extraOverrides = const []}) {
@@ -928,6 +935,197 @@ void main() {
       expect(find.text("Share to skchat chat"), findsOneWidget);
       expect(find.text("Share via..."), findsOneWidget);
       expect(find.text("Copy link"), findsOneWidget);
+    });
+  });
+
+  // ── X1: invited-to-stage "Join stage" prompt ──────────────────────────────
+  //
+  // Bug (operator report): host taps "Invite to speak" on a listener, the
+  // guest sees NOTHING and never becomes a speaker. Server model
+  // (moderation.py, recon-verified): metadata carries {"hand_raised",
+  // "invited_to_stage"}; canPublish flips only once BOTH are true (the
+  // AND-gate). A host invite alone sets invited_to_stage, which previously
+  // surfaced nowhere client-side. Accepting is simply calling the existing
+  // raise-hand endpoint again (completes the gate).
+
+  group("X1 invited-to-stage prompt", () {
+    testWidgets(
+        "shows the banner and relabels the control-bar button exactly when "
+        "invited, hand not yet raised, and not yet on stage", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true), // host
+        _snap("alice@dk.skworld", isLocal: true, invitedToStage: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("The host invited you to speak."), findsOneWidget);
+      expect(find.text("Not now"), findsOneWidget);
+      // Control-bar button relabelled too (SP2's "Raise hand" is gone).
+      expect(find.text("Raise hand"), findsNothing);
+      expect(find.text("Join stage"), findsNWidgets(2)); // banner + control bar
+    });
+
+    testWidgets(
+        "does NOT show once the gate has completed (canPublish true): SP2 "
+        "mute controls take over instead", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld",
+            isLocal: true, invitedToStage: true, canPublish: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("The host invited you to speak."), findsNothing);
+      expect(find.text("Join stage"), findsNothing);
+      expect(find.text("Unmute"), findsOneWidget);
+    });
+
+    testWidgets(
+        "does NOT show once the hand is already raised (accept already in "
+        "flight / a recording-consent revert kept them a listener)",
+        (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld",
+            isLocal: true, invitedToStage: true, handRaised: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("The host invited you to speak."), findsNothing);
+      // Falls back to the ordinary raise-hand control (the control bar's
+      // "Lower"/"Raise hand" label tracks SpaceRoomState.handRaised, the
+      // notifier's own request-in-flight bookkeeping, not the server-
+      // sourced snapshot flag used for the AND-gate condition above), not a
+      // "Join stage" relabel.
+      expect(find.text("Join stage"), findsNothing);
+    });
+
+    testWidgets("does NOT show for a plain, uninvited listener",
+        (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld", isLocal: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("The host invited you to speak."), findsNothing);
+      expect(find.text("Raise hand"), findsOneWidget);
+    });
+
+    testWidgets(
+        "Join stage in the banner calls raiseHand exactly once with the "
+        "guest's identity", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld", isLocal: true, invitedToStage: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+      when(() => spaces.raiseHand(any(), identity: "alice@dk.skworld"))
+          .thenAnswer((_) async => true);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.widgetWithText(FilledButton, "Join stage"));
+      await tester.pump();
+
+      verify(() =>
+              spaces.raiseHand(any(), identity: "alice@dk.skworld"))
+          .called(1);
+    });
+
+    testWidgets(
+        "Not now dismisses the banner locally without calling raiseHand, "
+        "and the control-bar button stays the accept path", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld", isLocal: true, invitedToStage: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("The host invited you to speak."), findsOneWidget);
+
+      await tester.tap(find.text("Not now"));
+      await tester.pump();
+
+      expect(find.text("The host invited you to speak."), findsNothing);
+      verifyNever(
+          () => spaces.raiseHand(any(), identity: any(named: "identity")));
+      // The banner's FilledButton is gone, but the control bar's own
+      // "Join stage" affordance survives the local dismissal.
+      expect(find.text("Join stage"), findsOneWidget);
+    });
+
+    testWidgets(
+        "re-prompts on a FRESH invite (false -> true again) even after an "
+        "earlier dismissal", (tester) async {
+      final controller =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(controller.close);
+      final invited = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld", isLocal: true, invitedToStage: true),
+      ];
+      final notInvited = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", canPublish: true),
+        _snap("alice@dk.skworld", isLocal: true), // invite cleared
+      ];
+      when(() => svc.participants).thenAnswer((_) => controller.stream);
+      when(() => svc.currentParticipants).thenReturn(invited);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      controller.add(invited);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text("The host invited you to speak."), findsOneWidget);
+
+      await tester.tap(find.text("Not now"));
+      await tester.pump();
+      expect(find.text("The host invited you to speak."), findsNothing);
+
+      // The invite clears entirely (e.g. the host rescinds it).
+      controller.add(notInvited);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text("The host invited you to speak."), findsNothing);
+
+      // A FRESH invite (false -> true again): must re-arm even though the
+      // PREVIOUS invite was dismissed.
+      controller.add(invited);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text("The host invited you to speak."), findsOneWidget);
     });
   });
 }
