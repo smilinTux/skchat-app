@@ -70,7 +70,7 @@ void main() {
     when(() => svc.leaveRoom()).thenAnswer((_) async {});
   });
 
-  Widget wrap() {
+  Widget wrapFor(SpaceJoin join) {
     return ProviderScope(
       overrides: [
         liveKitCallServiceProvider.overrideWithValue(svc),
@@ -78,6 +78,8 @@ void main() {
       child: MaterialApp(home: SpaceRoomScreen(join: join)),
     );
   }
+
+  Widget wrap() => wrapFor(join);
 
   testWidgets("connects with the role token and renders host + listeners",
       (tester) async {
@@ -220,5 +222,159 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text("bob"), findsNothing);
     expect(find.text("alice"), findsOneWidget);
+  });
+
+  // ── SP2: promoted-speaker mic controls ────────────────────────────────────
+  //
+  // X Spaces model: real mic controls follow the actual LiveKit publish
+  // grant (canPublish), not SpaceJoin.isHost. A promoted speaker gets a
+  // mute/unmute control without rejoining, starts MUTED (never auto-
+  // unmuted), and loses the control (reverting to "Raise hand") the moment
+  // the grant is revoked.
+
+  const speakerJoin = SpaceJoin(
+    spaceId: "s1",
+    room: "sk-space-s1",
+    url: "wss://lk.test/ws",
+    identity: "dana@dk.skworld",
+    role: "speaker",
+    token: "jwt-speaker",
+    title: "SKWorld Town Hall",
+  );
+
+  const listenerJoin = SpaceJoin(
+    spaceId: "s1",
+    room: "sk-space-s1",
+    url: "wss://lk.test/ws",
+    identity: "alice@dk.skworld",
+    role: "listener",
+    token: "jwt-listener",
+    title: "SKWorld Town Hall",
+  );
+
+  testWidgets(
+      "a non-host participant with the publish grant sees the mute control, not raise hand",
+      (tester) async {
+    final participants = <LiveKitParticipantSnapshot>[
+      _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+      _snap("chef@dk.skworld", canPublish: true),
+      _snap("alice"), // listener
+    ];
+    when(() => svc.participants).thenAnswer((_) => Stream.value(participants));
+    when(() => svc.currentParticipants).thenReturn(participants);
+
+    await tester.pumpWidget(wrapFor(speakerJoin));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Speaker section (SP2 is UI-only: the mute/unmute control is gated on
+    // canPublish, not on the host flag).
+    expect(find.text("Raise hand"), findsNothing);
+    final hasMicControl = find.text("Mute").evaluate().isNotEmpty ||
+        find.text("Unmute").evaluate().isNotEmpty;
+    expect(hasMicControl, isTrue,
+        reason: "a canPublish local participant must render a mic control");
+  });
+
+  testWidgets(
+      "a plain listener (no publish grant) sees raise hand, never a mute control",
+      (tester) async {
+    final participants = <LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", canPublish: true),
+      _snap("alice@dk.skworld", isLocal: true), // listener, no grant
+    ];
+    when(() => svc.participants).thenAnswer((_) => Stream.value(participants));
+    when(() => svc.currentParticipants).thenReturn(participants);
+
+    await tester.pumpWidget(wrapFor(listenerJoin));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text("Raise hand"), findsOneWidget);
+    expect(find.text("Mute"), findsNothing);
+    expect(find.text("Unmute"), findsNothing);
+    // A plain listener must never be put live.
+    verifyNever(() => svc.setMicEnabled(true));
+  });
+
+  testWidgets(
+      "promotion (grant flips to canPublish) enables mic controls WITHOUT a "
+      "rejoin, starting MUTED (never auto-unmuted)", (tester) async {
+    final controller =
+        StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+    addTearDown(controller.close);
+    final asListener = <LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", canPublish: true),
+      _snap("alice@dk.skworld", isLocal: true), // not yet promoted
+    ];
+    when(() => svc.participants).thenAnswer((_) => controller.stream);
+    when(() => svc.currentParticipants).thenReturn(asListener);
+
+    await tester.pumpWidget(wrapFor(listenerJoin));
+    await tester.pump();
+    controller.add(asListener);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Still a listener: raise hand only, mic never touched.
+    expect(find.text("Raise hand"), findsOneWidget);
+    verifyNever(() => svc.setMicEnabled(true));
+
+    // Server flips the grant (mutual consent: hand_raised AND invited). No
+    // rejoin, no new connectWithToken call, just a fresh snapshot.
+    controller.add(<LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", canPublish: true),
+      _snap("alice@dk.skworld", isLocal: true, canPublish: true),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // The mic control now exists...
+    expect(find.text("Raise hand"), findsNothing);
+    // ...but starts muted: "Unmute" is shown, never auto-live.
+    expect(find.text("Unmute"), findsOneWidget);
+    expect(find.text("Mute"), findsNothing);
+    verifyNever(() => svc.setMicEnabled(true));
+    verify(() => svc.connectWithToken(
+          wsUrl: any(named: "wsUrl"),
+          token: any(named: "token"),
+        )).called(1); // one connect only, no rejoin on promotion
+  });
+
+  testWidgets(
+      "demotion (grant revoked) stops publishing and reverts to raise hand",
+      (tester) async {
+    final controller =
+        StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+    addTearDown(controller.close);
+    // Already-granted speaker: goes live at connect (existing "any granted
+    // role goes live immediately" behavior).
+    final live = <LiveKitParticipantSnapshot>[
+      _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+      _snap("chef@dk.skworld", canPublish: true),
+    ];
+    when(() => svc.participants).thenAnswer((_) => controller.stream);
+    when(() => svc.currentParticipants).thenReturn(live);
+
+    await tester.pumpWidget(wrapFor(speakerJoin));
+    await tester.pump();
+    controller.add(live);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text("Raise hand"), findsNothing);
+    expect(find.text("Mute"), findsOneWidget); // live and unmuted
+    verify(() => svc.setMicEnabled(true)).called(1);
+
+    // Host revokes the grant (removeFromStage): dana's snapshot loses
+    // canPublish.
+    controller.add(<LiveKitParticipantSnapshot>[
+      _snap("dana@dk.skworld", isLocal: true, canPublish: false),
+      _snap("chef@dk.skworld", canPublish: true),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Mic control gone, back to raise hand, and the mic was force-stopped.
+    expect(find.text("Raise hand"), findsOneWidget);
+    expect(find.text("Mute"), findsNothing);
+    expect(find.text("Unmute"), findsNothing);
+    verify(() => svc.setMicEnabled(false)).called(1);
   });
 }

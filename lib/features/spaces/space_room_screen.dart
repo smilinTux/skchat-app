@@ -68,6 +68,16 @@ class SpaceRoomState {
 
 // ── Notifier ─────────────────────────────────────────────────────────────────
 
+/// The local participant's current LiveKit publish grant, sourced from the
+/// snapshot list (not [SpaceJoin.isHost]). False when the local snapshot has
+/// not arrived yet, e.g. the very first connecting frame.
+bool _localCanPublish(List<LiveKitParticipantSnapshot> participants) {
+  for (final p in participants) {
+    if (p.isLocal) return p.canPublish;
+  }
+  return false;
+}
+
 class SpaceRoomNotifier
     extends AutoDisposeFamilyNotifier<SpaceRoomState, SpaceJoin> {
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
@@ -87,8 +97,17 @@ class SpaceRoomNotifier
   Future<void> connect() async {
     final svc = ref.read(liveKitCallServiceProvider);
 
-    _partSub = svc.participants.listen((list) {
+    _partSub = svc.participants.listen((list) async {
+      final wasSpeaker = _localCanPublish(state.participants);
       state = state.copyWith(participants: list);
+      final isSpeaker = _localCanPublish(list);
+      if (wasSpeaker && !isSpeaker && state.isMicEnabled) {
+        // Demoted mid-session: the publish grant was revoked. Stop
+        // publishing and drop back to the listener control (X Spaces model,
+        // no lingering hot mic once the grant is gone).
+        await svc.setMicEnabled(false);
+        state = state.copyWith(isMicEnabled: false);
+      }
     });
     _connSub = svc.connectionState.listen((cs) {
       state = state.copyWith(isConnected: cs == ConnectionState.connected);
@@ -96,13 +115,19 @@ class SpaceRoomNotifier
 
     try {
       await svc.connectWithToken(wsUrl: arg.url, token: arg.token);
-      // Host (or any role granted publish) goes live on mic immediately.
-      final canPublish = arg.isHost;
+      final participants = svc.currentParticipants;
+      // Anyone who ALREADY holds the publish grant at connect time (the
+      // host, or a speaker rejoining with a pre-authorized token) goes live
+      // on mic immediately. This is keyed off the actual LiveKit grant, not
+      // [SpaceJoin.isHost]. A grant gained LATER via promotion (see
+      // [raiseHand] and the participants listener above) never auto-
+      // unmutes; the speaker self-unmutes, matching the X Spaces model.
+      final canPublish = _localCanPublish(participants);
       if (canPublish) {
         await svc.setMicEnabled(true);
       }
       state = state.copyWith(
-        participants: svc.currentParticipants,
+        participants: participants,
         isConnected: true,
         isMicEnabled: canPublish,
       );
@@ -138,11 +163,10 @@ class SpaceRoomNotifier
     try {
       final onStage = await spaces.raiseHand(arg.spaceId, identity: identity);
       state = state.copyWith(handRaised: !onStage);
-      if (onStage) {
-        // Promoted to speaker, go live.
-        await ref.read(liveKitCallServiceProvider).setMicEnabled(true);
-        state = state.copyWith(isMicEnabled: true);
-      }
+      // X Spaces model: promotion flips the publish grant (surfaced through
+      // the participants stream, see connect() above) but never auto-
+      // unmutes. Mic controls become available in the MUTED state; the
+      // speaker self-unmutes via toggleMic.
     } on Object {
       // Best-effort, leave hand state as-is on failure.
     }
@@ -1103,13 +1127,17 @@ class _ControlBar extends ConsumerWidget {
     }
     final canShare = join.isHost || (local?.canPublish ?? false);
     final isSharing = local?.isScreenSharing ?? false;
+    // Mute/unmute is gated on the actual LiveKit publish grant (host OR a
+    // promoted speaker), not [SpaceJoin.isHost]: a promoted speaker must get
+    // real mic controls without rejoining, and a demoted one must lose them.
+    final canPublish = local?.canPublish ?? false;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          if (join.isHost)
+          if (canPublish)
             _RoundButton(
               icon: state.isMicEnabled
                   ? Icons.mic_rounded
