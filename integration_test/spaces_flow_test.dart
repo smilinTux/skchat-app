@@ -140,6 +140,8 @@ void main() {
         .thenAnswer((_) => Stream.value(ConnectionState.connected));
     when(() => livekitSvc.currentParticipants).thenReturn(participants);
     when(() => livekitSvc.dataChannel).thenAnswer((_) => const Stream.empty());
+    when(() => livekitSvc.micEnabledChanges)
+        .thenAnswer((_) => const Stream.empty());
     when(() => livekitSvc.connectWithToken(
           wsUrl: any(named: "wsUrl"),
           token: any(named: "token"),
