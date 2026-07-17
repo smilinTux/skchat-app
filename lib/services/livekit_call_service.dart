@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import 'backend_config.dart';
+import 'system_audio_sources.dart';
 
 /// Compile-time default for the skchat web-UI LiveKit token-mint endpoint.
 /// Now only the *seed* for the runtime-settable [backendConfigProvider]; the
@@ -166,6 +167,11 @@ class LiveKitCallService {
 
   Room? _room;
   LocalParticipant? _localParticipant;
+
+  /// The dedicated system-audio (screen-share audio) track, when publishing
+  /// system audio. Kept separate from the voice mic so mic processing is
+  /// untouched. Null when not sharing system audio.
+  LocalTrack? _systemAudioTrack;
 
   /// The LiveKit token used for the current room connection (minted by
   /// [joinRoom] or supplied to [connectWithToken]). Exposed so the UI can
@@ -937,6 +943,70 @@ class LiveKitCallService {
         audioCaptureOptions: AudioCaptureOptions(deviceId: deviceId),
       );
     }
+  }
+
+  /// True when at least one PulseAudio monitor input is available to capture
+  /// system audio (Linux desktop). Returns false on platforms without one.
+  Future<bool> hasSystemAudioSource() async =>
+      (await defaultSystemAudioSource()) != null;
+
+  /// The auto-selected default system-audio source, or null when none exists.
+  Future<MediaDevice?> defaultSystemAudioSource() async {
+    final inputs = await Hardware.instance.enumerateDevices(type: 'audioinput');
+    return SystemAudioSources.autoSelect(inputs);
+  }
+
+  bool get isSharingSystemAudio => _systemAudioTrack != null;
+
+  /// Capture [deviceId] (a monitor source) with all voice processing off and
+  /// publish it as the screen-share audio track. Best-effort: a failure here
+  /// must never abort the video share, so callers wrap it. Guards when there is
+  /// no room, or when a system-audio track is already being shared.
+  ///
+  /// PROTOCOL-SOURCE CAVEAT: `livekit_client` 2.2.6 hardcodes
+  /// `TrackSource.microphone` on every track created via the public
+  /// `LocalAudioTrack.create()` factory (see `track/local/audio.dart`); the
+  /// `TrackSource.screenShareAudio` value is only ever set by the SDK's own
+  /// `@internal` constructor, invoked internally from
+  /// `createScreenShareTracksWithAudio` for a browser `getDisplayMedia` audio
+  /// track, and `AudioPublishOptions` has no field to override the published
+  /// source either. So a device-captured (PulseAudio monitor) track cannot be
+  /// tagged `screenShareAudio` at the LiveKit-protocol level through any
+  /// supported public API. We publish it as the best available substitute: a
+  /// distinct publish `name`/`stream` so it is identifiable and groupable on
+  /// the receiving side, while the wire-level source remains `microphone`.
+  /// This is the exact gap the Task 1 hardware spike is meant to close (either
+  /// confirm this is the accepted tradeoff, or find a supported way to mint a
+  /// `screenShareAudio`-sourced track from a device id).
+  Future<void> startScreenShareSystemAudio(String deviceId) async {
+    final lp = _localParticipant;
+    if (lp == null || _systemAudioTrack != null) return;
+    final track = await LocalAudioTrack.create(
+      SystemAudioSources.captureOptions(deviceId),
+    );
+    await lp.publishAudioTrack(
+      track,
+      publishOptions: const AudioPublishOptions(
+        name: 'screenshare-audio',
+        stream: 'screenshare',
+      ),
+    );
+    _systemAudioTrack = track;
+    _emitParticipants();
+  }
+
+  /// Unpublish and stop the system-audio track only. Safe no-op when not sharing.
+  Future<void> stopScreenShareSystemAudio() async {
+    final track = _systemAudioTrack;
+    _systemAudioTrack = null;
+    if (track == null) return;
+    try {
+      await _localParticipant?.removePublishedTrack(track.sid ?? '');
+    } catch (_) {}
+    try {
+      await track.stop();
+    } catch (_) {}
+    _emitParticipants();
   }
 
   /// Switch the active camera to [deviceId] WITHOUT dropping the call.
