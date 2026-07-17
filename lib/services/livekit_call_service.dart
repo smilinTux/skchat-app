@@ -972,25 +972,30 @@ class LiveKitCallService {
   /// track, and `AudioPublishOptions` has no field to override the published
   /// source either. So a device-captured (PulseAudio monitor) track cannot be
   /// tagged `screenShareAudio` at the LiveKit-protocol level through any
-  /// supported public API. We publish it as the best available substitute: a
+  /// supported public API. We publish it as the accepted substitute: a
   /// distinct publish `name`/`stream` so it is identifiable and groupable on
-  /// the receiving side, while the wire-level source remains `microphone`.
-  /// This is the exact gap the Task 1 hardware spike is meant to close (either
-  /// confirm this is the accepted tradeoff, or find a supported way to mint a
-  /// `screenShareAudio`-sourced track from a device id).
+  /// the receiving side, while the wire-level source remains `microphone`
+  /// (voice processing off). This is the settled approach, not a pending
+  /// question; there is no supported way in 2.2.6 to mint a
+  /// `screenShareAudio`-sourced track from a device id.
   Future<void> startScreenShareSystemAudio(String deviceId) async {
     final lp = _localParticipant;
     if (lp == null || _systemAudioTrack != null) return;
     final track = await LocalAudioTrack.create(
       SystemAudioSources.captureOptions(deviceId),
     );
-    await lp.publishAudioTrack(
-      track,
-      publishOptions: const AudioPublishOptions(
-        name: 'screenshare-audio',
-        stream: 'screenshare',
-      ),
-    );
+    try {
+      await lp.publishAudioTrack(
+        track,
+        publishOptions: const AudioPublishOptions(
+          name: 'screenshare-audio',
+          stream: 'screenshare',
+        ),
+      );
+    } catch (_) {
+      await track.stop();
+      rethrow;
+    }
     _systemAudioTrack = track;
     _emitParticipants();
   }
