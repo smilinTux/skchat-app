@@ -622,11 +622,14 @@ class LiveKitCallService {
   /// cancels the picker or the gesture was lost) so the caller can surface a
   /// SnackBar and revert the sharing UI state instead of failing silently.
   Future<void> setScreenShareEnabled(bool enabled,
-      {bool withAudio = true}) async {
+      {bool withAudio = true, String? systemAudioDeviceId}) async {
     final lp = _localParticipant;
     if (lp == null) return;
 
     if (!enabled) {
+      // Stop the system-audio track (if any) before tearing down the
+      // screen-share publications below.
+      await stopScreenShareSystemAudio();
       // The SDK helper removes BOTH the screen-share video and its paired
       // screen-share audio publication by source.
       await lp.setScreenShareEnabled(false);
@@ -702,6 +705,16 @@ class LiveKitCallService {
             await track.stop();
           } catch (_) {}
         }
+      }
+    }
+
+    // System audio (best-effort): started AFTER the video is live so a
+    // failure here never aborts the video share.
+    if (systemAudioDeviceId != null) {
+      try {
+        await startScreenShareSystemAudio(systemAudioDeviceId);
+      } catch (e) {
+        // Swallow: the video share stays live even if system audio fails.
       }
     }
     _emitParticipants();

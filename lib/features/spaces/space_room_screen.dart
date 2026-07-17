@@ -124,8 +124,12 @@ class SpaceRoomNotifier
   /// The `isScreenSharing` flag on the participants snapshot drives the UI, so
   /// no extra state is tracked here: the stream update flips the controls and
   /// raises the stage for everyone.
-  Future<void> toggleScreenShare(bool enabled) async {
-    await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(enabled);
+  Future<void> toggleScreenShare(bool enabled,
+      {String? systemAudioDeviceId}) async {
+    await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(
+          enabled,
+          systemAudioDeviceId: systemAudioDeviceId,
+        );
   }
 
   Future<void> raiseHand(String identity) async {
