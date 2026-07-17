@@ -9,6 +9,7 @@ import "package:hive_flutter/hive_flutter.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/call_shared/screen_share_source.dart";
+import "package:skchat/features/spaces/space_chat_panel.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/space_room_screen.dart";
 import "package:skchat/services/livekit_call_service.dart";
@@ -1126,6 +1127,71 @@ void main() {
       controller.add(invited);
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.text("The host invited you to speak."), findsOneWidget);
+    });
+  });
+
+  // ── Y3: lanes menu is a draggable, scrollable, safe-area-aware sheet ──────
+  //
+  // Operator bug (mobile Safari): the tools menu (Chat / Watch together /
+  // Whiteboard / Shared doc / Screen share / Terminal) was a fixed Column in
+  // a plain modal sheet, so the lower tiles were cut off behind the browser
+  // chrome on a short viewport with no way to scroll or drag to reach them.
+  // Fixed by hosting the tiles in a DraggableScrollableSheet with a grab
+  // handle, its own ListView scroll controller, and bottom-safe-area padding.
+  group("Y3 lanes menu: draggable, scrollable, safe-area-aware sheet", () {
+    testWidgets(
+        "opens as a DraggableScrollableSheet with a grab handle and all six "
+        "lanes reachable, scrolling to reveal Terminal", (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.byIcon(Icons.dashboard_customize_outlined));
+      await tester.pumpAndSettle();
+
+      // Draggable up/down by default, with a tactile grab handle.
+      expect(find.byType(DraggableScrollableSheet), findsOneWidget);
+      expect(find.byKey(const Key("lanesGrabHandle")), findsOneWidget);
+
+      // The first lanes are visible without scrolling.
+      expect(find.text("Chat"), findsOneWidget);
+      expect(find.text("Watch together"), findsOneWidget);
+
+      // Terminal is the last tile; it must be reachable by scrolling the
+      // sheet's own list, never cut off with no way to reach it.
+      await tester.scrollUntilVisible(
+        find.text("Terminal"),
+        100.0,
+        scrollable: find.descendant(
+          of: find.byKey(const Key("lanesList")),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(find.text("Terminal"), findsOneWidget);
+      expect(find.text("Whiteboard"), findsOneWidget);
+      expect(find.text("Shared doc"), findsOneWidget);
+      expect(find.text("Screen share"), findsOneWidget);
+    });
+
+    testWidgets(
+        "tapping a lane tile pops the sheet and opens that lane's panel",
+        (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.byIcon(Icons.dashboard_customize_outlined));
+      await tester.pumpAndSettle();
+      expect(find.byType(DraggableScrollableSheet), findsOneWidget);
+
+      await tester.tap(find.text("Chat"));
+      await tester.pumpAndSettle();
+
+      // The lanes sheet is gone (popped)...
+      expect(find.byType(DraggableScrollableSheet), findsNothing);
+      // ...and the lane's own panel opened in its place (_openLane path,
+      // untouched by this change).
+      expect(find.byType(SpaceChatPanel), findsOneWidget);
     });
   });
 }

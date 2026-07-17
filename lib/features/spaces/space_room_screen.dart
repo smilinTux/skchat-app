@@ -473,21 +473,54 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
     );
   }
 
+  // Y3: the tools menu is a draggable, scrollable, safe-area-aware bottom
+  // sheet (was a plain fixed Column that cut the lower tiles off behind
+  // mobile Safari's bottom toolbar with no way to reach them). The tiles
+  // live in a ListView wired to the sheet's own scrollController, the
+  // standard DraggableScrollableSheet pattern, so the sheet drags AND the
+  // list scrolls; a grab handle makes it tactile by default.
   void _openLanes(BuildContext context, SpaceJoin join) {
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
     showModalBottomSheet(
       context: context,
-      backgroundColor: SovereignColors.surfaceCard,
-      builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _laneTile(sheetCtx, context, Icons.chat_bubble_outline_rounded, "Chat", SpaceChatPanel(spaceId: join.spaceId, identity: join.identity)),
-            _laneTile(sheetCtx, context, Icons.smart_display_outlined, "Watch together", WatchPanel(spaceId: join.spaceId, identity: join.identity)),
-            _laneTile(sheetCtx, context, Icons.draw_outlined, "Whiteboard", WhiteboardPanel(spaceId: join.spaceId, identity: join.identity)),
-            _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
-            _laneTile(sheetCtx, context, Icons.screen_share_outlined, "Screen share", ScreenSharePanel(spaceId: join.spaceId, identity: join.identity)),
-            _laneTile(sheetCtx, context, Icons.terminal_rounded, "Terminal", TerminalPanel(spaceId: join.spaceId, identity: join.identity)),
-          ],
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        minChildSize: 0.30,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (_, scrollController) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          child: Material(
+            color: SovereignColors.surfaceCard,
+            child: ListView(
+              key: const Key("lanesList"),
+              controller: scrollController,
+              padding: EdgeInsets.only(bottom: bottomSafeArea + 12),
+              children: [
+                Center(
+                  child: Container(
+                    key: const Key("lanesGrabHandle"),
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: SovereignColors.textSecondary
+                          .withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                _laneTile(sheetCtx, context, Icons.chat_bubble_outline_rounded, "Chat", SpaceChatPanel(spaceId: join.spaceId, identity: join.identity)),
+                _laneTile(sheetCtx, context, Icons.smart_display_outlined, "Watch together", WatchPanel(spaceId: join.spaceId, identity: join.identity)),
+                _laneTile(sheetCtx, context, Icons.draw_outlined, "Whiteboard", WhiteboardPanel(spaceId: join.spaceId, identity: join.identity)),
+                _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
+                _laneTile(sheetCtx, context, Icons.screen_share_outlined, "Screen share", ScreenSharePanel(spaceId: join.spaceId, identity: join.identity)),
+                _laneTile(sheetCtx, context, Icons.terminal_rounded, "Terminal", TerminalPanel(spaceId: join.spaceId, identity: join.identity)),
+              ],
+            ),
+          ),
         ),
       ),
     );
