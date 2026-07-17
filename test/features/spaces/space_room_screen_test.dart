@@ -56,6 +56,12 @@ void main() {
     when(() => svc.connectionState)
         .thenAnswer((_) => Stream.value(ConnectionState.connected));
     when(() => svc.currentParticipants).thenReturn(participants);
+    // ReactionsButton / ReactionsOverlay (call_shared/reactions.dart) watch
+    // this on mount to subscribe to the reaction lane. Unstubbed, mocktail
+    // returns null for the getter and building ReactionsButton throws a
+    // _TypeError (null is not a Stream); see space_room_screen.dart's control
+    // bar.
+    when(() => svc.dataChannel).thenAnswer((_) => const Stream.empty());
     when(() => svc.connectWithToken(
           wsUrl: any(named: "wsUrl"),
           token: any(named: "token"),
