@@ -102,7 +102,11 @@ dev_dependencies:
   
   # Testing
   mocktail: ^1.0.0
-  
+
+  # Autonomous in-process UI driving (integration_test/), see SP5 harness.
+  integration_test:
+    sdk: flutter
+
   # Linting
   flutter_lints: ^6.0.0
 
