@@ -10,6 +10,7 @@ import '../../services/recordings_service.dart';
 import '../call_shared/call_elapsed_timer.dart';
 import '../call_shared/connection_quality_bars.dart';
 import '../call_shared/in_call_panels.dart';
+import '../call_shared/screen_share_source.dart';
 import 'call_device_picker.dart';
 import 'cast_sheet.dart';
 
@@ -328,13 +329,17 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
   /// screen-picker prompt) and publishes a screen-share video track. Optimistic
   /// flip so the toggle responds immediately; reverts on a publish failure
   /// (e.g. the user cancels the picker).
-  Future<void> toggleScreenShare() async {
+  ///
+  /// [sourceId] is the native-desktop capture source the caller already
+  /// resolved (via `resolveScreenShareSource`) before calling this; null on
+  /// web/mobile, where the platform supplies its own picker.
+  Future<void> toggleScreenShare({String? sourceId}) async {
     if (state == null) return;
     final svc = ref.read(liveKitCallServiceProvider);
     final next = !state!.isScreenSharing;
     state = state!.copyWith(isScreenSharing: next);
     try {
-      await svc.setScreenShareEnabled(next);
+      await svc.setScreenShareEnabled(next, sourceId: sourceId);
     } catch (e) {
       if (state != null) {
         state = state!.copyWith(isScreenSharing: !next, error: e.toString());
@@ -1235,7 +1240,9 @@ class _LiveKitControlBar extends ConsumerWidget {
             onTap: notifier.toggleCamera,
           ),
 
-          // Screen-share toggle, publishes a getDisplayMedia track (web).
+          // Screen-share toggle, publishes a getDisplayMedia track (web) or
+          // a desktopCapturer-sourced track (native desktop, after the user
+          // picks a source below).
           _LKControlButton(
             icon: callState.isScreenSharing
                 ? Icons.stop_screen_share_rounded
@@ -1243,7 +1250,7 @@ class _LiveKitControlBar extends ConsumerWidget {
             label: callState.isScreenSharing ? 'Stop share' : 'Share',
             active: callState.isScreenSharing,
             activeColor: SovereignColors.soulLumina,
-            onTap: notifier.toggleScreenShare,
+            onTap: () => _toggleScreenShare(context, ref, notifier, callState),
           ),
 
           // Record toggle, drives POST /livekit/record/start|stop.
@@ -1295,6 +1302,31 @@ class _LiveKitControlBar extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Start / stop the screen share, resolving a native-desktop capture
+  /// source first when starting. Native desktop needs an explicit
+  /// `sourceId` before `getDisplayMedia` can resolve one;
+  /// `resolveScreenShareSource` no-ops (returns `sourceId: null`) on
+  /// web/mobile, where the platform supplies its own picker. A cancelled
+  /// desktop pick aborts silently: no share, no error, [notifier] is never
+  /// called. [LiveKitCallNotifier.toggleScreenShare] already surfaces a
+  /// genuine capture failure via [LiveKitCallState.error], so no extra
+  /// try/catch is needed here.
+  Future<void> _toggleScreenShare(
+    BuildContext context,
+    WidgetRef ref,
+    LiveKitCallNotifier notifier,
+    LiveKitCallState callState,
+  ) async {
+    String? sourceId;
+    if (!callState.isScreenSharing) {
+      final resolve = ref.read(screenShareSourceResolverProvider);
+      final picked = await resolve(context);
+      if (!picked.proceed) return;
+      sourceId = picked.sourceId;
+    }
+    await notifier.toggleScreenShare(sourceId: sourceId);
   }
 
   /// Invite Lumina into the current room. Spawns her server-side so she joins

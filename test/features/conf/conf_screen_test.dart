@@ -9,6 +9,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
+import "package:skchat/features/call_shared/screen_share_source.dart";
 import "package:skchat/features/conf/conf_screen.dart";
 import "package:skchat/services/conf_service.dart";
 import "package:skchat/services/livekit_call_service.dart";
@@ -57,15 +58,17 @@ void main() {
         )).thenAnswer((_) async {});
     when(() => lk.setMicEnabled(any())).thenAnswer((_) async {});
     when(() => lk.setCameraEnabled(any())).thenAnswer((_) async {});
-    when(() => lk.setScreenShareEnabled(any())).thenAnswer((_) async {});
+    when(() => lk.setScreenShareEnabled(any(),
+        sourceId: any(named: "sourceId"))).thenAnswer((_) async {});
     when(() => lk.leaveRoom()).thenAnswer((_) async {});
   });
 
-  Widget wrap(ConfArgs args) {
+  Widget wrap(ConfArgs args, {List<Override> extraOverrides = const []}) {
     return ProviderScope(
       overrides: [
         confServiceProvider.overrideWithValue(conf),
         liveKitCallServiceProvider.overrideWithValue(lk),
+        ...extraOverrides,
       ],
       child: MaterialApp(home: ConfScreen(args: args)),
     );
@@ -252,5 +255,101 @@ void main() {
         identity: "g1", requester: "chef@dk.skworld")).called(1);
 
     await tester.pumpAndSettle(const Duration(milliseconds: 100));
+  });
+
+  // ── M2: reuse the Spaces native-desktop screen-share source picker ───────
+  //
+  // conf_screen's control-bar "Share" toggle used to call
+  // setScreenShareEnabled(next) with no sourceId, which fails on native
+  // desktop ("source not found"). It now resolves a capture source through
+  // the SAME picker Spaces uses (resolveScreenShareSource), injected via
+  // screenShareSourceResolverProvider so these tests never touch the real
+  // desktopCapturer platform channel (unavailable under `flutter test`).
+  group("M2 screen-share source picker", () {
+    setUp(() {
+      when(() => conf.enterWaiting("conf-1",
+              identity: any(named: "identity"), display: any(named: "display")))
+          .thenAnswer((_) async =>
+              const WaitingStatus(admitted: true, autoAdmitted: true));
+      when(() => conf.token("conf-1",
+              identity: any(named: "identity"),
+              name: any(named: "name"),
+              role: any(named: "role")))
+          .thenAnswer((_) async => guestToken());
+    });
+
+    testWidgets(
+        "tapping Share resolves the source picker and passes the chosen "
+        "sourceId through to setScreenShareEnabled", (tester) async {
+      var resolverCalls = 0;
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+          BuildContext context) async {
+        resolverCalls++;
+        return (proceed: true, sourceId: "screen:7");
+      }
+
+      await tester.pumpWidget(wrap(guestArgs, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Share"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(resolverCalls, 1);
+      verify(() => lk.setScreenShareEnabled(true, sourceId: "screen:7"))
+          .called(1);
+    });
+
+    testWidgets(
+        "cancelling the picker is a silent no-op: no share call, no error "
+        "toast", (tester) async {
+      Future<({bool proceed, String? sourceId})> cancelResolver(
+              BuildContext context) async =>
+          (proceed: false, sourceId: null);
+
+      await tester.pumpWidget(wrap(guestArgs, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(cancelResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Share"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verifyNever(() => lk.setScreenShareEnabled(any(),
+          sourceId: any(named: "sourceId")));
+      expect(find.textContaining("Screen share failed"), findsNothing);
+    });
+
+    testWidgets(
+        "stopping an active share never re-invokes the picker (it only "
+        "resolves a source when turning ON)", (tester) async {
+      var resolverCalls = 0;
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+          BuildContext context) async {
+        resolverCalls++;
+        return (proceed: true, sourceId: "screen:1");
+      }
+
+      await tester.pumpWidget(wrap(guestArgs, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Share")); // start sharing
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(resolverCalls, 1);
+      verify(() => lk.setScreenShareEnabled(true, sourceId: "screen:1"))
+          .called(1);
+
+      await tester.tap(find.text("Share")); // stop sharing
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(resolverCalls, 1); // still 1: not consulted on the way OFF
+      verify(() => lk.setScreenShareEnabled(false, sourceId: null)).called(1);
+    });
   });
 }

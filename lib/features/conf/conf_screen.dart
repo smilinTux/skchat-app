@@ -12,6 +12,7 @@ import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
 import "../call_shared/reactions.dart";
+import "../call_shared/screen_share_source.dart";
 import "../calls/call_device_picker.dart";
 import "../calls/cast_sheet.dart";
 import "../profile/profile_screen.dart" show localIdentityProvider;
@@ -407,10 +408,13 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
     state = state.copyWith(isCameraEnabled: next);
   }
 
-  Future<void> toggleScreenShare() async {
+  /// [sourceId] is the native-desktop capture source resolved by the caller
+  /// (via [resolveScreenShareSource]) before this is invoked; null on
+  /// web/mobile, where the platform supplies its own picker.
+  Future<void> toggleScreenShare({String? sourceId}) async {
     final lk = ref.read(liveKitCallServiceProvider);
     final next = !state.isScreenSharing;
-    await lk.setScreenShareEnabled(next);
+    await lk.setScreenShareEnabled(next, sourceId: sourceId);
     state = state.copyWith(isScreenSharing: next);
   }
 
@@ -1012,9 +1016,21 @@ class _ControlBar extends ConsumerWidget {
             // silent unhandled async error. The notifier only flips the
             // sharing flag on success, so a failure leaves the button showing
             // "not sharing" (never a stuck "sharing" state).
+            //
+            // Native desktop needs an explicit capture source before
+            // getDisplayMedia can resolve one; web keeps using its own
+            // native picker (resolveScreenShareSource no-ops there). A
+            // cancelled desktop pick aborts silently: no share, no error.
             onTap: () async {
+              String? sourceId;
+              if (!state.isScreenSharing) {
+                final resolve = ref.read(screenShareSourceResolverProvider);
+                final picked = await resolve(context);
+                if (!picked.proceed) return;
+                sourceId = picked.sourceId;
+              }
               try {
-                await notifier.toggleScreenShare();
+                await notifier.toggleScreenShare(sourceId: sourceId);
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
