@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:skchat/core/modules/module_manifest.dart';
 import 'package:skchat/core/modules/module_registry.dart';
 import 'package:skchat/services/capabilities_service.dart';
@@ -48,6 +51,14 @@ ModulePrefs _allEnabled({Map<String, ModulePlacement> placement = const {}}) {
 }
 
 void main() {
+  setUpAll(() {
+    // The seed-microtask test below exercises ModulePrefsNotifier.seedFrom,
+    // which persists to a real Hive box; give it a throwaway temp dir so
+    // that path doesn't throw HiveError on the test VM (mirrors
+    // test/widget_test.dart's setup).
+    Hive.init(Directory.systemTemp.createTempSync('skchat_test_hive').path);
+  });
+
   test('moduleRegistry exposes the builtin manifests incl. skmap', () {
     final c = _container(caps: _caps(), prefs: _allEnabled());
     addTearDown(c.dispose);
@@ -139,6 +150,41 @@ void main() {
     final skmap = drawer.firstWhere((p) => p.manifest.id == 'skmap');
     expect(skmap.available, isFalse);
     expect(skmap.reason, isNotNull);
+  });
+
+  test(
+      'deferred prefs-seed microtask does not touch a stale ref if a '
+      'dependency changes before it runs', () async {
+    // Start with UNINITIALIZED prefs so the seed branch runs (every test
+    // above starts pre-initialized and never exercises it).
+    final c = ProviderContainer(
+      overrides: [
+        nodeCapabilitiesProvider.overrideWith((ref) async => _caps()),
+        modulePrefsProvider
+            .overrideWith(() => _StubPrefs(const ModulePrefs())),
+      ],
+    );
+    addTearDown(c.dispose);
+
+    // Build #1: prefs.initialized == false, schedules the deferred seed.
+    c.read(enabledModulesProvider);
+
+    // Force a dependency of enabledModulesProvider to change *before* the
+    // deferred seed above gets a chance to run, mirroring what happens on
+    // real hardware (nodeCapabilitiesProvider resolving, or the seed
+    // itself landing, in that same window). A direct `state =` assignment
+    // on the watched notifier notifies dependents synchronously, marking
+    // enabledModulesProvider's element outdated: dependency changed, but
+    // not yet rebuilt (nothing has re-read it).
+    final notifier = c.read(modulePrefsProvider.notifier);
+    notifier.state = notifier.state.copyWith();
+
+    // Drain the microtask queue. This must not throw. On the buggy
+    // implementation the deferred closure keeps `ref` alive and calls
+    // `ref.read(...)` from inside the microtask, which trips Riverpod's
+    // "Failed assertion: line 675 pos 7: '!_didChangeDependency'".
+    await Future<void>.value();
+    await Future<void>.value();
   });
 
   test('node modules hint filters the registry to declared ids', () async {

@@ -194,10 +194,17 @@ final enabledModulesProvider = Provider<List<PlacedModule>>((ref) {
   // Seed defaults from the registry the first time (no persisted prefs yet).
   if (!prefs.initialized) {
     final manifests = availability.map((a) => a.manifest).toList();
-    // Defer the seed so we don't mutate a provider during build.
-    Future.microtask(
-      () => ref.read(modulePrefsProvider.notifier).seedFrom(manifests),
-    );
+    // Capture the notifier NOW, during build, while `ref` is guaranteed
+    // current. Defer only the mutation itself so we don't mutate a
+    // provider during build. Calling `ref.read(...)` again later, inside
+    // the microtask, is unsafe: if this provider rebuilds (or a watched
+    // dependency changes) before the microtask runs, the captured `ref` is
+    // outdated and Riverpod's `!_didChangeDependency` assertion fires.
+    // The notifier reference itself stays valid across rebuilds, and
+    // `seedFrom` is idempotent (a no-op once prefs are initialized), so a
+    // stale call here is harmless even if seeding already happened.
+    final prefsNotifier = ref.read(modulePrefsProvider.notifier);
+    Future.microtask(() => prefsNotifier.seedFrom(manifests));
     // Until the seed lands, treat all-enabled at default placement so the app
     // renders normally on the very first frame.
     return [
