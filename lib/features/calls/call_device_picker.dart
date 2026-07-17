@@ -113,6 +113,9 @@ class _CallDevicePickerButtonState
   /// so the rest of the call keeps working when a device has disappeared.
   Future<void> _reapplySaved() async {
     if (_reapplied) return;
+    // This is re-invoked from a post-frame callback until the participant
+    // exists; the widget can dispose between frames, so guard ref use.
+    if (!mounted) return;
     final svc = ref.read(liveKitCallServiceProvider);
     if (svc.localParticipant == null) {
       if (!mounted || _reapplyAttempts >= 30) return;
