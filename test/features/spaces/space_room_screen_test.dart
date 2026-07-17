@@ -6,6 +6,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
+import "package:skchat/features/call_shared/screen_share_source.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/space_room_screen.dart";
 import "package:skchat/services/livekit_call_service.dart";
@@ -92,6 +93,9 @@ void main() {
         )).thenAnswer((_) async {});
     when(() => svc.setMicEnabled(any())).thenAnswer((_) async {});
     when(() => svc.leaveRoom()).thenAnswer((_) async {});
+    when(() => svc.setScreenShareEnabled(any(),
+        systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+        sourceId: any(named: "sourceId"))).thenAnswer((_) async {});
 
     spaces = MockSpacesService();
     when(() => spaces.mute(
@@ -117,11 +121,12 @@ void main() {
         )).thenAnswer((_) async {});
   });
 
-  Widget wrapFor(SpaceJoin join) {
+  Widget wrapFor(SpaceJoin join, {List<Override> extraOverrides = const []}) {
     return ProviderScope(
       overrides: [
         liveKitCallServiceProvider.overrideWithValue(svc),
         spacesServiceProvider.overrideWithValue(spaces),
+        ...extraOverrides,
       ],
       child: MaterialApp(home: SpaceRoomScreen(join: join)),
     );
@@ -817,6 +822,62 @@ void main() {
 
       expect(find.text("Unmute"), findsOneWidget);
       expect(find.text("Muted by host"), findsNothing);
+    });
+  });
+
+  // ── M9: the Spaces "Go live" control must resolve its capture source
+  // through screenShareSourceResolverProvider, the same DI seam M2 wired
+  // into conf_screen.dart / livekit_call_screen.dart, so a provider override
+  // reaches this entry point too and tests never touch the real
+  // desktopCapturer platform channel.
+
+  group("M9 screen-share resolver DI", () {
+    testWidgets(
+        "tapping Go live resolves the source through the injected fake "
+        "resolver and passes the chosen sourceId to setScreenShareEnabled",
+        (tester) async {
+      var resolverCalls = 0;
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+          BuildContext context) async {
+        resolverCalls++;
+        return (proceed: true, sourceId: "screen:9");
+      }
+
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(resolverCalls, 1);
+      verify(() => svc.setScreenShareEnabled(true,
+          systemAudioDeviceId: null, sourceId: "screen:9")).called(1);
+    });
+
+    testWidgets(
+        "cancelling the injected resolver is a silent no-op: no share call, "
+        "no error toast", (tester) async {
+      Future<({bool proceed, String? sourceId})> cancelResolver(
+              BuildContext context) async =>
+          (proceed: false, sourceId: null);
+
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(cancelResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verifyNever(() => svc.setScreenShareEnabled(any(),
+          systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+          sourceId: any(named: "sourceId")));
+      expect(find.textContaining("Screen share failed"), findsNothing);
+      expect(find.text("Go live"), findsOneWidget);
     });
   });
 }

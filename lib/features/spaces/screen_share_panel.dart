@@ -5,6 +5,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/system_audio_sources.dart";
+import "../call_shared/screen_share_source.dart";
 import "screen_share_helper.dart";
 
 /// Screen-share lane (Tier 4, MEDIA): publishes a LiveKit screen-share video
@@ -70,7 +71,11 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
         // Desktop needs an explicit capture source before getDisplayMedia
         // can resolve one; web keeps using its own native picker. A
         // cancelled desktop pick aborts silently, no share, no error.
-        final picked = await resolveScreenShareSource(context);
+        // Routed through screenShareSourceResolverProvider (same DI seam as
+        // conf_screen.dart / livekit_call_screen.dart) so a test can inject a
+        // fake resolver; the default IS resolveScreenShareSource, unchanged.
+        final resolve = ref.read(screenShareSourceResolverProvider);
+        final picked = await resolve(context);
         if (!picked.proceed) {
           if (mounted) setState(() => _busy = false);
           return;
