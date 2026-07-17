@@ -7,7 +7,8 @@
 //
 // Boundary strategy (do not fake-pass):
 //   The suite drives the real widget tree and the real router. It stops at
-//   exactly two network seams, the same Riverpod seams the widget tests use:
+//   the network/secure-storage seams, the same Riverpod seams the widget
+//   tests use:
 //
 //     1. spacesServiceProvider / spacesDirectoryProvider: the sovereign
 //        /spaces REST API. Seeded with one canned live Space so the
@@ -18,14 +19,31 @@
 //        room screen initiates the connection with the role-scoped join
 //        token, which is the exact boundary where a live server would take
 //        over.
+//     3. skcommsClientProvider: the low-level SKComms daemon HTTP client
+//        (localhost:9384). Faked so the AppShell/ChatsScreen object graph
+//        that boots on every run (daemon health polling, the chats list's
+//        daemon refresh, the profile screen's identity fetch) never opens a
+//        real socket. This mirrors test/widget_test.dart's own boundary.
+//     4. skcommsSyncProvider: replaced with a no-op notifier so the 5s/15s
+//        polling timers never start (deterministic frame budget, no
+//        background daemon chatter racing the test).
+//     5. identityKeyPairProvider: replaced with a null-resolving future so
+//        the eager main()-time load never touches OS secure storage
+//        (flaky/slow over a forwarded keyring on headless hardware).
+//     6. pqBootstrapProvider: replaced with a false-resolving future so the
+//        eager PQ prekey bootstrap never touches its own secure storage or
+//        attempts a network publish.
+//     7. nodeCapabilitiesProvider: replaced with a null-resolving future so
+//        the AppBar's module-toolbar chain (ChatsScreen renders it on every
+//        boot) never fetches /api/v1/capabilities.
 //
-//   Everything else (Hive persistence, skcomms sync polling, identity
-//   providers, theming, navigation) is the real production object graph.
+//   Everything else (Hive persistence, theming, navigation) is the real
+//   production object graph.
 //
 // Server-backed extension point:
 //   Run with `--dart-define=SKCHAT_IT_LIVE=true` (the runner script maps
-//   env SKCHAT_IT_LIVE=1 to this) to drop the two fakes. In live mode the
-//   fake-seeded tests are skipped; a future live suite adds a test that
+//   env SKCHAT_IT_LIVE=1 to this) to drop all the fakes above. In live mode
+//   the fake-seeded tests are skipped; a future live suite adds a test that
 //   creates a Space through the real /spaces API and asserts real LiveKit
 //   room state instead of the mock verification below.
 
@@ -42,7 +60,12 @@ import "package:skchat/data/hive_adapters.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/spaces_directory_screen.dart";
 import "package:skchat/main.dart";
+import "package:skchat/services/capabilities_service.dart";
+import "package:skchat/services/identity_service.dart";
 import "package:skchat/services/livekit_call_service.dart";
+import "package:skchat/services/pq_prekey_service.dart";
+import "package:skchat/services/skcomms_client.dart";
+import "package:skchat/services/skcomms_sync.dart";
 import "package:skchat/services/spaces_service.dart";
 
 /// True when the harness runs against a live SKChat web UI + LiveKit server
@@ -52,6 +75,16 @@ const bool kLiveBackend = bool.fromEnvironment("SKCHAT_IT_LIVE");
 class MockSpacesService extends Mock implements SpacesService {}
 
 class MockLiveKitCallService extends Mock implements LiveKitCallService {}
+
+class MockSKCommsClient extends Mock implements SKCommsClient {}
+
+/// No-op replacement for [SKCommsSyncNotifier]: fixed offline state, no
+/// polling timers, no daemon HTTP calls. See the boundary-strategy comment
+/// above (seam 4).
+class _NoOpSyncNotifier extends SKCommsSyncNotifier {
+  @override
+  DaemonState build() => const DaemonState(status: DaemonStatus.offline);
+}
 
 const _seededSpace = SpaceSummary(
   spaceId: "it-space-1",
@@ -101,10 +134,19 @@ void main() {
 
   late MockSpacesService spacesSvc;
   late MockLiveKitCallService livekitSvc;
+  late MockSKCommsClient daemonClient;
 
   setUp(() {
     spacesSvc = MockSpacesService();
     livekitSvc = MockLiveKitCallService();
+    daemonClient = MockSKCommsClient();
+
+    // The daemon HTTP seam: always answer "not alive" so every ambient
+    // consumer (chats-list daemon refresh, profile identity fetch, the
+    // no-op sync notifier below) short-circuits on the first hop instead of
+    // opening a real socket to localhost:9384.
+    when(() => daemonClient.isAlive()).thenAnswer((_) async => false);
+    when(() => daemonClient.getInbox()).thenAnswer((_) async => []);
 
     // The Spaces REST seam: joining the seeded Space hands back the canned
     // role-scoped join envelope, echoing whatever per-device identity the
@@ -150,9 +192,10 @@ void main() {
     when(() => livekitSvc.leaveRoom()).thenAnswer((_) async {});
   });
 
-  /// The full production app with ONLY the two network seams overridden.
-  /// In live mode there are no overrides at all: the real services talk to
-  /// the real backends.
+  /// The full production app with ONLY the fake-mode seams overridden (see
+  /// the boundary-strategy comment at the top of this file). In live mode
+  /// there are no overrides at all: the real services talk to the real
+  /// backends.
   Widget app() {
     return ProviderScope(
       overrides: kLiveBackend
@@ -166,6 +209,14 @@ void main() {
               spacesDirectoryProvider
                   .overrideWith((ref) => Stream.value([_seededSpace])),
               liveKitCallServiceProvider.overrideWithValue(livekitSvc),
+              // Hermetic seams (M3): no secure storage, daemon socket, or
+              // network from the ambient providers main() wires eagerly (or
+              // that the AppShell/ChatsScreen graph reaches on first frame).
+              skcommsClientProvider.overrideWithValue(daemonClient),
+              skcommsSyncProvider.overrideWith(() => _NoOpSyncNotifier()),
+              identityKeyPairProvider.overrideWith((ref) async => null),
+              pqBootstrapProvider.overrideWith((ref) async => false),
+              nodeCapabilitiesProvider.overrideWith((ref) async => null),
             ],
       child: const SKChatApp(),
     );
