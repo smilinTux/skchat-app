@@ -96,4 +96,58 @@ void main() {
       }
     });
   });
+
+  // REGRESSION (M8 review): the RoomOptions the service connects with must
+  // NOT carry screen-share publish tuning as the room-wide video default.
+  // The SDK routes any video publish that passes no explicit options through
+  // RoomOptions.defaultVideoPublishOptions (publishVideoTrack,
+  // src/participant/local.dart:207-208), and this app publishes CAMERA
+  // tracks via bare setCameraEnabled(true) (conf_screen, livekit_call_screen,
+  // call_provider). A screen-share-tuned room default would therefore leak
+  // simulcast-off / maintainFramerate / the "screenshare" track name onto
+  // camera publishes. Screen-share options must travel ONLY with the explicit
+  // publish in setScreenShareEnabled.
+  group('buildRoomOptions (camera path must stay untouched)', () {
+    test('defaultVideoPublishOptions is the plain SDK default: simulcast on, '
+        'no forced encoding, no degradation override, no track name', () {
+      final opts = LiveKitCallService.buildRoomOptions();
+      final videoDefaults = opts.defaultVideoPublishOptions;
+
+      expect(videoDefaults.simulcast, isTrue,
+          reason: 'camera simulcast must stay enabled');
+      expect(videoDefaults.videoEncoding, isNull,
+          reason: 'camera encoding must stay SDK-computed');
+      expect(videoDefaults.screenShareEncoding, isNull,
+          reason: 'screen-share encoding must not ride the room default');
+      expect(videoDefaults.degradationPreference, isNull,
+          reason: 'camera must keep the SDK default degradation policy');
+      expect(videoDefaults.name, isNull,
+          reason: 'camera tracks must not be named "screenshare"');
+    });
+
+    test('screen-share capture default stays pinned to the standard tier '
+        '(explicit non-null maxFrameRate double, ee933f5 guard)', () {
+      final opts = LiveKitCallService.buildRoomOptions();
+      final capture = opts.defaultScreenShareCaptureOptions;
+
+      expect(capture.maxFrameRate, 30.0);
+      expect(capture.params, VideoParametersPresets.screenShareH1080FPS30);
+    });
+
+    test('room defaults differ from the explicit screen-share publish '
+        'options on every screen-share-specific field', () {
+      final roomDefault =
+          LiveKitCallService.buildRoomOptions().defaultVideoPublishOptions;
+      final sharePublish = LiveKitCallService.screenSharePublishOptionsFor(
+        ScreenShareFrameRate.standard,
+      );
+
+      expect(roomDefault.simulcast, isNot(sharePublish.simulcast));
+      expect(roomDefault.screenShareEncoding,
+          isNot(sharePublish.screenShareEncoding));
+      expect(roomDefault.degradationPreference,
+          isNot(sharePublish.degradationPreference));
+      expect(roomDefault.name, isNot(sharePublish.name));
+    });
+  });
 }

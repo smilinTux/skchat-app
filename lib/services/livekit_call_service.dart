@@ -464,6 +464,37 @@ class LiveKitCallService {
     _emitParticipants();
   }
 
+  /// [RoomOptions] used for every room this service connects.
+  ///
+  /// `defaultVideoPublishOptions` is deliberately LEFT AT THE SDK DEFAULT
+  /// (`const VideoPublishOptions()`: simulcast on, no forced encoding, no
+  /// degradation override, no name). The SDK falls back to that room default
+  /// for any video publish that does not pass explicit options
+  /// (publishVideoTrack, src/participant/local.dart:207-208), which includes
+  /// every bare `setCameraEnabled(true)` camera publish in this app. Screen
+  /// share must therefore NOT be tuned here: its options travel explicitly
+  /// with the publish call in [setScreenShareEnabled] (via
+  /// [screenSharePublishOptionsFor]), so a room-level override would only
+  /// leak screen-share tuning (simulcast off, maintainFramerate, the
+  /// "screenshare" track name) onto CAMERA tracks.
+  ///
+  /// `defaultScreenShareCaptureOptions` is screen-share-only by definition
+  /// (used by `LocalVideoTrack.createScreenShareTrack`, never by camera
+  /// capture), so pinning it to the standard tier is safe and keeps any
+  /// SDK-helper share path (e.g. `setScreenShareEnabled` on the participant)
+  /// on an explicit non-null maxFrameRate double (the ee933f5 SIGABRT guard).
+  @visibleForTesting
+  static RoomOptions buildRoomOptions() => RoomOptions(
+        adaptiveStream: true,
+        dynacast: true,
+        defaultAudioPublishOptions: const AudioPublishOptions(
+          name: "mic",
+          stream: "mic_audio",
+        ),
+        defaultScreenShareCaptureOptions:
+            screenShareCaptureOptionsFor(ScreenShareFrameRate.standard),
+      );
+
   /// Shared connect body used by [joinRoom] and [connectWithToken]: builds the
   /// [Room] with the standard publish options, wires listeners, connects, and
   /// captures the local participant. (DRY - single source of room wiring.)
@@ -472,28 +503,16 @@ class LiveKitCallService {
   /// fetch as the `peer` hint so the ephemeral TURN credential is keyed to us.
   /// Optional: a null / empty identity still fetches (the endpoint falls back to
   /// the local FQID), and the whole ICE step is best-effort anyway.
+  ///
+  /// Room options are built by [buildRoomOptions] (factored out so the
+  /// camera-path regression test can assert them without a live room).
   Future<void> _connectRoom({
     required String wsUrl,
     required String token,
     String? identity,
   }) async {
     _lastToken = token;
-    _room = Room(
-      roomOptions: RoomOptions(
-        adaptiveStream: true,
-        dynacast: true,
-        defaultAudioPublishOptions: const AudioPublishOptions(
-          name: "mic",
-          stream: "mic_audio",
-        ),
-        defaultVideoPublishOptions:
-            screenSharePublishOptionsFor(ScreenShareFrameRate.standard),
-        // Capture the screen at up to 1080p30 by default (the toggle path below
-        // may override with captureScreenAudio for the browser tab-audio case).
-        defaultScreenShareCaptureOptions:
-            screenShareCaptureOptionsFor(ScreenShareFrameRate.standard),
-      ),
-    );
+    _room = Room(roomOptions: buildRoomOptions());
     _bindRoomListeners();
     // Sovereign ICE: pull STUN/TURN from the web-UI so off-tailnet / cellular
     // peerconnections relay through the sovereign coturn instead of timing out
@@ -704,11 +723,6 @@ class LiveKitCallService {
       ScreenShareFrameRate.lowBandwidth =>
         const VideoEncoding(maxFramerate: 15, maxBitrate: 2500 * 1000),
     };
-    debugPrint(
-      'screen-share publish encoding: tier=$tier maxFramerate='
-      '${encoding.maxFramerate} maxBitrate=${encoding.maxBitrate} '
-      'simulcast=false degradationPreference=maintainFramerate',
-    );
     return VideoPublishOptions(
       name: VideoPublishOptions.defaultScreenShareName,
       simulcast: false,
@@ -873,9 +887,20 @@ class LiveKitCallService {
     for (final track in tracks) {
       if (track is LocalVideoTrack) {
         try {
+          final publishOptions = screenSharePublishOptionsFor(frameRate);
+          // Inspectable encoding choice: logged HERE, at the real share
+          // publish, so it fires once per share start (not on room joins or
+          // in the pure options builder).
+          debugPrint(
+            'screen-share publish encoding: tier=$frameRate maxFramerate='
+            '${publishOptions.screenShareEncoding?.maxFramerate} maxBitrate='
+            '${publishOptions.screenShareEncoding?.maxBitrate} '
+            'simulcast=${publishOptions.simulcast} degradationPreference='
+            '${publishOptions.degradationPreference}',
+          );
           await lp.publishVideoTrack(
             track,
-            publishOptions: screenSharePublishOptionsFor(frameRate),
+            publishOptions: publishOptions,
           );
         } catch (e) {
           // Boundary diagnostic: the video publish IS the user-visible share, so
