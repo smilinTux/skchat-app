@@ -68,10 +68,38 @@ class SpaceRoomState {
 
 // ── Notifier ─────────────────────────────────────────────────────────────────
 
+/// The local participant's current LiveKit publish grant, sourced from the
+/// snapshot list (not [SpaceJoin.isHost]). False when the local snapshot has
+/// not arrived yet, e.g. the very first connecting frame.
+bool _localCanPublish(List<LiveKitParticipantSnapshot> participants) {
+  for (final p in participants) {
+    if (p.isLocal) return p.canPublish;
+  }
+  return false;
+}
+
+/// The published mic track sid of a REMOTE participant, or null when they
+/// have no mic publication (never went live). The server's mute moderation
+/// call (MuteRoomTrackRequest) is per-track, so the host mute action resolves
+/// the sid from the live room graph, the same identity-keyed lookup
+/// resolveScreenShares uses for share tracks.
+String? _micTrackSidFor(Room? room, String identity) {
+  final remote = room?.remoteParticipants[identity];
+  return remote?.getTrackPublicationBySource(TrackSource.microphone)?.sid;
+}
+
 class SpaceRoomNotifier
     extends AutoDisposeFamilyNotifier<SpaceRoomState, SpaceJoin> {
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
   StreamSubscription<ConnectionState>? _connSub;
+  StreamSubscription<bool>? _micSub;
+
+  /// Set by [_cancel] (leave / provider dispose). The async participants
+  /// listener below can resume AFTER a fast demote-then-leave has already
+  /// disposed this notifier; writing state then throws, so every write
+  /// after an await checks this first (mirrors the call_device_picker
+  /// mounted guards).
+  bool _disposed = false;
 
   @override
   SpaceRoomState build(SpaceJoin arg) {
@@ -87,24 +115,51 @@ class SpaceRoomNotifier
   Future<void> connect() async {
     final svc = ref.read(liveKitCallServiceProvider);
 
-    _partSub = svc.participants.listen((list) {
+    _partSub = svc.participants.listen((list) async {
+      final wasSpeaker = _localCanPublish(state.participants);
       state = state.copyWith(participants: list);
+      final isSpeaker = _localCanPublish(list);
+      if (wasSpeaker && !isSpeaker && state.isMicEnabled) {
+        // Demoted mid-session: the publish grant was revoked. Stop
+        // publishing and drop back to the listener control (X Spaces model,
+        // no lingering hot mic once the grant is gone).
+        await svc.setMicEnabled(false);
+        // The await may resume after leave() disposed this notifier.
+        if (_disposed) return;
+        state = state.copyWith(isMicEnabled: false);
+      }
     });
     _connSub = svc.connectionState.listen((cs) {
       state = state.copyWith(isConnected: cs == ConnectionState.connected);
     });
+    // Mirrors the mic-enabled state whenever LiveKitCallService changes it
+    // for ANY reason, including the system-audio mutual exclusion silently
+    // flipping it internally (system audio starting force-disables the mic;
+    // enabling the mic force-stops system audio). Without this, the
+    // control-bar label goes stale until the user taps mute/unmute.
+    _micSub = svc.micEnabledChanges.listen((enabled) {
+      if (_disposed) return;
+      state = state.copyWith(isMicEnabled: enabled);
+    });
 
     try {
       await svc.connectWithToken(wsUrl: arg.url, token: arg.token);
-      // Host (or any role granted publish) goes live on mic immediately.
-      final canPublish = arg.isHost;
-      if (canPublish) {
+      // ONLY the host goes live on mic at connect time. Any non-host
+      // participant, even a speaker rejoining with a pre-authorized
+      // publish grant, starts MUTED and self-unmutes via the button (X
+      // Spaces convention, no hot-mic surprises on rejoin). Mic control
+      // VISIBILITY is separately gated on the actual publish grant in the
+      // control bar, and a grant gained later via promotion (see
+      // [raiseHand] and the participants listener above) never
+      // auto-unmutes either.
+      final goLive = arg.isHost;
+      if (goLive) {
         await svc.setMicEnabled(true);
       }
       state = state.copyWith(
         participants: svc.currentParticipants,
         isConnected: true,
-        isMicEnabled: canPublish,
+        isMicEnabled: goLive,
       );
     } on Object catch (e) {
       state = state.copyWith(error: e.toString());
@@ -115,6 +170,9 @@ class SpaceRoomNotifier
     final svc = ref.read(liveKitCallServiceProvider);
     final next = !state.isMicEnabled;
     await svc.setMicEnabled(next);
+    // The await may resume after leave() disposed this notifier (mirrors
+    // the participants-listener guard above).
+    if (_disposed) return;
     state = state.copyWith(isMicEnabled: next);
   }
 
@@ -124,8 +182,13 @@ class SpaceRoomNotifier
   /// The `isScreenSharing` flag on the participants snapshot drives the UI, so
   /// no extra state is tracked here: the stream update flips the controls and
   /// raises the stage for everyone.
-  Future<void> toggleScreenShare(bool enabled) async {
-    await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(enabled);
+  Future<void> toggleScreenShare(bool enabled,
+      {String? systemAudioDeviceId, String? sourceId}) async {
+    await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(
+          enabled,
+          systemAudioDeviceId: systemAudioDeviceId,
+          sourceId: sourceId,
+        );
   }
 
   Future<void> raiseHand(String identity) async {
@@ -133,11 +196,10 @@ class SpaceRoomNotifier
     try {
       final onStage = await spaces.raiseHand(arg.spaceId, identity: identity);
       state = state.copyWith(handRaised: !onStage);
-      if (onStage) {
-        // Promoted to speaker, go live.
-        await ref.read(liveKitCallServiceProvider).setMicEnabled(true);
-        state = state.copyWith(isMicEnabled: true);
-      }
+      // X Spaces model: promotion flips the publish grant (surfaced through
+      // the participants stream, see connect() above) but never auto-
+      // unmutes. Mic controls become available in the MUTED state; the
+      // speaker self-unmutes via toggleMic.
     } on Object {
       // Best-effort, leave hand state as-is on failure.
     }
@@ -157,6 +219,22 @@ class SpaceRoomNotifier
             identity: identity,
           );
 
+  /// Host force-mutes a speaker's live mic (X Spaces model: strictly
+  /// one-directional; there is NO force-unmute anywhere, the speaker
+  /// self-unmutes via their own mic control). No-op when the speaker has
+  /// no published mic track to mute.
+  Future<void> muteSpeaker(String requester, String identity) async {
+    final room = ref.read(liveKitCallServiceProvider).room;
+    final trackSid = _micTrackSidFor(room, identity);
+    if (trackSid == null) return;
+    await ref.read(spacesServiceProvider).mute(
+          arg.spaceId,
+          requester: requester,
+          identity: identity,
+          trackSid: trackSid,
+        );
+  }
+
   Future<void> kick(String requester, String identity) =>
       ref.read(spacesServiceProvider).kick(
             arg.spaceId,
@@ -174,8 +252,10 @@ class SpaceRoomNotifier
   }
 
   void _cancel() {
+    _disposed = true;
     _partSub?.cancel();
     _connSub?.cancel();
+    _micSub?.cancel();
   }
 }
 
@@ -561,7 +641,7 @@ class _Stage extends ConsumerWidget {
                 snapshot: p,
                 isHost: join.isHost && p.isLocal,
                 onTap: join.isHost && !p.isLocal
-                    ? () => _hostActions(context, ref, p.identity)
+                    ? () => _hostActions(context, ref, p)
                     : null,
               ),
           ],
@@ -578,7 +658,7 @@ class _Stage extends ConsumerWidget {
                 _ListenerDot(
                   snapshot: p,
                   onTap: join.isHost && !p.isLocal
-                      ? () => _hostActions(context, ref, p.identity)
+                      ? () => _hostActions(context, ref, p)
                       : null,
                 ),
             ],
@@ -619,12 +699,26 @@ class _Stage extends ConsumerWidget {
     );
   }
 
+  /// Host moderation sheet for a participant tile. Actions follow the
+  /// target's CURRENT stage state ([LiveKitParticipantSnapshot.canPublish]):
+  ///
+  /// - Listener (off stage): "Invite to speak" only.
+  /// - Speaker (on stage): "Mute mic" + "Remove from stage" (demote). Mute is
+  ///   ONE-DIRECTIONAL (X Spaces model): the host can force-mute a live mic
+  ///   but there is deliberately NO unmute-participant action; only the
+  ///   speaker self-unmutes.
+  /// - Everyone: "Remove from Space" (kick).
+  ///
+  /// Only reachable by the host on someone ELSE's tile (the onTap wiring
+  /// above gates on `join.isHost && !p.isLocal`).
   Future<void> _hostActions(
     BuildContext context,
     WidgetRef ref,
-    String identity,
+    LiveKitParticipantSnapshot target,
   ) async {
     final notifier = ref.read(spaceRoomProvider(join).notifier);
+    final identity = target.identity;
+    final onStage = target.canPublish;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: SovereignColors.surfaceRaised,
@@ -649,24 +743,36 @@ class _Stage extends ConsumerWidget {
                 ],
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.upgrade_rounded,
-                  color: SovereignColors.accentEncrypt),
-              title: const Text("Invite to speak"),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                notifier.invite(join.identity, identity);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.arrow_downward_rounded,
-                  color: SovereignColors.accentWarning),
-              title: const Text("Remove from stage"),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                notifier.removeFromStage(join.identity, identity);
-              },
-            ),
+            if (!onStage)
+              ListTile(
+                leading: const Icon(Icons.upgrade_rounded,
+                    color: SovereignColors.accentEncrypt),
+                title: const Text("Invite to speak"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.invite(join.identity, identity);
+                },
+              ),
+            if (onStage) ...[
+              ListTile(
+                leading: const Icon(Icons.mic_off_rounded,
+                    color: SovereignColors.accentWarning),
+                title: const Text("Mute mic"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.muteSpeaker(join.identity, identity);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.arrow_downward_rounded,
+                    color: SovereignColors.accentWarning),
+                title: const Text("Remove from stage"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.removeFromStage(join.identity, identity);
+                },
+              ),
+            ],
             ListTile(
               leading: const Icon(Icons.person_remove_rounded,
                   color: SovereignColors.accentDanger),
@@ -783,11 +889,12 @@ class _WatchStage extends StatelessWidget {
               const SizedBox(width: 6),
               const Expanded(
                 child: Text(
-                  // Same guidance as the call screen-share path: on Linux, full
-                  // system audio through getDisplayMedia is unreliable, so pick a
-                  // PulseAudio \"Monitor of ...\" source as your mic to stream
-                  // desktop audio (e.g. the fight) to listeners.
-                  "Desktop audio? Pick a \"Monitor of ...\" source as your mic so listeners hear it.",
+                  // The dedicated system-audio toggle in the Screen share
+                  // panel (ScreenSharePanel, "Share system audio") captures
+                  // and publishes desktop audio directly, so this hint just
+                  // points there instead of asking listeners to hand-pick a
+                  // PulseAudio monitor device as their mic.
+                  "Desktop audio? Turn on \"Share system audio\" in the Screen share panel so listeners hear it.",
                   style: TextStyle(
                     color: SovereignColors.textTertiary,
                     fontSize: 11,
@@ -1097,13 +1204,17 @@ class _ControlBar extends ConsumerWidget {
     }
     final canShare = join.isHost || (local?.canPublish ?? false);
     final isSharing = local?.isScreenSharing ?? false;
+    // Mute/unmute is gated on the actual LiveKit publish grant (host OR a
+    // promoted speaker), not [SpaceJoin.isHost]: a promoted speaker must get
+    // real mic controls without rejoining, and a demoted one must lose them.
+    final canPublish = local?.canPublish ?? false;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          if (join.isHost)
+          if (canPublish)
             _RoundButton(
               icon: state.isMicEnabled
                   ? Icons.mic_rounded
@@ -1137,7 +1248,21 @@ class _ControlBar extends ConsumerWidget {
               activeColor: SovereignColors.accentEncrypt,
               onTap: () async {
                 try {
-                  await notifier.toggleScreenShare(!isSharing);
+                  final goingLive = !isSharing;
+                  String? sourceId;
+                  if (goingLive) {
+                    // Desktop needs an explicit capture source before
+                    // getDisplayMedia can resolve one; web keeps using its
+                    // own native picker. A cancelled desktop pick aborts
+                    // silently, no share, no error.
+                    final picked = await resolveScreenShareSource(context);
+                    if (!picked.proceed) return;
+                    sourceId = picked.sourceId;
+                  }
+                  await notifier.toggleScreenShare(
+                    goingLive,
+                    sourceId: sourceId,
+                  );
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(

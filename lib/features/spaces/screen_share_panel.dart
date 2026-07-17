@@ -4,6 +4,7 @@ import "package:livekit_client/livekit_client.dart";
 
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
+import "../../services/system_audio_sources.dart";
 import "screen_share_helper.dart";
 
 /// Screen-share lane (Tier 4, MEDIA): publishes a LiveKit screen-share video
@@ -28,15 +29,60 @@ class ScreenSharePanel extends ConsumerStatefulWidget {
 class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
   bool _sharing = false;
   bool _busy = false;
+  bool _shareSystemAudio = true;
+  String? _systemAudioDeviceId;
+  List<MediaDevice> _monitors = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSystemAudioSources();
+  }
+
+  Future<void> _loadSystemAudioSources() async {
+    List<MediaDevice> monitors = const [];
+    String? defaultId;
+    try {
+      final list = await Hardware.instance.enumerateDevices(
+        type: 'audioinput',
+      );
+      monitors = SystemAudioSources.monitors(list);
+      defaultId = SystemAudioSources.autoSelect(list)?.deviceId;
+    } catch (_) {
+      // Leave _monitors empty; the switch already disables itself and shows
+      // the hint when there is nothing to select.
+    }
+    if (mounted) {
+      setState(() {
+        _monitors = monitors;
+        _systemAudioDeviceId = defaultId;
+      });
+    }
+  }
 
   Future<void> _toggleShare() async {
     if (_busy) return;
     setState(() => _busy = true);
     final next = !_sharing;
     try {
-      await ref
-          .read(liveKitCallServiceProvider)
-          .setScreenShareEnabled(next);
+      String? sourceId;
+      if (next) {
+        // Desktop needs an explicit capture source before getDisplayMedia
+        // can resolve one; web keeps using its own native picker. A
+        // cancelled desktop pick aborts silently, no share, no error.
+        final picked = await resolveScreenShareSource(context);
+        if (!picked.proceed) {
+          if (mounted) setState(() => _busy = false);
+          return;
+        }
+        sourceId = picked.sourceId;
+      }
+      await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(
+            next,
+            systemAudioDeviceId:
+                (_shareSystemAudio && next) ? _systemAudioDeviceId : null,
+            sourceId: sourceId,
+          );
       if (mounted) setState(() => _sharing = next);
     } catch (e) {
       if (mounted) {
@@ -137,6 +183,56 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
               },
             ),
           ),
+
+          const SizedBox(height: 8),
+
+          // System-audio switch + monitor-source picker.
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text(
+              "Share system audio",
+              style: TextStyle(
+                color: SovereignColors.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            subtitle: _monitors.isEmpty
+                ? const Text(
+                    "No system-audio source found on this device.",
+                    style: TextStyle(
+                      color: SovereignColors.textTertiary,
+                      fontSize: 12,
+                    ),
+                  )
+                : null,
+            value: _shareSystemAudio,
+            onChanged: _monitors.isEmpty
+                ? null
+                : (value) => setState(() => _shareSystemAudio = value),
+          ),
+          if (_shareSystemAudio && _monitors.length > 1)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: DropdownButton<String>(
+                value: _systemAudioDeviceId,
+                dropdownColor: SovereignColors.surfaceCard,
+                style: const TextStyle(
+                  color: SovereignColors.textPrimary,
+                  fontSize: 13,
+                ),
+                items: [
+                  for (final m in _monitors)
+                    DropdownMenuItem<String>(
+                      value: m.deviceId,
+                      child: Text(m.label),
+                    ),
+                ],
+                onChanged: (value) =>
+                    setState(() => _systemAudioDeviceId = value),
+              ),
+            ),
 
           const SizedBox(height: 8),
 

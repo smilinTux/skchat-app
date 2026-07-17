@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import 'backend_config.dart';
+import 'system_audio_sources.dart';
 
 /// Compile-time default for the skchat web-UI LiveKit token-mint endpoint.
 /// Now only the *seed* for the runtime-settable [backendConfigProvider]; the
@@ -167,6 +168,11 @@ class LiveKitCallService {
   Room? _room;
   LocalParticipant? _localParticipant;
 
+  /// The dedicated system-audio (screen-share audio) track, when publishing
+  /// system audio. Kept separate from the voice mic so mic processing is
+  /// untouched. Null when not sharing system audio.
+  LocalTrack? _systemAudioTrack;
+
   /// The LiveKit token used for the current room connection (minted by
   /// [joinRoom] or supplied to [connectWithToken]). Exposed so the UI can
   /// forward it to the cast control plane, which authorizes an HLS egress by a
@@ -190,6 +196,7 @@ class LiveKitCallService {
         String senderIdentity,
       })>.broadcast();
   final _connStateCtl = StreamController<ConnectionState>.broadcast();
+  final _micEnabledCtl = StreamController<bool>.broadcast();
 
   /// Stream of participant snapshots, updated whenever participants join,
   /// leave, or change their track state.
@@ -202,6 +209,16 @@ class LiveKitCallService {
 
   /// LiveKit room connection state changes.
   Stream<ConnectionState> get connectionState => _connStateCtl.stream;
+
+  /// Emits the local microphone's enabled state whenever [setMicEnabled]
+  /// changes it, for ANY reason: an explicit caller toggle, or an INTERNAL
+  /// flip made to enforce the system-audio mutual exclusion (system audio
+  /// starting force-disables the mic; enabling the mic force-stops system
+  /// audio). Every mic-enabled change funnels through [setMicEnabled], so
+  /// this is the single seam UI state should follow instead of tracking its
+  /// own copy that only updates on a manual toggle call, see
+  /// `SpaceRoomNotifier` for the consumer.
+  Stream<bool> get micEnabledChanges => _micEnabledCtl.stream;
 
   /// The underlying [Room], null until [joinRoom] completes.
   Room? get room => _room;
@@ -433,8 +450,15 @@ class LiveKitCallService {
         ),
         // Capture the screen at up to 1080p30 by default (the toggle path below
         // may override with captureScreenAudio for the browser tab-audio case).
+        // maxFrameRate MUST be an explicit double: on native desktop
+        // livekit_client builds `mandatory: {'frameRate': maxFrameRate}` whenever
+        // `maxFrameRate != 0.0`, and a null maxFrameRate satisfies that guard,
+        // emitting `{'frameRate': null}`. flutter_webrtc's native ParseConstraints
+        // has no case for a null value and falls through to `std::get<int>`,
+        // aborting with std::bad_variant_access the instant capture starts.
         defaultScreenShareCaptureOptions: const ScreenShareCaptureOptions(
           params: VideoParametersPresets.screenShareH1080FPS30,
+          maxFrameRate: 30.0,
         ),
       ),
     );
@@ -551,8 +575,19 @@ class LiveKitCallService {
   // ── Track controls ────────────────────────────────────────────────────────
 
   /// Mute / unmute the local microphone.
+  ///
+  /// System audio and the voice mic are mutually exclusive: both would
+  /// otherwise publish as `TrackSource.microphone`, and LiveKit's
+  /// `getTrackPublicationBySource(microphone)` returns whichever published
+  /// first, silently dropping the other. So enabling the real mic while a
+  /// system-audio track is live stops the system-audio track first, leaving
+  /// at most one microphone-source publication at any time.
   Future<void> setMicEnabled(bool enabled) async {
+    if (enabled && isSharingSystemAudio) {
+      await stopScreenShareSystemAudio();
+    }
     await _localParticipant?.setMicrophoneEnabled(enabled);
+    if (!_micEnabledCtl.isClosed) _micEnabledCtl.add(enabled);
     _emitParticipants();
   }
 
@@ -615,12 +650,24 @@ class LiveKitCallService {
   /// Throws on capture denial / failure (e.g. NotAllowedError when the user
   /// cancels the picker or the gesture was lost) so the caller can surface a
   /// SnackBar and revert the sharing UI state instead of failing silently.
+  ///
+  /// NATIVE DESKTOP: on Linux/macOS/Windows, flutter_webrtc needs an explicit
+  /// capture [sourceId] from `desktopCapturer.getSources()`, or it defaults to
+  /// source "0" and fails with "source not found". The browser supplies its
+  /// own picker on web, so [sourceId] must stay null there. Callers on desktop
+  /// resolve a source (e.g. via the SDK's `ScreenSelectDialog`) before calling
+  /// this and pass its id here; web callers pass nothing.
   Future<void> setScreenShareEnabled(bool enabled,
-      {bool withAudio = true}) async {
+      {bool withAudio = true,
+      String? systemAudioDeviceId,
+      String? sourceId}) async {
     final lp = _localParticipant;
     if (lp == null) return;
 
     if (!enabled) {
+      // Stop the system-audio track (if any) before tearing down the
+      // screen-share publications below.
+      await stopScreenShareSystemAudio();
       // The SDK helper removes BOTH the screen-share video and its paired
       // screen-share audio publication by source.
       await lp.setScreenShareEnabled(false);
@@ -630,10 +677,21 @@ class LiveKitCallService {
 
     // Capture options: request screen audio in the single getDisplayMedia call.
     // The preset only supplies "ideal" web hints (never an exact/mandatory
-    // constraint), so it does not cause the capture to reject.
-    const captureOptions = ScreenShareCaptureOptions(
+    // constraint), so it does not cause the capture to reject. [sourceId] is
+    // null on web (unchanged, browser-native picker) and set on native
+    // desktop, where flutter_webrtc needs it to resolve the capture source.
+    // maxFrameRate MUST be set to an explicit double. On native desktop,
+    // livekit_client emits `mandatory: {'frameRate': maxFrameRate}` whenever
+    // `maxFrameRate != 0.0`, and a null maxFrameRate passes that guard, yielding
+    // `{'frameRate': null}`. flutter_webrtc's native ParseConstraints has no
+    // branch for a null value and falls through to `std::get<int>`, aborting
+    // with std::bad_variant_access the moment getDisplayMedia parses it. A
+    // concrete double keeps the value in the double branch the parser handles.
+    final captureOptions = ScreenShareCaptureOptions(
+      sourceId: sourceId,
       captureScreenAudio: true,
       params: VideoParametersPresets.screenShareH1080FPS15,
+      maxFrameRate: 15.0,
     );
 
     // Capture the display. This is the FIRST await, so the getDisplayMedia
@@ -696,6 +754,16 @@ class LiveKitCallService {
             await track.stop();
           } catch (_) {}
         }
+      }
+    }
+
+    // System audio (best-effort): started AFTER the video is live so a
+    // failure here never aborts the video share.
+    if (systemAudioDeviceId != null) {
+      try {
+        await startScreenShareSystemAudio(systemAudioDeviceId);
+      } catch (e) {
+        // Swallow: the video share stays live even if system audio fails.
       }
     }
     _emitParticipants();
@@ -939,6 +1007,85 @@ class LiveKitCallService {
     }
   }
 
+  /// True when at least one PulseAudio monitor input is available to capture
+  /// system audio (Linux desktop). Returns false on platforms without one.
+  Future<bool> hasSystemAudioSource() async =>
+      (await defaultSystemAudioSource()) != null;
+
+  /// The auto-selected default system-audio source, or null when none exists.
+  Future<MediaDevice?> defaultSystemAudioSource() async {
+    final inputs = await Hardware.instance.enumerateDevices(type: 'audioinput');
+    return SystemAudioSources.autoSelect(inputs);
+  }
+
+  bool get isSharingSystemAudio => _systemAudioTrack != null;
+
+  /// Capture [deviceId] (a monitor source) with all voice processing off and
+  /// publish it as the screen-share audio track. Best-effort: a failure here
+  /// must never abort the video share, so callers wrap it. Guards when there is
+  /// no room, or when a system-audio track is already being shared.
+  ///
+  /// PROTOCOL-SOURCE CAVEAT: `livekit_client` 2.2.6 hardcodes
+  /// `TrackSource.microphone` on every track created via the public
+  /// `LocalAudioTrack.create()` factory (see `track/local/audio.dart`); the
+  /// `TrackSource.screenShareAudio` value is only ever set by the SDK's own
+  /// `@internal` constructor, invoked internally from
+  /// `createScreenShareTracksWithAudio` for a browser `getDisplayMedia` audio
+  /// track, and `AudioPublishOptions` has no field to override the published
+  /// source either. So a device-captured (PulseAudio monitor) track cannot be
+  /// tagged `screenShareAudio` at the LiveKit-protocol level through any
+  /// supported public API. We publish it as the accepted substitute: a
+  /// distinct publish `name`/`stream` so it is identifiable and groupable on
+  /// the receiving side, while the wire-level source remains `microphone`
+  /// (voice processing off). This is the settled approach, not a pending
+  /// question; there is no supported way in 2.2.6 to mint a
+  /// `screenShareAudio`-sourced track from a device id.
+  Future<void> startScreenShareSystemAudio(String deviceId) async {
+    final lp = _localParticipant;
+    if (lp == null || _systemAudioTrack != null) return;
+    // Mutually exclusive with the voice mic: both publish as
+    // TrackSource.microphone, so leaving the real mic live would leave two
+    // microphone-source publications and make mic lookups grab the wrong
+    // one. Disable it first via setMicEnabled (NOT a raw lp.
+    // setMicrophoneEnabled call) so this internal flip also emits on
+    // [micEnabledChanges] and any UI mirroring mic state (e.g.
+    // SpaceRoomNotifier) stays in sync without a manual resync tap.
+    if (lp.isMicrophoneEnabled()) {
+      await setMicEnabled(false);
+    }
+    final track = await LocalAudioTrack.create(
+      SystemAudioSources.captureOptions(deviceId),
+    );
+    try {
+      await lp.publishAudioTrack(
+        track,
+        publishOptions: const AudioPublishOptions(
+          name: 'screenshare-audio',
+          stream: 'screenshare',
+        ),
+      );
+    } catch (_) {
+      await track.stop();
+      rethrow;
+    }
+    _systemAudioTrack = track;
+    _emitParticipants();
+  }
+
+  /// Unpublish and stop the system-audio track only. Safe no-op when not sharing.
+  Future<void> stopScreenShareSystemAudio() async {
+    final track = _systemAudioTrack;
+    _systemAudioTrack = null;
+    if (track == null) return;
+    try {
+      await _localParticipant?.removePublishedTrack(track.sid ?? '');
+    } catch (_) {}
+    try {
+      await track.stop();
+    } catch (_) {}
+    _emitParticipants();
+  }
+
   /// Switch the active camera to [deviceId] WITHOUT dropping the call.
   ///
   /// If a camera track is already published, it is restarted on the new device;
@@ -973,6 +1120,7 @@ class LiveKitCallService {
     if (!_participantsCtl.isClosed) await _participantsCtl.close();
     if (!_dataCtl.isClosed) await _dataCtl.close();
     if (!_connStateCtl.isClosed) await _connStateCtl.close();
+    if (!_micEnabledCtl.isClosed) await _micEnabledCtl.close();
   }
 }
 

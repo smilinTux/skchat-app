@@ -69,11 +69,11 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # WebRTC voice/video calls
-  flutter_webrtc: ^0.11.0
+  flutter_webrtc: ">=0.14.0 <2.0.0"
   web_socket_channel: ^3.0.0
 
   # LiveKit SFU client — group/agent room calls
-  livekit_client: ^2.2.6
+  livekit_client: ">=2.4.0 <2.6.5"
 
   # File picker for chat attachments (multipart upload to the daemon)
   file_picker: ^11.0.2
@@ -102,7 +102,11 @@ dev_dependencies:
   
   # Testing
   mocktail: ^1.0.0
-  
+
+  # Autonomous in-process UI driving (integration_test/), see SP5 harness.
+  integration_test:
+    sdk: flutter
+
   # Linting
   flutter_lints: ^6.0.0
 

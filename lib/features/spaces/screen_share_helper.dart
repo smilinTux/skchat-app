@@ -1,6 +1,89 @@
+import "package:flutter/foundation.dart" show kIsWeb;
+import "package:flutter/material.dart";
+import "package:flutter_webrtc/flutter_webrtc.dart"
+    show DesktopCapturerSource, SourceType, ThumbnailSize, desktopCapturer;
 import "package:livekit_client/livekit_client.dart";
 
+import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
+
+/// True on native desktop (Linux / macOS / Windows), where flutter_webrtc
+/// requires an explicit capture `sourceId` from `desktopCapturer.getSources()`
+/// before `getDisplayMedia` can resolve a source. Always false on web (the
+/// browser owns its own picker) and on mobile.
+bool get isDesktopScreenShare => !kIsWeb && lkPlatformIsDesktop();
+
+/// Resolve the capture source id to pass into
+/// [LiveKitCallService.setScreenShareEnabled] before starting a share.
+///
+/// On web this is a no-op: returns `(proceed: true, sourceId: null)`
+/// immediately, since the browser supplies its own `getDisplayMedia` picker.
+///
+/// On native desktop it enumerates sources ONCE via
+/// `desktopCapturer.getSources()` with a negligible 1x1 thumbnail size (no
+/// live thumbnail refresh) and shows a lightweight text-list picker. It
+/// returns `(proceed: true, sourceId: <picked id>)` for a chosen source, or
+/// `(proceed: false, sourceId: null)` if the user cancelled the dialog or no
+/// sources were found. A cancelled pick means the caller MUST NOT start the
+/// share (no error, just a silent no-op).
+///
+/// This intentionally avoids flutter_webrtc's bundled `ScreenSelectDialog`,
+/// which runs a `Timer.periodic` re-grabbing live thumbnails of every window
+/// and screen every few seconds. On Linux/X11 with an integrated GPU that
+/// repeated compositor grab can be heavy enough to crash the whole desktop
+/// session, so this picker enumerates sources exactly once and never
+/// refreshes thumbnails.
+Future<({bool proceed, String? sourceId})> resolveScreenShareSource(
+  BuildContext context,
+) async {
+  if (!isDesktopScreenShare) {
+    return (proceed: true, sourceId: null);
+  }
+  final sources = await desktopCapturer.getSources(
+    types: [SourceType.Screen, SourceType.Window],
+    thumbnailSize: ThumbnailSize(1, 1),
+  );
+  if (sources.isEmpty) {
+    return (proceed: false, sourceId: null);
+  }
+  final screens = sources.where((s) => s.type == SourceType.Screen).toList();
+  final windows = sources.where((s) => s.type == SourceType.Window).toList();
+  if (!context.mounted) {
+    return (proceed: false, sourceId: null);
+  }
+  final source = await showDialog<DesktopCapturerSource>(
+    context: context,
+    builder: (dialogContext) => SimpleDialog(
+      backgroundColor: SovereignColors.surfaceCard,
+      title: const Text(
+        "Choose what to share",
+        style: TextStyle(color: SovereignColors.textPrimary),
+      ),
+      children: [
+        for (final s in screens)
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop(s),
+            child: Text(
+              s.name.isNotEmpty ? s.name : "Screen",
+              style: const TextStyle(color: SovereignColors.textPrimary),
+            ),
+          ),
+        for (final s in windows)
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop(s),
+            child: Text(
+              s.name.isNotEmpty ? s.name : "Window",
+              style: const TextStyle(color: SovereignColors.textPrimary),
+            ),
+          ),
+      ],
+    ),
+  );
+  if (source == null) {
+    return (proceed: false, sourceId: null);
+  }
+  return (proceed: true, sourceId: source.id);
+}
 
 /// One live screen-share: the sharer's [identity], the live [VideoTrack], and
 /// whether the share is the local participant's own screen.
