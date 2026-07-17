@@ -1040,7 +1040,12 @@ class LiveKitCallService {
       // Local tracks: our own screen-share start / stop must re-snapshot so the
       // local stage tile appears / clears without waiting on a remote round-trip.
       ..on<LocalTrackPublishedEvent>((_) => _emitParticipants())
-      ..on<LocalTrackUnpublishedEvent>((_) => _emitParticipants())
+      // Route through handleLocalTrackUnpublished so a screen-share video that
+      // ends OUTSIDE setScreenShareEnabled(false) (OS "Stop sharing" indicator
+      // on native desktop, or the captured source window closing) also tears
+      // down the paired system-audio monitor track, which the SDK does not own.
+      ..on<LocalTrackUnpublishedEvent>(
+          (event) => handleLocalTrackUnpublished(event.publication.source))
       // Mute state: keep the muted / speaking dot on every tile current, and
       // reconcile a server-initiated mute of our OWN mic (host force-mute)
       // into micEnabledChanges / externalMuteEvents so the target sees it.
@@ -1278,6 +1283,38 @@ class LiveKitCallService {
       rethrow;
     }
     _systemAudioTrack = track;
+    _emitParticipants();
+  }
+
+  /// Test seam: inject the current system-audio monitor track so the
+  /// source-closed teardown path ([handleLocalTrackUnpublished]) can be
+  /// exercised without a live LiveKit room (a unit test cannot spin one up).
+  @visibleForTesting
+  set debugSystemAudioTrack(LocalTrack? track) => _systemAudioTrack = track;
+
+  /// React to the local participant losing a published track.
+  ///
+  /// Usually this just re-snapshots. But the screen-share VIDEO track can go
+  /// away WITHOUT passing through [setScreenShareEnabled] (which does its own
+  /// system-audio teardown first): the OS-level "Stop sharing" indicator on
+  /// native desktop, or the captured source window closing, ends the
+  /// display-capture track and the SDK auto-unpublishes it (LocalParticipant's
+  /// internal TrackEndedEvent listener calls removePublishedTrack, which emits
+  /// [LocalTrackUnpublishedEvent]). The device-captured system-audio monitor
+  /// is a SEPARATE PulseAudio capture the SDK does not own, so nothing would
+  /// stop it: the Space would keep streaming monitor audio after the share
+  /// visibly ended. Tie its lifecycle to the screen-share video here so EVERY
+  /// stop path (explicit app button, OS indicator, source closed) tears it
+  /// down. Idempotent: the explicit-stop path already cleared the monitor, so
+  /// [isSharingSystemAudio] is false by the time its own video-unpublish
+  /// event arrives.
+  @visibleForTesting
+  Future<void> handleLocalTrackUnpublished(TrackSource? source) async {
+    if (source == TrackSource.screenShareVideo && isSharingSystemAudio) {
+      // stopScreenShareSystemAudio() re-emits its own participant snapshot.
+      await stopScreenShareSystemAudio();
+      return;
+    }
     _emitParticipants();
   }
 

@@ -1,5 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:livekit_client/livekit_client.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:skchat/services/livekit_call_service.dart';
+
+class _FakeLocalTrack extends Mock implements LocalTrack {}
 
 void main() {
   test('isSharingSystemAudio is false before any share', () {
@@ -62,5 +66,56 @@ void main() {
     await svc.dispose();
     expect(events, isEmpty);
     await sub.cancel();
+  });
+
+  // Source-closed / OS-stop teardown: the operator on native Linux stops the
+  // share via the desktop's own "Stop sharing" indicator (or the captured
+  // window closes), NOT the app button. The SDK auto-unpublishes the local
+  // screen-share VIDEO and emits LocalTrackUnpublishedEvent, but the
+  // device-captured PulseAudio system-audio monitor is a separate track the
+  // SDK does not own. Before the fix that monitor kept streaming (the Space
+  // kept broadcasting Kodi audio after the share visibly ended). The video
+  // unpublish must now tear the monitor down too, tying its lifecycle to the
+  // screen-share video for EVERY stop path. See handleLocalTrackUnpublished.
+  group('screen-share video unpublish tears down the system-audio monitor', () {
+    test('screenShareVideo unpublish (OS stop / source closed) stops and '
+        'clears the monitor track', () async {
+      final svc = LiveKitCallService();
+      final monitor = _FakeLocalTrack();
+      when(() => monitor.sid).thenReturn(null);
+      when(() => monitor.stop()).thenAnswer((_) async => true);
+      // Simulate an in-flight system-audio share (started when the host went
+      // live with system audio ON; no room needed to drive the teardown seam).
+      svc.debugSystemAudioTrack = monitor;
+      expect(svc.isSharingSystemAudio, isTrue);
+
+      await svc.handleLocalTrackUnpublished(TrackSource.screenShareVideo);
+
+      expect(svc.isSharingSystemAudio, isFalse,
+          reason: 'the monitor track must be torn down with the share');
+      verify(() => monitor.stop()).called(1);
+    });
+
+    test('an unrelated local track unpublish (e.g. camera) leaves the monitor '
+        'untouched', () async {
+      final svc = LiveKitCallService();
+      final monitor = _FakeLocalTrack();
+      when(() => monitor.sid).thenReturn(null);
+      when(() => monitor.stop()).thenAnswer((_) async => true);
+      svc.debugSystemAudioTrack = monitor;
+
+      await svc.handleLocalTrackUnpublished(TrackSource.camera);
+
+      expect(svc.isSharingSystemAudio, isTrue);
+      verifyNever(() => monitor.stop());
+    });
+
+    test('screenShareVideo unpublish with no system audio is a safe no-op',
+        () async {
+      final svc = LiveKitCallService();
+      // No monitor track set: must not throw, stays not-sharing.
+      await svc.handleLocalTrackUnpublished(TrackSource.screenShareVideo);
+      expect(svc.isSharingSystemAudio, isFalse);
+    });
   });
 }
