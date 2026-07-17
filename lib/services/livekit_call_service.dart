@@ -439,8 +439,15 @@ class LiveKitCallService {
         ),
         // Capture the screen at up to 1080p30 by default (the toggle path below
         // may override with captureScreenAudio for the browser tab-audio case).
+        // maxFrameRate MUST be an explicit double: on native desktop
+        // livekit_client builds `mandatory: {'frameRate': maxFrameRate}` whenever
+        // `maxFrameRate != 0.0`, and a null maxFrameRate satisfies that guard,
+        // emitting `{'frameRate': null}`. flutter_webrtc's native ParseConstraints
+        // has no case for a null value and falls through to `std::get<int>`,
+        // aborting with std::bad_variant_access the instant capture starts.
         defaultScreenShareCaptureOptions: const ScreenShareCaptureOptions(
           params: VideoParametersPresets.screenShareH1080FPS30,
+          maxFrameRate: 30.0,
         ),
       ),
     );
@@ -661,10 +668,18 @@ class LiveKitCallService {
     // constraint), so it does not cause the capture to reject. [sourceId] is
     // null on web (unchanged, browser-native picker) and set on native
     // desktop, where flutter_webrtc needs it to resolve the capture source.
+    // maxFrameRate MUST be set to an explicit double. On native desktop,
+    // livekit_client emits `mandatory: {'frameRate': maxFrameRate}` whenever
+    // `maxFrameRate != 0.0`, and a null maxFrameRate passes that guard, yielding
+    // `{'frameRate': null}`. flutter_webrtc's native ParseConstraints has no
+    // branch for a null value and falls through to `std::get<int>`, aborting
+    // with std::bad_variant_access the moment getDisplayMedia parses it. A
+    // concrete double keeps the value in the double branch the parser handles.
     final captureOptions = ScreenShareCaptureOptions(
       sourceId: sourceId,
       captureScreenAudio: true,
       params: VideoParametersPresets.screenShareH1080FPS15,
+      maxFrameRate: 15.0,
     );
 
     // Capture the display. This is the FIRST await, so the getDisplayMedia
