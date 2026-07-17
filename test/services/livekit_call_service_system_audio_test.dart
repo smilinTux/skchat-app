@@ -5,6 +5,8 @@ import 'package:skchat/services/livekit_call_service.dart';
 
 class _FakeLocalTrack extends Mock implements LocalTrack {}
 
+class _FakeLocalParticipant extends Mock implements LocalParticipant {}
+
 void main() {
   test('isSharingSystemAudio is false before any share', () {
     final svc = LiveKitCallService();
@@ -116,6 +118,108 @@ void main() {
       // No monitor track set: must not throw, stays not-sharing.
       await svc.handleLocalTrackUnpublished(TrackSource.screenShareVideo);
       expect(svc.isSharingSystemAudio, isFalse);
+    });
+
+    // The operator's actual complaint, end to end: after the OS-level stop
+    // tore the share down, tapping Unmute must publish the genuine VOICE mic
+    // (setMicrophoneEnabled on the participant), NOT resurrect or unmute the
+    // monitor, and micEnabledChanges must carry the flip so the control bar
+    // updates. X model: nothing auto-unmutes; only the explicit tap emits.
+    test('mic restore after source-closed stop: Unmute publishes the voice '
+        'mic and emits micEnabledChanges true, monitor stays dead', () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.removePublishedTrack(any(), notify: any(named: 'notify')))
+          .thenAnswer((_) async {});
+      when(() => lp.setMicrophoneEnabled(any(),
+              audioCaptureOptions: any(named: 'audioCaptureOptions')))
+          .thenAnswer((_) async => null);
+      final monitor = _FakeLocalTrack();
+      when(() => monitor.sid).thenReturn('TR_monitor');
+      when(() => monitor.stop()).thenAnswer((_) async => true);
+      svc.debugLocalParticipant = lp;
+      svc.debugSystemAudioTrack = monitor;
+
+      final micEvents = <bool>[];
+      final sub = svc.micEnabledChanges.listen(micEvents.add);
+
+      // OS "Stop sharing" / source closed: the SDK unpublishes the share
+      // video; the app handler tears the monitor down. No mic emission here
+      // (the teardown must not look like an unmute or a mute to the UI).
+      await svc.handleLocalTrackUnpublished(TrackSource.screenShareVideo);
+      expect(svc.isSharingSystemAudio, isFalse);
+
+      // The operator taps Unmute.
+      await svc.setMicEnabled(true);
+      await Future<void>.delayed(Duration.zero);
+
+      // Genuine voice-mic publish on the participant, exactly once.
+      verify(() => lp.setMicrophoneEnabled(true,
+          audioCaptureOptions: any(named: 'audioCaptureOptions'))).called(1);
+      // Observable to UI state, and ONLY from the explicit tap.
+      expect(micEvents, [true]);
+      // Monitor was stopped exactly once (the teardown) and never touched
+      // again: the Unmute did not route to the monitor track. The teardown
+      // also unpublished the monitor publication exactly once; beyond that
+      // and the voice-mic publish, the participant saw nothing.
+      verify(() => monitor.stop()).called(1);
+      verify(() => lp.removePublishedTrack(any(), notify: any(named: 'notify')))
+          .called(1);
+      verifyNoMoreInteractions(lp);
+      expect(svc.isSharingSystemAudio, isFalse);
+      await sub.cancel();
+    });
+
+    // Explicit app-button stop, then the SDK's own follow-up unpublish event
+    // for the removed share video (the SDK emits LocalTrackUnpublishedEvent
+    // from removePublishedTrack). The teardown must run once on the explicit
+    // stop and the follow-up event must be an idempotent no-op: no second
+    // monitor.stop(), no second removePublishedTrack, and no micEnabledChanges
+    // emission from any of it (a share stop is not a mute/unmute).
+    test('explicit stop tears down once; the follow-up unpublish event does '
+        'not double-teardown and emits no spurious micEnabledChanges',
+        () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.removePublishedTrack(any(), notify: any(named: 'notify')))
+          .thenAnswer((_) async {});
+      when(() => lp.setScreenShareEnabled(any(),
+              captureScreenAudio: any(named: 'captureScreenAudio'),
+              screenShareCaptureOptions:
+                  any(named: 'screenShareCaptureOptions')))
+          .thenAnswer((_) async => null);
+      final monitor = _FakeLocalTrack();
+      when(() => monitor.sid).thenReturn('TR_monitor');
+      when(() => monitor.stop()).thenAnswer((_) async => true);
+      svc.debugLocalParticipant = lp;
+      svc.debugSystemAudioTrack = monitor;
+
+      final micEvents = <bool>[];
+      final sub = svc.micEnabledChanges.listen(micEvents.add);
+
+      // App-button stop: monitor torn down with the share.
+      await svc.setScreenShareEnabled(false);
+      expect(svc.isSharingSystemAudio, isFalse);
+
+      // The SDK's own unpublish event for the share video arrives next.
+      await svc.handleLocalTrackUnpublished(TrackSource.screenShareVideo);
+      await Future<void>.delayed(Duration.zero);
+
+      // Exactly ONE teardown across both: one monitor stop, one unpublish of
+      // the monitor publication, one SDK-helper share disable.
+      verify(() => monitor.stop()).called(1);
+      verify(() => lp.removePublishedTrack(any(), notify: any(named: 'notify')))
+          .called(1);
+      verify(() => lp.setScreenShareEnabled(false,
+              captureScreenAudio: any(named: 'captureScreenAudio'),
+              screenShareCaptureOptions:
+                  any(named: 'screenShareCaptureOptions')))
+          .called(1);
+      verifyNoMoreInteractions(lp);
+      // A share stop is not a mute/unmute: nothing on micEnabledChanges.
+      expect(micEvents, isEmpty);
+      expect(svc.isSharingSystemAudio, isFalse);
+      await sub.cancel();
     });
   });
 }

@@ -1292,6 +1292,14 @@ class LiveKitCallService {
   @visibleForTesting
   set debugSystemAudioTrack(LocalTrack? track) => _systemAudioTrack = track;
 
+  /// Test seam: inject a (mock) local participant so the explicit-stop
+  /// ([setScreenShareEnabled] false) and mic-restore ([setMicEnabled] true)
+  /// paths, which early-return / no-op without one, can be driven end to end
+  /// in a unit test. No behavior change: only assignment to the same private
+  /// field a room join sets.
+  @visibleForTesting
+  set debugLocalParticipant(LocalParticipant? lp) => _localParticipant = lp;
+
   /// React to the local participant losing a published track.
   ///
   /// Usually this just re-snapshots. But the screen-share VIDEO track can go
