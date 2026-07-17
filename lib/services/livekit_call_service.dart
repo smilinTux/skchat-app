@@ -196,6 +196,7 @@ class LiveKitCallService {
         String senderIdentity,
       })>.broadcast();
   final _connStateCtl = StreamController<ConnectionState>.broadcast();
+  final _micEnabledCtl = StreamController<bool>.broadcast();
 
   /// Stream of participant snapshots, updated whenever participants join,
   /// leave, or change their track state.
@@ -208,6 +209,16 @@ class LiveKitCallService {
 
   /// LiveKit room connection state changes.
   Stream<ConnectionState> get connectionState => _connStateCtl.stream;
+
+  /// Emits the local microphone's enabled state whenever [setMicEnabled]
+  /// changes it, for ANY reason: an explicit caller toggle, or an INTERNAL
+  /// flip made to enforce the system-audio mutual exclusion (system audio
+  /// starting force-disables the mic; enabling the mic force-stops system
+  /// audio). Every mic-enabled change funnels through [setMicEnabled], so
+  /// this is the single seam UI state should follow instead of tracking its
+  /// own copy that only updates on a manual toggle call, see
+  /// `SpaceRoomNotifier` for the consumer.
+  Stream<bool> get micEnabledChanges => _micEnabledCtl.stream;
 
   /// The underlying [Room], null until [joinRoom] completes.
   Room? get room => _room;
@@ -576,6 +587,7 @@ class LiveKitCallService {
       await stopScreenShareSystemAudio();
     }
     await _localParticipant?.setMicrophoneEnabled(enabled);
+    if (!_micEnabledCtl.isClosed) _micEnabledCtl.add(enabled);
     _emitParticipants();
   }
 
@@ -1034,10 +1046,12 @@ class LiveKitCallService {
     // Mutually exclusive with the voice mic: both publish as
     // TrackSource.microphone, so leaving the real mic live would leave two
     // microphone-source publications and make mic lookups grab the wrong
-    // one. Disable it first via the existing mic path so the system-audio
-    // track is the only microphone-source publication.
+    // one. Disable it first via setMicEnabled (NOT a raw lp.
+    // setMicrophoneEnabled call) so this internal flip also emits on
+    // [micEnabledChanges] and any UI mirroring mic state (e.g.
+    // SpaceRoomNotifier) stays in sync without a manual resync tap.
     if (lp.isMicrophoneEnabled()) {
-      await lp.setMicrophoneEnabled(false);
+      await setMicEnabled(false);
     }
     final track = await LocalAudioTrack.create(
       SystemAudioSources.captureOptions(deviceId),
@@ -1106,6 +1120,7 @@ class LiveKitCallService {
     if (!_participantsCtl.isClosed) await _participantsCtl.close();
     if (!_dataCtl.isClosed) await _dataCtl.close();
     if (!_connStateCtl.isClosed) await _connStateCtl.close();
+    if (!_micEnabledCtl.isClosed) await _micEnabledCtl.close();
   }
 }
 

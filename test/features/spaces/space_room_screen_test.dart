@@ -77,6 +77,11 @@ void main() {
     // _TypeError (null is not a Stream); see space_room_screen.dart's control
     // bar.
     when(() => svc.dataChannel).thenAnswer((_) => const Stream.empty());
+    // Mic-enabled changes driven internally by LiveKitCallService (e.g. the
+    // system-audio mutual exclusion silently disabling/re-enabling the real
+    // mic). Default to an empty stream; tests that exercise that desync
+    // override this with a controller they drive directly.
+    when(() => svc.micEnabledChanges).thenAnswer((_) => const Stream.empty());
     when(() => svc.connectWithToken(
           wsUrl: any(named: "wsUrl"),
           token: any(named: "token"),
@@ -307,12 +312,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     // Speaker section (SP2 is UI-only: the mute/unmute control is gated on
-    // canPublish, not on the host flag).
+    // canPublish, not on the host flag). Connect-time auto-publish is
+    // HOST-ONLY (see connect()'s goLive comment), so a non-host speaker
+    // always starts muted: "Unmute" is the deterministic label here, not
+    // just "some mic control".
     expect(find.text("Raise hand"), findsNothing);
-    final hasMicControl = find.text("Mute").evaluate().isNotEmpty ||
-        find.text("Unmute").evaluate().isNotEmpty;
-    expect(hasMicControl, isTrue,
-        reason: "a canPublish local participant must render a mic control");
+    expect(find.text("Unmute"), findsOneWidget);
+    expect(find.text("Mute"), findsNothing);
   });
 
   testWidgets(
@@ -426,6 +432,75 @@ void main() {
     expect(find.text("Mute"), findsNothing);
     expect(find.text("Unmute"), findsNothing);
     verify(() => svc.setMicEnabled(false)).called(1);
+  });
+
+  // ── IF1: system-audio mutual exclusion must not desync the mic label ──────
+  //
+  // startScreenShareSystemAudio() enforces "at most one microphone-source
+  // publication" by disabling the real mic at the LiveKit layer directly,
+  // bypassing toggleMic(). Without an observability seam, SpaceRoomState.
+  // isMicEnabled (and therefore the control-bar label) keeps its stale value
+  // until the user taps mute/unmute manually. LiveKitCallService.
+  // micEnabledChanges is that seam: every mic-enabled flip, whichever path
+  // triggers it, funnels through setMicEnabled() and is broadcast there.
+
+  group("IF1 system-audio / mic-label sync", () {
+    testWidgets(
+        "system audio silently disabling the mic flips the control-bar "
+        "label to Unmute without a manual tap", (tester) async {
+      final micCtl = StreamController<bool>.broadcast();
+      addTearDown(micCtl.close);
+      when(() => svc.micEnabledChanges).thenAnswer((_) => micCtl.stream);
+
+      await tester.pumpWidget(wrap()); // host join: mic starts live.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Mute"), findsOneWidget);
+      expect(find.text("Unmute"), findsNothing);
+
+      // System audio starts and force-disables the real mic underneath
+      // (the mutual exclusion in LiveKitCallService.
+      // startScreenShareSystemAudio), WITHOUT going through toggleMic().
+      micCtl.add(false);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.text("Mute"), findsNothing);
+    });
+
+    testWidgets(
+        "re-enabling the mic while system audio is live flips the label "
+        "back to Mute (symmetric direction)", (tester) async {
+      final micCtl = StreamController<bool>.broadcast();
+      addTearDown(micCtl.close);
+      when(() => svc.micEnabledChanges).thenAnswer((_) => micCtl.stream);
+
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      // Non-host: starts muted (host-only connect-time auto-publish).
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.text("Mute"), findsNothing);
+
+      // The mic gets re-enabled by some path other than this notifier's own
+      // toggleMic() (e.g. setMicEnabled(true) tearing down system audio per
+      // the existing mutual exclusion); the label must still catch up.
+      micCtl.add(true);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Mute"), findsOneWidget);
+      expect(find.text("Unmute"), findsNothing);
+    });
   });
 
   // ── SP4: host moderation controls (mute + demote) ─────────────────────────

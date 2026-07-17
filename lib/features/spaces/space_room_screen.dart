@@ -92,6 +92,7 @@ class SpaceRoomNotifier
     extends AutoDisposeFamilyNotifier<SpaceRoomState, SpaceJoin> {
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
   StreamSubscription<ConnectionState>? _connSub;
+  StreamSubscription<bool>? _micSub;
 
   /// Set by [_cancel] (leave / provider dispose). The async participants
   /// listener below can resume AFTER a fast demote-then-leave has already
@@ -131,6 +132,15 @@ class SpaceRoomNotifier
     _connSub = svc.connectionState.listen((cs) {
       state = state.copyWith(isConnected: cs == ConnectionState.connected);
     });
+    // Mirrors the mic-enabled state whenever LiveKitCallService changes it
+    // for ANY reason, including the system-audio mutual exclusion silently
+    // flipping it internally (system audio starting force-disables the mic;
+    // enabling the mic force-stops system audio). Without this, the
+    // control-bar label goes stale until the user taps mute/unmute.
+    _micSub = svc.micEnabledChanges.listen((enabled) {
+      if (_disposed) return;
+      state = state.copyWith(isMicEnabled: enabled);
+    });
 
     try {
       await svc.connectWithToken(wsUrl: arg.url, token: arg.token);
@@ -160,6 +170,9 @@ class SpaceRoomNotifier
     final svc = ref.read(liveKitCallServiceProvider);
     final next = !state.isMicEnabled;
     await svc.setMicEnabled(next);
+    // The await may resume after leave() disposed this notifier (mirrors
+    // the participants-listener guard above).
+    if (_disposed) return;
     state = state.copyWith(isMicEnabled: next);
   }
 
@@ -242,6 +255,7 @@ class SpaceRoomNotifier
     _disposed = true;
     _partSub?.cancel();
     _connSub?.cancel();
+    _micSub?.cancel();
   }
 }
 
