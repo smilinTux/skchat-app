@@ -631,8 +631,17 @@ class LiveKitCallService {
   /// Throws on capture denial / failure (e.g. NotAllowedError when the user
   /// cancels the picker or the gesture was lost) so the caller can surface a
   /// SnackBar and revert the sharing UI state instead of failing silently.
+  ///
+  /// NATIVE DESKTOP: on Linux/macOS/Windows, flutter_webrtc needs an explicit
+  /// capture [sourceId] from `desktopCapturer.getSources()`, or it defaults to
+  /// source "0" and fails with "source not found". The browser supplies its
+  /// own picker on web, so [sourceId] must stay null there. Callers on desktop
+  /// resolve a source (e.g. via the SDK's `ScreenSelectDialog`) before calling
+  /// this and pass its id here; web callers pass nothing.
   Future<void> setScreenShareEnabled(bool enabled,
-      {bool withAudio = true, String? systemAudioDeviceId}) async {
+      {bool withAudio = true,
+      String? systemAudioDeviceId,
+      String? sourceId}) async {
     final lp = _localParticipant;
     if (lp == null) return;
 
@@ -649,8 +658,11 @@ class LiveKitCallService {
 
     // Capture options: request screen audio in the single getDisplayMedia call.
     // The preset only supplies "ideal" web hints (never an exact/mandatory
-    // constraint), so it does not cause the capture to reject.
-    const captureOptions = ScreenShareCaptureOptions(
+    // constraint), so it does not cause the capture to reject. [sourceId] is
+    // null on web (unchanged, browser-native picker) and set on native
+    // desktop, where flutter_webrtc needs it to resolve the capture source.
+    final captureOptions = ScreenShareCaptureOptions(
+      sourceId: sourceId,
       captureScreenAudio: true,
       params: VideoParametersPresets.screenShareH1080FPS15,
     );

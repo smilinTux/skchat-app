@@ -125,10 +125,11 @@ class SpaceRoomNotifier
   /// no extra state is tracked here: the stream update flips the controls and
   /// raises the stage for everyone.
   Future<void> toggleScreenShare(bool enabled,
-      {String? systemAudioDeviceId}) async {
+      {String? systemAudioDeviceId, String? sourceId}) async {
     await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(
           enabled,
           systemAudioDeviceId: systemAudioDeviceId,
+          sourceId: sourceId,
         );
   }
 
@@ -1142,7 +1143,21 @@ class _ControlBar extends ConsumerWidget {
               activeColor: SovereignColors.accentEncrypt,
               onTap: () async {
                 try {
-                  await notifier.toggleScreenShare(!isSharing);
+                  final goingLive = !isSharing;
+                  String? sourceId;
+                  if (goingLive) {
+                    // Desktop needs an explicit capture source before
+                    // getDisplayMedia can resolve one; web keeps using its
+                    // own native picker. A cancelled desktop pick aborts
+                    // silently, no share, no error.
+                    final picked = await resolveScreenShareSource(context);
+                    if (!picked.proceed) return;
+                    sourceId = picked.sourceId;
+                  }
+                  await notifier.toggleScreenShare(
+                    goingLive,
+                    sourceId: sourceId,
+                  );
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(

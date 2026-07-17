@@ -65,10 +65,23 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
     setState(() => _busy = true);
     final next = !_sharing;
     try {
+      String? sourceId;
+      if (next) {
+        // Desktop needs an explicit capture source before getDisplayMedia
+        // can resolve one; web keeps using its own native picker. A
+        // cancelled desktop pick aborts silently, no share, no error.
+        final picked = await resolveScreenShareSource(context);
+        if (!picked.proceed) {
+          if (mounted) setState(() => _busy = false);
+          return;
+        }
+        sourceId = picked.sourceId;
+      }
       await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(
             next,
             systemAudioDeviceId:
                 (_shareSystemAudio && next) ? _systemAudioDeviceId : null,
+            sourceId: sourceId,
           );
       if (mounted) setState(() => _sharing = next);
     } catch (e) {

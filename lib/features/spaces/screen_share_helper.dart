@@ -1,6 +1,42 @@
+import "package:flutter/foundation.dart" show kIsWeb;
+import "package:flutter/material.dart";
+import "package:flutter_webrtc/flutter_webrtc.dart" show DesktopCapturerSource;
 import "package:livekit_client/livekit_client.dart";
 
 import "../../services/livekit_call_service.dart";
+
+/// True on native desktop (Linux / macOS / Windows), where flutter_webrtc
+/// requires an explicit capture `sourceId` from `desktopCapturer.getSources()`
+/// before `getDisplayMedia` can resolve a source. Always false on web (the
+/// browser owns its own picker) and on mobile.
+bool get isDesktopScreenShare => !kIsWeb && lkPlatformIsDesktop();
+
+/// Resolve the capture source id to pass into
+/// [LiveKitCallService.setScreenShareEnabled] before starting a share.
+///
+/// On web this is a no-op: returns `(proceed: true, sourceId: null)`
+/// immediately, since the browser supplies its own `getDisplayMedia` picker.
+///
+/// On native desktop it shows the SDK's bundled [ScreenSelectDialog] and
+/// returns `(proceed: true, sourceId: <picked id>)` for a chosen source, or
+/// `(proceed: false, sourceId: null)` if the user cancelled the dialog. A
+/// cancelled pick means the caller MUST NOT start the share (no error, just
+/// a silent no-op).
+Future<({bool proceed, String? sourceId})> resolveScreenShareSource(
+  BuildContext context,
+) async {
+  if (!isDesktopScreenShare) {
+    return (proceed: true, sourceId: null);
+  }
+  final source = await showDialog<DesktopCapturerSource>(
+    context: context,
+    builder: (_) => ScreenSelectDialog(),
+  );
+  if (source == null) {
+    return (proceed: false, sourceId: null);
+  }
+  return (proceed: true, sourceId: source.id);
+}
 
 /// One live screen-share: the sharer's [identity], the live [VideoTrack], and
 /// whether the share is the local participant's own screen.
