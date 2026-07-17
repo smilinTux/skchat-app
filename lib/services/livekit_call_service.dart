@@ -1025,20 +1025,24 @@ class LiveKitCallService {
   /// must never abort the video share, so callers wrap it. Guards when there is
   /// no room, or when a system-audio track is already being shared.
   ///
-  /// PROTOCOL-SOURCE CAVEAT: `livekit_client` 2.2.6 hardcodes
-  /// `TrackSource.microphone` on every track created via the public
-  /// `LocalAudioTrack.create()` factory (see `track/local/audio.dart`); the
-  /// `TrackSource.screenShareAudio` value is only ever set by the SDK's own
-  /// `@internal` constructor, invoked internally from
-  /// `createScreenShareTracksWithAudio` for a browser `getDisplayMedia` audio
-  /// track, and `AudioPublishOptions` has no field to override the published
-  /// source either. So a device-captured (PulseAudio monitor) track cannot be
-  /// tagged `screenShareAudio` at the LiveKit-protocol level through any
-  /// supported public API. We publish it as the accepted substitute: a
+  /// PROTOCOL-SOURCE CAVEAT (re-verified against `livekit_client`
+  /// 2.5.0+hotfix.3; the constraint has held unchanged since at least 2.2.6):
+  /// the public `LocalAudioTrack.create()` factory (see
+  /// `track/local/audio.dart`) hardcodes `TrackSource.microphone` on every
+  /// track it returns; the `TrackSource.screenShareAudio` value is only ever
+  /// set by the SDK's own `@internal` `LocalAudioTrack` constructor, invoked
+  /// internally from `LocalVideoTrack.createScreenShareTracksWithAudio` (see
+  /// `track/local/video.dart`) for a browser `getDisplayMedia` audio track,
+  /// and `AudioPublishOptions` still has no field to override the published
+  /// source; `LocalParticipant.publishAudioTrack` derives the wire-level
+  /// source from `track.source` itself (see `participant/local.dart`), not
+  /// from publish options. So a device-captured (PulseAudio monitor) track
+  /// cannot be tagged `screenShareAudio` at the LiveKit-protocol level through
+  /// any supported public API. We publish it as the accepted substitute: a
   /// distinct publish `name`/`stream` so it is identifiable and groupable on
   /// the receiving side, while the wire-level source remains `microphone`
   /// (voice processing off). This is the settled approach, not a pending
-  /// question; there is no supported way in 2.2.6 to mint a
+  /// question; there is no supported way in 2.5.0+hotfix.3 to mint a
   /// `screenShareAudio`-sourced track from a device id.
   Future<void> startScreenShareSystemAudio(String deviceId) async {
     final lp = _localParticipant;
