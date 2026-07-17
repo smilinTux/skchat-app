@@ -185,4 +185,67 @@ void main() {
     expect(resolverCalls, 0); // never consulted on the way OFF
     verify(() => svc.setScreenShareEnabled(false, sourceId: null)).called(1);
   });
+
+  // ── Z1: mobile-web screen-share origination is impossible (no
+  // getDisplayMedia on a phone browser). The Share control must detect this
+  // via isMobileWebProvider and short-circuit to a friendly message BEFORE
+  // ever calling setScreenShareEnabled, instead of letting livekit_client's
+  // own lkPlatformIsWebMobile() guard throw a raw exception.
+  group('Z1 mobile-web Share guard', () {
+    testWidgets(
+        'on mobile web, tapping Share shows the friendly message and never '
+        'calls setScreenShareEnabled or the source resolver', (tester) async {
+      var resolverCalls = 0;
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+          BuildContext context) async {
+        resolverCalls++;
+        return (proceed: true, sourceId: null);
+      }
+
+      await tester.pumpWidget(wrap(_state(), extraOverrides: [
+        isMobileWebProvider.overrideWithValue(true),
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+
+      await tester.tap(find.text('Share'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(resolverCalls, 0);
+      verifyNever(() =>
+          svc.setScreenShareEnabled(any(), sourceId: any(named: 'sourceId')));
+      expect(
+        find.textContaining('Screen sharing needs the desktop app'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Screen share failed'), findsNothing);
+      expect(find.textContaining('LiveKit'), findsNothing);
+      expect(find.text('Share'), findsOneWidget);
+      expect(find.text('Stop share'), findsNothing);
+    });
+
+    testWidgets(
+        'on desktop (isMobileWebProvider false), Share still resolves the '
+        'source and starts the share as before', (tester) async {
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+              BuildContext context) async =>
+          (proceed: true, sourceId: 'screen:9');
+
+      await tester.pumpWidget(wrap(_state(), extraOverrides: [
+        isMobileWebProvider.overrideWithValue(false),
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+
+      await tester.tap(find.text('Share'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setScreenShareEnabled(true, sourceId: 'screen:9'))
+          .called(1);
+      expect(
+        find.textContaining('Screen sharing needs the desktop app'),
+        findsNothing,
+      );
+    });
+  });
 }

@@ -1,4 +1,5 @@
-import "package:flutter/foundation.dart" show kIsWeb;
+import "package:flutter/foundation.dart"
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart"
     show DesktopCapturerSource, SourceType, ThumbnailSize, desktopCapturer;
@@ -12,6 +13,39 @@ import "../../services/livekit_call_service.dart";
 /// before `getDisplayMedia` can resolve a source. Always false on web (the
 /// browser owns its own picker) and on mobile.
 bool get isDesktopScreenShare => !kIsWeb && lkPlatformIsDesktop();
+
+/// Testable seam behind [isMobileWeb]. Mobile browsers (iOS Safari, Android
+/// Chrome) have no `getDisplayMedia`, so screen-share origination is not
+/// just unsupported by our app, it is impossible on that platform.
+/// livekit_client's own `lkPlatformIsWebMobile()` guard (video.dart) throws
+/// a raw, unfriendly exception the moment a share is attempted there; the
+/// Go live affordance must detect this case first and never reach that
+/// guard.
+///
+/// `kIsWeb` is a compile-time constant (always `false` on the `flutter
+/// test` VM, since tests never run inside a browser) and
+/// `defaultTargetPlatform` reflects the host OS running the test, not an
+/// arbitrary platform under test. Neither is fakeable in a plain unit test,
+/// so this function accepts both as optional overrides and falls back to
+/// the real values when omitted, which is what [isMobileWeb] does.
+bool isMobileWebPlatform({bool? isWeb, TargetPlatform? platform}) {
+  final web = isWeb ?? kIsWeb;
+  final target = platform ?? defaultTargetPlatform;
+  return web &&
+      (target == TargetPlatform.iOS || target == TargetPlatform.android);
+}
+
+/// True ONLY for Flutter web running inside a phone browser (iOS Safari,
+/// Android Chrome). Always false on desktop web and on every native target,
+/// including native mobile: native mobile screen share is a separate,
+/// not-yet-built feature (contrast [isDesktopScreenShare] above, which
+/// covers the native-desktop case).
+///
+/// Go live / screen-share entry points (Spaces control bar, conference
+/// control bar, 1:1 call control bar) check this before attempting a share
+/// so a mobile-web user sees a friendly message instead of the raw LiveKit
+/// exception.
+bool get isMobileWeb => isMobileWebPlatform();
 
 /// Resolve the capture source id to pass into
 /// [LiveKitCallService.setScreenShareEnabled] before starting a share.

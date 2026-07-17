@@ -20,3 +20,14 @@ typedef ScreenShareSourceResolver = Future<({bool proceed, String? sourceId})>
 final screenShareSourceResolverProvider = Provider<ScreenShareSourceResolver>(
   (ref) => resolveScreenShareSource,
 );
+
+/// DI seam around [isMobileWeb] (Z1) so every Go live / screen-share entry
+/// point (the Spaces control bar, the conference control bar, the 1:1 call
+/// control bar) can short-circuit to a friendly message on mobile web
+/// instead of ever attempting a share there, and widget tests can override
+/// the platform verdict without needing a real phone browser: `kIsWeb` is a
+/// compile-time constant and `defaultTargetPlatform` reflects the test
+/// runner's host OS, neither fakeable per-case at the widget-test level.
+/// Production code never overrides this: the default IS [isMobileWeb],
+/// unchanged.
+final isMobileWebProvider = Provider<bool>((ref) => isMobileWeb);

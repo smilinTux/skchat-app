@@ -898,6 +898,82 @@ void main() {
     });
   });
 
+  // ── Z1: mobile-web screen-share origination is impossible (no
+  // getDisplayMedia on a phone browser). The Go live control must detect
+  // this via isMobileWebProvider and short-circuit to a friendly message
+  // BEFORE ever calling setScreenShareEnabled, instead of letting
+  // livekit_client's own lkPlatformIsWebMobile() guard throw a raw
+  // exception the user sees as "Screen share failed: LiveKit Exception:
+  // ...".
+
+  group("Z1 mobile-web Go live guard", () {
+    testWidgets(
+        "on mobile web, tapping Go live shows the friendly message and "
+        "never calls setScreenShareEnabled or the source resolver",
+        (tester) async {
+      var resolverCalls = 0;
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+          BuildContext context) async {
+        resolverCalls++;
+        return (proceed: true, sourceId: null);
+      }
+
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        isMobileWebProvider.overrideWithValue(true),
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(resolverCalls, 0);
+      verifyNever(() => svc.setScreenShareEnabled(any(),
+          systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+          sourceId: any(named: "sourceId")));
+      expect(
+        find.textContaining("Screen sharing needs the desktop app"),
+        findsOneWidget,
+      );
+      // Never the raw LiveKit exception text.
+      expect(find.textContaining("Screen share failed"), findsNothing);
+      expect(find.textContaining("LiveKit"), findsNothing);
+      // The button stays put, not stuck mid-share.
+      expect(find.text("Go live"), findsOneWidget);
+    });
+
+    testWidgets(
+        "on desktop (isMobileWebProvider false), Go live still resolves "
+        "the source and starts the share as before",
+        (tester) async {
+      var resolverCalls = 0;
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+          BuildContext context) async {
+        resolverCalls++;
+        return (proceed: true, sourceId: "screen:1");
+      }
+
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        isMobileWebProvider.overrideWithValue(false),
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(resolverCalls, 1);
+      verify(() => svc.setScreenShareEnabled(true,
+          systemAudioDeviceId: null, sourceId: "screen:1")).called(1);
+      expect(
+        find.textContaining("Screen sharing needs the desktop app"),
+        findsNothing,
+      );
+    });
+  });
+
   // ── W1: Share action, invites others to the Space via a skchat chat, the
   // OS native share sheet, or copy-link. The button lives in the header next
   // to the title, visible to every role (host AND listener alike, it is not

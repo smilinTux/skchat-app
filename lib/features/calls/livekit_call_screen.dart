@@ -1324,6 +1324,27 @@ class _LiveKitControlBar extends ConsumerWidget {
   ) async {
     String? sourceId;
     if (!callState.isScreenSharing) {
+      // Z1: mobile browsers (iOS Safari, Android Chrome) have no
+      // getDisplayMedia, so a share can never actually start here.
+      // Short-circuit BEFORE the resolver / notifier so the raw
+      // livekit_client lkPlatformIsWebMobile() exception never surfaces;
+      // show a friendly message instead. Mirrors the Spaces control bar's
+      // Go live guard (space_room_screen.dart) and conf_screen.dart's Share
+      // guard.
+      if (ref.read(isMobileWebProvider)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Screen sharing needs the desktop app. Native mobile '
+                'screen share is coming soon. You can still watch shares '
+                'here.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
       try {
         final resolve = ref.read(screenShareSourceResolverProvider);
         final picked = await resolve(context);

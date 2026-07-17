@@ -1499,6 +1499,25 @@ class _ControlBar extends ConsumerWidget {
               active: isSharing,
               activeColor: SovereignColors.accentEncrypt,
               onTap: () async {
+                // Z1: mobile browsers (iOS Safari, Android Chrome) have no
+                // getDisplayMedia, so a share can never actually start
+                // here. Short-circuit BEFORE the resolver / notifier so the
+                // raw livekit_client lkPlatformIsWebMobile() exception
+                // never surfaces; show a friendly message instead.
+                if (ref.read(isMobileWebProvider)) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          "Screen sharing needs the desktop app. Native "
+                          "mobile screen share is coming soon. You can "
+                          "still watch shares here.",
+                        ),
+                      ),
+                    );
+                  }
+                  return;
+                }
                 try {
                   final goingLive = !isSharing;
                   String? sourceId;
