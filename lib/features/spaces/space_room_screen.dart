@@ -78,6 +78,16 @@ bool _localCanPublish(List<LiveKitParticipantSnapshot> participants) {
   return false;
 }
 
+/// The published mic track sid of a REMOTE participant, or null when they
+/// have no mic publication (never went live). The server's mute moderation
+/// call (MuteRoomTrackRequest) is per-track, so the host mute action resolves
+/// the sid from the live room graph, the same identity-keyed lookup
+/// resolveScreenShares uses for share tracks.
+String? _micTrackSidFor(Room? room, String identity) {
+  final remote = room?.remoteParticipants[identity];
+  return remote?.getTrackPublicationBySource(TrackSource.microphone)?.sid;
+}
+
 class SpaceRoomNotifier
     extends AutoDisposeFamilyNotifier<SpaceRoomState, SpaceJoin> {
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
@@ -195,6 +205,22 @@ class SpaceRoomNotifier
             requester: requester,
             identity: identity,
           );
+
+  /// Host force-mutes a speaker's live mic (X Spaces model: strictly
+  /// one-directional; there is NO force-unmute anywhere, the speaker
+  /// self-unmutes via their own mic control). No-op when the speaker has
+  /// no published mic track to mute.
+  Future<void> muteSpeaker(String requester, String identity) async {
+    final room = ref.read(liveKitCallServiceProvider).room;
+    final trackSid = _micTrackSidFor(room, identity);
+    if (trackSid == null) return;
+    await ref.read(spacesServiceProvider).mute(
+          arg.spaceId,
+          requester: requester,
+          identity: identity,
+          trackSid: trackSid,
+        );
+  }
 
   Future<void> kick(String requester, String identity) =>
       ref.read(spacesServiceProvider).kick(
@@ -601,7 +627,7 @@ class _Stage extends ConsumerWidget {
                 snapshot: p,
                 isHost: join.isHost && p.isLocal,
                 onTap: join.isHost && !p.isLocal
-                    ? () => _hostActions(context, ref, p.identity)
+                    ? () => _hostActions(context, ref, p)
                     : null,
               ),
           ],
@@ -618,7 +644,7 @@ class _Stage extends ConsumerWidget {
                 _ListenerDot(
                   snapshot: p,
                   onTap: join.isHost && !p.isLocal
-                      ? () => _hostActions(context, ref, p.identity)
+                      ? () => _hostActions(context, ref, p)
                       : null,
                 ),
             ],
@@ -659,12 +685,26 @@ class _Stage extends ConsumerWidget {
     );
   }
 
+  /// Host moderation sheet for a participant tile. Actions follow the
+  /// target's CURRENT stage state ([LiveKitParticipantSnapshot.canPublish]):
+  ///
+  /// - Listener (off stage): "Invite to speak" only.
+  /// - Speaker (on stage): "Mute mic" + "Remove from stage" (demote). Mute is
+  ///   ONE-DIRECTIONAL (X Spaces model): the host can force-mute a live mic
+  ///   but there is deliberately NO unmute-participant action; only the
+  ///   speaker self-unmutes.
+  /// - Everyone: "Remove from Space" (kick).
+  ///
+  /// Only reachable by the host on someone ELSE's tile (the onTap wiring
+  /// above gates on `join.isHost && !p.isLocal`).
   Future<void> _hostActions(
     BuildContext context,
     WidgetRef ref,
-    String identity,
+    LiveKitParticipantSnapshot target,
   ) async {
     final notifier = ref.read(spaceRoomProvider(join).notifier);
+    final identity = target.identity;
+    final onStage = target.canPublish;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: SovereignColors.surfaceRaised,
@@ -689,24 +729,36 @@ class _Stage extends ConsumerWidget {
                 ],
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.upgrade_rounded,
-                  color: SovereignColors.accentEncrypt),
-              title: const Text("Invite to speak"),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                notifier.invite(join.identity, identity);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.arrow_downward_rounded,
-                  color: SovereignColors.accentWarning),
-              title: const Text("Remove from stage"),
-              onTap: () {
-                Navigator.of(sheetCtx).pop();
-                notifier.removeFromStage(join.identity, identity);
-              },
-            ),
+            if (!onStage)
+              ListTile(
+                leading: const Icon(Icons.upgrade_rounded,
+                    color: SovereignColors.accentEncrypt),
+                title: const Text("Invite to speak"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.invite(join.identity, identity);
+                },
+              ),
+            if (onStage) ...[
+              ListTile(
+                leading: const Icon(Icons.mic_off_rounded,
+                    color: SovereignColors.accentWarning),
+                title: const Text("Mute mic"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.muteSpeaker(join.identity, identity);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.arrow_downward_rounded,
+                    color: SovereignColors.accentWarning),
+                title: const Text("Remove from stage"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.removeFromStage(join.identity, identity);
+                },
+              ),
+            ],
             ListTile(
               leading: const Icon(Icons.person_remove_rounded,
                   color: SovereignColors.accentDanger),
