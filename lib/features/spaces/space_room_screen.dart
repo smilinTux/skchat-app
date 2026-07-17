@@ -21,6 +21,7 @@ import "terminal_panel.dart";
 import "doc_panel.dart";
 import "whiteboard_panel.dart";
 import "space_models.dart";
+import "space_share_sheet.dart";
 
 // ── Soul color ──────────────────────────────────────────────────────────────
 
@@ -377,6 +378,7 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                     state: st,
                     recording: widget.recording,
                     onClose: _leave,
+                    onShare: () => _share(context, join),
                   ),
                   Expanded(
                     child: st.isConnected
@@ -450,6 +452,12 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
   Future<void> _leave() async {
     await ref.read(spaceRoomProvider(widget.join).notifier).leave();
     if (mounted && context.canPop()) context.pop();
+  }
+
+  /// Opens the Share sheet (share to a skchat chat/group, the OS native
+  /// share sheet, or copy-link) for the join link of this Space.
+  void _share(BuildContext context, SpaceJoin join) {
+    showShareSpaceSheet(context, spaceId: join.spaceId, title: join.title);
   }
 
   Widget _buildConnecting() {
@@ -531,12 +539,14 @@ class _Header extends StatelessWidget {
     required this.state,
     required this.recording,
     required this.onClose,
+    required this.onShare,
   });
 
   final SpaceJoin join;
   final SpaceRoomState state;
   final bool recording;
   final VoidCallback onClose;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -595,6 +605,15 @@ class _Header extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            onPressed: onShare,
+            icon: const Icon(
+              Icons.ios_share_rounded,
+              color: SovereignColors.textPrimary,
+              size: 22,
+            ),
+            tooltip: "Share Space",
           ),
           if (recording)
             Container(

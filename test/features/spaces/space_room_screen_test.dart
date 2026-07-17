@@ -1,9 +1,11 @@
 import "dart:async";
 import "dart:collection";
+import "dart:io";
 
 import "package:flutter/material.dart" hide ConnectionState;
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:hive_flutter/hive_flutter.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/call_shared/screen_share_source.dart";
@@ -48,6 +50,13 @@ LiveKitParticipantSnapshot _snap(
 void main() {
   late MockLiveKitCallService svc;
   late MockSpacesService spaces;
+
+  setUpAll(() {
+    // W1's Share sheet watches backendConfigProvider (skchatWebuiUrl), which
+    // opens a Hive box best-effort on build; on the test VM Hive has no
+    // default path without this (mirrors conversation_history_reply_test.dart).
+    Hive.init(Directory.systemTemp.createTempSync("skchat_test_hive").path);
+  });
 
   final join = const SpaceJoin(
     spaceId: "s1",
@@ -878,6 +887,47 @@ void main() {
           sourceId: any(named: "sourceId")));
       expect(find.textContaining("Screen share failed"), findsNothing);
       expect(find.text("Go live"), findsOneWidget);
+    });
+  });
+
+  // ── W1: Share action, invites others to the Space via a skchat chat, the
+  // OS native share sheet, or copy-link. The button lives in the header next
+  // to the title, visible to every role (host AND listener alike, it is not
+  // a moderation action), and opens space_share_sheet.dart's bottom sheet.
+
+  group("W1 Share Space", () {
+    testWidgets(
+        "the host sees the Share button and it opens the Share Space sheet",
+        (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byTooltip("Share Space"), findsOneWidget);
+
+      await tester.tap(find.byTooltip("Share Space"));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Share to skchat chat"), findsOneWidget);
+      expect(find.text("Share via..."), findsOneWidget);
+      expect(find.text("Copy link"), findsOneWidget);
+    });
+
+    testWidgets(
+        "a plain listener (no publish grant) also sees the Share button",
+        (tester) async {
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byTooltip("Share Space"), findsOneWidget);
+
+      await tester.tap(find.byTooltip("Share Space"));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Share to skchat chat"), findsOneWidget);
+      expect(find.text("Share via..."), findsOneWidget);
+      expect(find.text("Copy link"), findsOneWidget);
     });
   });
 }
