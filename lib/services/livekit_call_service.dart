@@ -197,6 +197,13 @@ class LiveKitCallService {
       })>.broadcast();
   final _connStateCtl = StreamController<ConnectionState>.broadcast();
   final _micEnabledCtl = StreamController<bool>.broadcast();
+  final _externalMuteCtl = StreamController<void>.broadcast();
+
+  /// True while [setMicEnabled] has an in-flight caller-initiated disable
+  /// (an explicit toggle, or the internal system-audio mutual-exclusion
+  /// flip). Guards [_reconcileExternalMicMute] so a mute WE requested is
+  /// never mistaken for a server-initiated one (see that method).
+  bool _selfMuteInFlight = false;
 
   /// Stream of participant snapshots, updated whenever participants join,
   /// leave, or change their track state.
@@ -219,6 +226,18 @@ class LiveKitCallService {
   /// own copy that only updates on a manual toggle call, see
   /// `SpaceRoomNotifier` for the consumer.
   Stream<bool> get micEnabledChanges => _micEnabledCtl.stream;
+
+  /// Fires whenever the local mic goes muted from OUTSIDE this service, i.e.
+  /// a server-initiated mute the local side never requested (the moderation
+  /// layer's host force-mute, `MuteRoomTrackRequest`, muting the target's
+  /// live mic publication). Every caller-initiated disable (an explicit
+  /// toggle, or the system-audio mutual exclusion) already funnels through
+  /// [setMicEnabled] and is excluded here (see [_reconcileExternalMicMute]),
+  /// so this is purely the "someone else did this to me" signal the UI can
+  /// use to show a "muted by host" notice. [micEnabledChanges] still carries
+  /// the boolean state change either way; this stream is additive
+  /// observability only, no payload beyond "it happened".
+  Stream<void> get externalMuteEvents => _externalMuteCtl.stream;
 
   /// The underlying [Room], null until [joinRoom] completes.
   Room? get room => _room;
@@ -586,8 +605,16 @@ class LiveKitCallService {
     if (enabled && isSharingSystemAudio) {
       await stopScreenShareSystemAudio();
     }
+    // Mark a caller-initiated disable in flight so the TrackMutedEvent
+    // reconciliation in _bindRoomListeners can tell this apart from a
+    // server-initiated mute (host force-mute) arriving with no local call
+    // ever made, see _reconcileExternalMicMute. Cleared only after the
+    // explicit emit below so the guard covers the SDK's own event dispatch
+    // for this exact call.
+    if (!enabled) _selfMuteInFlight = true;
     await _localParticipant?.setMicrophoneEnabled(enabled);
     if (!_micEnabledCtl.isClosed) _micEnabledCtl.add(enabled);
+    _selfMuteInFlight = false;
     _emitParticipants();
   }
 
@@ -869,8 +896,13 @@ class LiveKitCallService {
       // local stage tile appears / clears without waiting on a remote round-trip.
       ..on<LocalTrackPublishedEvent>((_) => _emitParticipants())
       ..on<LocalTrackUnpublishedEvent>((_) => _emitParticipants())
-      // Mute state: keep the muted / speaking dot on every tile current.
-      ..on<TrackMutedEvent>((_) => _emitParticipants())
+      // Mute state: keep the muted / speaking dot on every tile current, and
+      // reconcile a server-initiated mute of our OWN mic (host force-mute)
+      // into micEnabledChanges / externalMuteEvents so the target sees it.
+      ..on<TrackMutedEvent>((event) {
+        _emitParticipants();
+        _reconcileExternalMicMute(event);
+      })
       ..on<TrackUnmutedEvent>((_) => _emitParticipants())
       // Metadata: hand-raise / stage-invite changes written by the Space
       // moderation layer drive the handRaised flag on the snapshot.
@@ -893,6 +925,34 @@ class LiveKitCallService {
     if (!_participantsCtl.isClosed) {
       _participantsCtl.add(currentParticipants);
     }
+  }
+
+  /// Reconcile a mute event against the LOCAL mic publication, surfacing a
+  /// server-initiated mute (the moderation layer's host force-mute,
+  /// `MuteRoomTrackRequest`) that this side never requested.
+  ///
+  /// Today [micEnabledChanges] only fires from inside [setMicEnabled], so a
+  /// host muting a speaker's mic FROM THE SERVER never touched that path:
+  /// the target's [micEnabledChanges] stayed silent, [SpaceRoomState.
+  /// isMicEnabled] stayed true, and the control bar kept showing "Mute"
+  /// while the track was actually muted underneath. This listens on the raw
+  /// LiveKit [TrackMutedEvent] instead (fired for ANY mute of ANY
+  /// participant's track, local or remote) and reacts only when it is OUR
+  /// OWN microphone-source publication, so the reconciliation is scoped to
+  /// exactly the target-visibility gap described above.
+  ///
+  /// [_selfMuteInFlight] excludes a mute WE requested (an explicit toggle,
+  /// or the system-audio mutual exclusion), both of which already emit
+  /// through [setMicEnabled] itself, so this only fires for the remaining
+  /// "someone else did this to me" case. X model: strictly one-directional,
+  /// no auto-unmute is ever inferred from a TrackUnmutedEvent here, the
+  /// speaker only goes live again via their own [setMicEnabled] call.
+  void _reconcileExternalMicMute(TrackMutedEvent event) {
+    if (_selfMuteInFlight) return;
+    if (event.participant is! LocalParticipant) return;
+    if (event.publication.source != TrackSource.microphone) return;
+    if (!_micEnabledCtl.isClosed) _micEnabledCtl.add(false);
+    if (!_externalMuteCtl.isClosed) _externalMuteCtl.add(null);
   }
 
   LiveKitParticipantSnapshot _snapshotLocal(LocalParticipant p) {
@@ -1125,6 +1185,7 @@ class LiveKitCallService {
     if (!_dataCtl.isClosed) await _dataCtl.close();
     if (!_connStateCtl.isClosed) await _connStateCtl.close();
     if (!_micEnabledCtl.isClosed) await _micEnabledCtl.close();
+    if (!_externalMuteCtl.isClosed) await _externalMuteCtl.close();
   }
 }
 

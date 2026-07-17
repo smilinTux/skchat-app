@@ -40,6 +40,7 @@ class SpaceRoomState {
     required this.isConnected,
     required this.isMicEnabled,
     required this.handRaised,
+    this.externalMuteNonce = 0,
     this.error,
   });
 
@@ -47,6 +48,14 @@ class SpaceRoomState {
   final bool isConnected;
   final bool isMicEnabled;
   final bool handRaised;
+
+  /// Bumped every time [LiveKitCallService.externalMuteEvents] fires (a
+  /// server-initiated mute of OUR mic, e.g. a host force-mute). Not a
+  /// boolean flag: the UI layer watches for a CHANGE in this value (see
+  /// `_SpaceRoomScreenState.build`'s `ref.listen`) so a "muted by host"
+  /// notice fires exactly once per event, including two in a row with the
+  /// same underlying isMicEnabled==false state.
+  final int externalMuteNonce;
   final String? error;
 
   SpaceRoomState copyWith({
@@ -54,6 +63,7 @@ class SpaceRoomState {
     bool? isConnected,
     bool? isMicEnabled,
     bool? handRaised,
+    int? externalMuteNonce,
     String? error,
   }) {
     return SpaceRoomState(
@@ -61,6 +71,7 @@ class SpaceRoomState {
       isConnected: isConnected ?? this.isConnected,
       isMicEnabled: isMicEnabled ?? this.isMicEnabled,
       handRaised: handRaised ?? this.handRaised,
+      externalMuteNonce: externalMuteNonce ?? this.externalMuteNonce,
       error: error,
     );
   }
@@ -83,6 +94,15 @@ bool _localCanPublish(List<LiveKitParticipantSnapshot> participants) {
 /// call (MuteRoomTrackRequest) is per-track, so the host mute action resolves
 /// the sid from the live room graph, the same identity-keyed lookup
 /// resolveScreenShares uses for share tracks.
+///
+/// NOTE (system audio): a speaker sharing system audio (see
+/// LiveKitCallService.startScreenShareSystemAudio) publishes that track at
+/// the WIRE level as TrackSource.microphone too, since this SDK version has
+/// no supported way to tag a device-captured track screenShareAudio, so this
+/// lookup resolves it the same as a voice mic. A host "Mute mic" on that
+/// speaker therefore mutes their shared content audio, not a voice mic. That
+/// is intended moderation behavior (the host can silence whatever comes out
+/// of that participant's microphone-source publication), not a bug.
 String? _micTrackSidFor(Room? room, String identity) {
   final remote = room?.remoteParticipants[identity];
   return remote?.getTrackPublicationBySource(TrackSource.microphone)?.sid;
@@ -93,6 +113,7 @@ class SpaceRoomNotifier
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
   StreamSubscription<ConnectionState>? _connSub;
   StreamSubscription<bool>? _micSub;
+  StreamSubscription<void>? _extMuteSub;
 
   /// Set by [_cancel] (leave / provider dispose). The async participants
   /// listener below can resume AFTER a fast demote-then-leave has already
@@ -141,9 +162,22 @@ class SpaceRoomNotifier
       if (_disposed) return;
       state = state.copyWith(isMicEnabled: enabled);
     });
+    // Surfaces a server-initiated mute (host force-mute) that WE never
+    // requested, so the UI can show a "muted by host" notice. The label
+    // flip itself is already covered by the micEnabledChanges listener
+    // above (the service emits false on that stream too); this is purely
+    // the "someone else did this" signal, see LiveKitCallService.
+    // externalMuteEvents.
+    _extMuteSub = svc.externalMuteEvents.listen((_) {
+      if (_disposed) return;
+      state = state.copyWith(externalMuteNonce: state.externalMuteNonce + 1);
+    });
 
     try {
       await svc.connectWithToken(wsUrl: arg.url, token: arg.token);
+      // The await may resume after leave() disposed this notifier (mirrors
+      // the participants-listener guard above).
+      if (_disposed) return;
       // ONLY the host goes live on mic at connect time. Any non-host
       // participant, even a speaker rejoining with a pre-authorized
       // publish grant, starts MUTED and self-unmutes via the button (X
@@ -155,6 +189,7 @@ class SpaceRoomNotifier
       final goLive = arg.isHost;
       if (goLive) {
         await svc.setMicEnabled(true);
+        if (_disposed) return;
       }
       state = state.copyWith(
         participants: svc.currentParticipants,
@@ -162,6 +197,7 @@ class SpaceRoomNotifier
         isMicEnabled: goLive,
       );
     } on Object catch (e) {
+      if (_disposed) return;
       state = state.copyWith(error: e.toString());
     }
   }
@@ -221,18 +257,22 @@ class SpaceRoomNotifier
 
   /// Host force-mutes a speaker's live mic (X Spaces model: strictly
   /// one-directional; there is NO force-unmute anywhere, the speaker
-  /// self-unmutes via their own mic control). No-op when the speaker has
-  /// no published mic track to mute.
-  Future<void> muteSpeaker(String requester, String identity) async {
+  /// self-unmutes via their own mic control).
+  ///
+  /// Returns false (no-op, no API call made) when the speaker has no
+  /// published mic track to mute, so the caller can surface feedback (e.g.
+  /// a snackbar) instead of the action silently doing nothing.
+  Future<bool> muteSpeaker(String requester, String identity) async {
     final room = ref.read(liveKitCallServiceProvider).room;
     final trackSid = _micTrackSidFor(room, identity);
-    if (trackSid == null) return;
+    if (trackSid == null) return false;
     await ref.read(spacesServiceProvider).mute(
           arg.spaceId,
           requester: requester,
           identity: identity,
           trackSid: trackSid,
         );
+    return true;
   }
 
   Future<void> kick(String requester, String identity) =>
@@ -256,6 +296,7 @@ class SpaceRoomNotifier
     _partSub?.cancel();
     _connSub?.cancel();
     _micSub?.cancel();
+    _extMuteSub?.cancel();
   }
 }
 
@@ -300,6 +341,18 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
   Widget build(BuildContext context) {
     final st = ref.watch(spaceRoomProvider(widget.join));
     final join = widget.join;
+
+    // A server-initiated mute (host force-mute) arrived: the label already
+    // flips via isMicEnabled (state.isMicEnabled watched above), this is
+    // the extra non-blocking notice so the target actually notices the
+    // mute happened rather than just seeing a stale-looking button flip.
+    ref.listen<SpaceRoomState>(spaceRoomProvider(widget.join), (prev, next) {
+      if (prev != null && next.externalMuteNonce != prev.externalMuteNonce) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Muted by host")),
+        );
+      }
+    });
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
@@ -758,9 +811,18 @@ class _Stage extends ConsumerWidget {
                 leading: const Icon(Icons.mic_off_rounded,
                     color: SovereignColors.accentWarning),
                 title: const Text("Mute mic"),
-                onTap: () {
+                onTap: () async {
                   Navigator.of(sheetCtx).pop();
-                  notifier.muteSpeaker(join.identity, identity);
+                  final muted = await notifier.muteSpeaker(
+                      join.identity, identity);
+                  // No published mic track to mute (e.g. a promoted speaker
+                  // who never went live): surface feedback instead of the
+                  // action silently doing nothing.
+                  if (!muted && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("No live mic to mute")),
+                    );
+                  }
                 },
               ),
               ListTile(

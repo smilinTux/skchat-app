@@ -44,4 +44,23 @@ void main() {
     expect(events, [false, true]);
     await sub.cancel();
   });
+
+  // M1: externalMuteEvents is the "server-initiated mute" signal (a host
+  // force-mute via MuteRoomTrackRequest, reconciled from the raw LiveKit
+  // TrackMutedEvent in _bindRoomListeners / _reconcileExternalMicMute). That
+  // reconciliation needs a live Room/Participant to exercise the SDK event
+  // path, which is not available in a plain unit test (no LiveKit server),
+  // see the widget-level M1 group in space_room_screen_test.dart for the
+  // observable-behavior coverage. This is the unit-level smoke check: the
+  // stream exists, is safe to listen to with no room ever joined, and
+  // dispose() closes it cleanly alongside the other controllers.
+  test('externalMuteEvents stream exists and dispose closes it safely',
+      () async {
+    final svc = LiveKitCallService();
+    final events = <void>[];
+    final sub = svc.externalMuteEvents.listen(events.add);
+    await svc.dispose();
+    expect(events, isEmpty);
+    await sub.cancel();
+  });
 }

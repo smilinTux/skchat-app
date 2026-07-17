@@ -82,6 +82,10 @@ void main() {
     // mic). Default to an empty stream; tests that exercise that desync
     // override this with a controller they drive directly.
     when(() => svc.micEnabledChanges).thenAnswer((_) => const Stream.empty());
+    // Server-initiated mute signal (M1). Default to an empty stream; the M1
+    // group below overrides this with a controller it drives directly.
+    when(() => svc.externalMuteEvents)
+        .thenAnswer((_) => const Stream<void>.empty());
     when(() => svc.connectWithToken(
           wsUrl: any(named: "wsUrl"),
           token: any(named: "token"),
@@ -684,6 +688,46 @@ void main() {
     });
 
     testWidgets(
+        "Mute mic on a speaker with no published mic track shows feedback "
+        "instead of silently no-op'ing", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        // Promoted speaker who never went live: no mic publication yet.
+        _snap("dana", canPublish: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      // Live room graph with NO entry for dana, so the mic-track-sid lookup
+      // resolves null (never published).
+      final room = MockRoom();
+      when(() => room.remoteParticipants).thenReturn(
+          UnmodifiableMapView<String, RemoteParticipant>({}));
+      when(() => room.localParticipant).thenReturn(null);
+      when(() => svc.room).thenReturn(room);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("dana"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.text("Mute mic"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.text("No live mic to mute"), findsOneWidget);
+      verifyNever(() => spaces.mute(
+            any(),
+            requester: any(named: "requester"),
+            identity: any(named: "identity"),
+            trackSid: any(named: "trackSid"),
+          ));
+    });
+
+    testWidgets(
         "mute is one-directional: a self-muted speaker's sheet offers NO "
         "unmute-participant action anywhere", (tester) async {
       final participants = <LiveKitParticipantSnapshot>[
@@ -708,6 +752,71 @@ void main() {
       // "Unmute" appearing anywhere would be a moderation leak.
       expect(find.text("Remove from stage"), findsOneWidget);
       expect(find.textContaining("Unmute"), findsNothing);
+    });
+  });
+
+  // ── M1: server-initiated host mute must be visible to the muted speaker ──
+  //
+  // Today the label reconciliation (IF1, above) already covers ANY
+  // micEnabledChanges emission, including a server-initiated mute. What was
+  // missing is the "someone else did this" notice: LiveKitCallService
+  // additionally emits on the dedicated externalMuteEvents stream when the
+  // mute came from the server (a host force-mute) rather than a local
+  // toggle, and the screen surfaces that as a snackbar.
+
+  group("M1 host mute reconciliation", () {
+    testWidgets(
+        "a server-initiated mute (host force-mute) flips the label to "
+        "Unmute and shows a 'Muted by host' notice", (tester) async {
+      final micCtl = StreamController<bool>.broadcast();
+      final extMuteCtl = StreamController<void>.broadcast();
+      addTearDown(micCtl.close);
+      addTearDown(extMuteCtl.close);
+      when(() => svc.micEnabledChanges).thenAnswer((_) => micCtl.stream);
+      when(() => svc.externalMuteEvents).thenAnswer((_) => extMuteCtl.stream);
+
+      await tester.pumpWidget(wrap()); // host join: mic starts live.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Mute"), findsOneWidget);
+      expect(find.text("Muted by host"), findsNothing);
+
+      // The service reconciles a server-initiated mute (MuteRoomTrackRequest
+      // targeting our OWN mic) by emitting on both streams: the boolean flip
+      // on micEnabledChanges, and the "external" signal on externalMuteEvents.
+      micCtl.add(false);
+      extMuteCtl.add(null);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.text("Mute"), findsNothing);
+      expect(find.text("Muted by host"), findsOneWidget);
+    });
+
+    testWidgets(
+        "a self-initiated mute (own toggle) never shows the 'Muted by "
+        "host' notice", (tester) async {
+      final micCtl = StreamController<bool>.broadcast();
+      addTearDown(micCtl.close);
+      when(() => svc.micEnabledChanges).thenAnswer((_) => micCtl.stream);
+      // externalMuteEvents stays the default empty stream (see setUp): a
+      // plain toggle never touches it, only the server-mute path does.
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Mute"), findsOneWidget);
+
+      await tester.tap(find.text("Mute"));
+      await tester.pump();
+      micCtl.add(false); // toggleMic's own setMicEnabled(false) call.
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.text("Muted by host"), findsNothing);
     });
   });
 }
