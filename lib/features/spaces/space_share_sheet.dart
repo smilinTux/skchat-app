@@ -117,9 +117,20 @@ class _ShareSpaceSheetBody extends ConsumerWidget {
   }
 
   /// Tries the OS native share sheet (share_plus, via [nativeShareInvokerProvider]).
-  /// On Linux desktop (and any platform with no registered share target) the
-  /// platform channel can throw / no-op, so any failure falls back to
-  /// copy-to-clipboard with a "Link copied" snackbar, same as the Copy link row.
+  ///
+  /// Failure handling is a NEW pattern for this app (deliberately NOT the
+  /// skos_files_screen.dart precedent, which retries share-to-share and
+  /// surfaces an error snackbar, never a silent clipboard fallback), split
+  /// by cause:
+  ///
+  /// - [MissingPluginException] / [UnimplementedError]: no share target on
+  ///   this platform at all (e.g. Linux desktop). Expected, so degrade
+  ///   silently to copy-to-clipboard with the same "Link copied" snackbar
+  ///   as the Copy link row.
+  /// - Any OTHER exception: a REAL failure on a platform with a working
+  ///   share target. Still copy the link (the user keeps a way to share)
+  ///   but say so ("Share failed, link copied instead"), so the failure is
+  ///   visible rather than masked.
   Future<void> _shareNative(
     BuildContext context,
     WidgetRef ref,
@@ -128,13 +139,21 @@ class _ShareSpaceSheetBody extends ConsumerWidget {
   ) async {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
+    Future<void> copyAndClose(String snackText) async {
+      await Clipboard.setData(ClipboardData(text: url));
+      if (navigator.mounted) navigator.pop();
+      messenger.showSnackBar(SnackBar(content: Text(snackText)));
+    }
+
     try {
       await ref.read(nativeShareInvokerProvider)(text, subject: title);
       if (navigator.mounted) navigator.pop();
+    } on MissingPluginException {
+      await copyAndClose("Link copied");
+    } on UnimplementedError {
+      await copyAndClose("Link copied");
     } catch (_) {
-      await Clipboard.setData(ClipboardData(text: url));
-      if (navigator.mounted) navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text("Link copied")));
+      await copyAndClose("Share failed, link copied instead");
     }
   }
 

@@ -200,8 +200,8 @@ void main() {
   });
 
   testWidgets(
-      "Share via... falls back to copy-to-clipboard with 'Link copied' when "
-      "the native seam throws (e.g. no share target on Linux desktop)",
+      "Share via... with NO share target (MissingPluginException, e.g. Linux "
+      "desktop) silently falls back to clipboard with 'Link copied'",
       (tester) async {
     String? clipped;
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -220,7 +220,8 @@ void main() {
 
     await openSheet(tester, overrides: [
       nativeShareInvokerProvider.overrideWithValue(
-        (text, {subject}) async => throw Exception("no share target"),
+        (text, {subject}) async =>
+            throw MissingPluginException("no share target"),
       ),
     ]);
 
@@ -229,5 +230,71 @@ void main() {
 
     expect(clipped, spaceJoinUrl("https://noroc2027.tail204f0c.ts.net", spaceId));
     expect(find.text("Link copied"), findsOneWidget);
+    expect(find.text("Share failed, link copied instead"), findsNothing);
+  });
+
+  testWidgets(
+      "Share via... with an UnimplementedError (no platform implementation) "
+      "also silently falls back to clipboard with 'Link copied'",
+      (tester) async {
+    String? clipped;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == "Clipboard.setData") {
+          clipped = (call.arguments as Map)["text"] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await openSheet(tester, overrides: [
+      nativeShareInvokerProvider.overrideWithValue(
+        (text, {subject}) async => throw UnimplementedError("no impl"),
+      ),
+    ]);
+
+    await tester.tap(find.text("Share via..."));
+    await tester.pumpAndSettle();
+
+    expect(clipped, spaceJoinUrl("https://noroc2027.tail204f0c.ts.net", spaceId));
+    expect(find.text("Link copied"), findsOneWidget);
+    expect(find.text("Share failed, link copied instead"), findsNothing);
+  });
+
+  testWidgets(
+      "Share via... with a REAL failure (any other exception) copies the "
+      "link but surfaces 'Share failed, link copied instead'", (tester) async {
+    String? clipped;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == "Clipboard.setData") {
+          clipped = (call.arguments as Map)["text"] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await openSheet(tester, overrides: [
+      nativeShareInvokerProvider.overrideWithValue(
+        (text, {subject}) async => throw Exception("platform blew up"),
+      ),
+    ]);
+
+    await tester.tap(find.text("Share via..."));
+    await tester.pumpAndSettle();
+
+    expect(clipped, spaceJoinUrl("https://noroc2027.tail204f0c.ts.net", spaceId));
+    expect(find.text("Share failed, link copied instead"), findsOneWidget);
+    expect(find.text("Link copied"), findsNothing);
   });
 }
