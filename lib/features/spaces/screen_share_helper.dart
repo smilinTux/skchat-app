@@ -4,6 +4,7 @@ import "package:flutter_webrtc/flutter_webrtc.dart"
     show DesktopCapturerSource, SourceType, ThumbnailSize, desktopCapturer;
 import "package:livekit_client/livekit_client.dart";
 
+import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
 
 /// True on native desktop (Linux / macOS / Windows), where flutter_webrtc
@@ -53,17 +54,27 @@ Future<({bool proceed, String? sourceId})> resolveScreenShareSource(
   final source = await showDialog<DesktopCapturerSource>(
     context: context,
     builder: (dialogContext) => SimpleDialog(
-      title: const Text("Choose what to share"),
+      backgroundColor: SovereignColors.surfaceCard,
+      title: const Text(
+        "Choose what to share",
+        style: TextStyle(color: SovereignColors.textPrimary),
+      ),
       children: [
         for (final s in screens)
           SimpleDialogOption(
             onPressed: () => Navigator.of(dialogContext).pop(s),
-            child: Text(s.name.isNotEmpty ? s.name : "Screen"),
+            child: Text(
+              s.name.isNotEmpty ? s.name : "Screen",
+              style: const TextStyle(color: SovereignColors.textPrimary),
+            ),
           ),
         for (final s in windows)
           SimpleDialogOption(
             onPressed: () => Navigator.of(dialogContext).pop(s),
-            child: Text(s.name.isNotEmpty ? s.name : "Window"),
+            child: Text(
+              s.name.isNotEmpty ? s.name : "Window",
+              style: const TextStyle(color: SovereignColors.textPrimary),
+            ),
           ),
       ],
     ),
