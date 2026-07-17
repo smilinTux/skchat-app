@@ -1310,9 +1310,12 @@ class _LiveKitControlBar extends ConsumerWidget {
   /// `resolveScreenShareSource` no-ops (returns `sourceId: null`) on
   /// web/mobile, where the platform supplies its own picker. A cancelled
   /// desktop pick aborts silently: no share, no error, [notifier] is never
-  /// called. [LiveKitCallNotifier.toggleScreenShare] already surfaces a
-  /// genuine capture failure via [LiveKitCallState.error], so no extra
-  /// try/catch is needed here.
+  /// called. A genuine resolver failure (desktopCapturer.getSources
+  /// throwing on the platform channel) surfaces as the same
+  /// "Screen share failed" toast the Spaces flow shows, never as an
+  /// unhandled async error, and the share is never started.
+  /// [LiveKitCallNotifier.toggleScreenShare] separately surfaces
+  /// capture/publish failures via [LiveKitCallState.error].
   Future<void> _toggleScreenShare(
     BuildContext context,
     WidgetRef ref,
@@ -1321,10 +1324,19 @@ class _LiveKitControlBar extends ConsumerWidget {
   ) async {
     String? sourceId;
     if (!callState.isScreenSharing) {
-      final resolve = ref.read(screenShareSourceResolverProvider);
-      final picked = await resolve(context);
-      if (!picked.proceed) return;
-      sourceId = picked.sourceId;
+      try {
+        final resolve = ref.read(screenShareSourceResolverProvider);
+        final picked = await resolve(context);
+        if (!picked.proceed) return;
+        sourceId = picked.sourceId;
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Screen share failed: $e')),
+          );
+        }
+        return;
+      }
     }
     await notifier.toggleScreenShare(sourceId: sourceId);
   }

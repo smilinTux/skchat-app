@@ -140,6 +140,29 @@ void main() {
   });
 
   testWidgets(
+      'a resolver failure (platform channel throw, not a cancel) surfaces '
+      'the failure toast and never starts the share', (tester) async {
+    Future<({bool proceed, String? sourceId})> throwingResolver(
+            BuildContext context) async =>
+        throw Exception('getDesktopSources platform channel dead');
+
+    await tester.pumpWidget(wrap(_state(), extraOverrides: [
+      screenShareSourceResolverProvider.overrideWithValue(throwingResolver),
+    ]));
+    await tester.pump();
+
+    await tester.tap(find.text('Share'));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    verifyNever(() =>
+        svc.setScreenShareEnabled(any(), sourceId: any(named: 'sourceId')));
+    expect(find.textContaining('Screen share failed'), findsOneWidget);
+    // Failure leaves the toggle showing "not sharing".
+    expect(find.text('Share'), findsOneWidget);
+    expect(find.text('Stop share'), findsNothing);
+  });
+
+  testWidgets(
       'stopping an active share never re-invokes the picker (it only '
       'resolves a source when turning ON)', (tester) async {
     var resolverCalls = 0;

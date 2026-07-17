@@ -1019,17 +1019,20 @@ class _ControlBar extends ConsumerWidget {
             //
             // Native desktop needs an explicit capture source before
             // getDisplayMedia can resolve one; web keeps using its own
-            // native picker (resolveScreenShareSource no-ops there). A
-            // cancelled desktop pick aborts silently: no share, no error.
+            // native picker (resolveScreenShareSource no-ops there). The
+            // resolver runs INSIDE the guarded region so a genuine
+            // platform-channel failure (desktopCapturer.getSources throwing)
+            // surfaces as the same toast, matching the Spaces flow. Only a
+            // cancelled pick aborts silently: no share, no error.
             onTap: () async {
-              String? sourceId;
-              if (!state.isScreenSharing) {
-                final resolve = ref.read(screenShareSourceResolverProvider);
-                final picked = await resolve(context);
-                if (!picked.proceed) return;
-                sourceId = picked.sourceId;
-              }
               try {
+                String? sourceId;
+                if (!state.isScreenSharing) {
+                  final resolve = ref.read(screenShareSourceResolverProvider);
+                  final picked = await resolve(context);
+                  if (!picked.proceed) return;
+                  sourceId = picked.sourceId;
+                }
                 await notifier.toggleScreenShare(sourceId: sourceId);
               } catch (e) {
                 if (context.mounted) {
