@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
@@ -126,6 +127,21 @@ class LiveKitParticipantSnapshot {
     }
     return false;
   }
+}
+
+/// Screen-share quality tier used to build the capture + publish options in
+/// [LiveKitCallService.screenShareCaptureOptionsFor] /
+/// [LiveKitCallService.screenSharePublishOptionsFor]. See the doc comment on
+/// [LiveKitCallService.screenSharePublishOptionsFor] for the SDK-source
+/// rationale behind each tier's numbers.
+enum ScreenShareFrameRate {
+  /// LAN-tuned default: 1080p30, 4 Mbps ceiling, tuned for smooth motion
+  /// content (e.g. streaming Kodi/video through Spaces on a gigabit LAN).
+  standard,
+
+  /// Previous 15 fps / 2.5 Mbps preset, kept as an explicit fallback for a
+  /// constrained network (matches the SDK's own screenShareH1080FPS15).
+  lowBandwidth,
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -470,30 +486,12 @@ class LiveKitCallService {
           name: "mic",
           stream: "mic_audio",
         ),
-        defaultVideoPublishOptions: const VideoPublishOptions(
-          simulcast: true,
-          // Content-friendly screen-share publish encoding: 1080p30 at a high
-          // ceiling (4 Mbps) so streamed content (e.g. Kodi) stays crisp, and a
-          // resolution-first degradation policy so text/detail is preserved when
-          // bandwidth dips (drop framerate before sharpness).
-          screenShareEncoding: VideoEncoding(
-            maxFramerate: 30,
-            maxBitrate: 4 * 1000 * 1000,
-          ),
-          degradationPreference: DegradationPreference.maintainResolution,
-        ),
+        defaultVideoPublishOptions:
+            screenSharePublishOptionsFor(ScreenShareFrameRate.standard),
         // Capture the screen at up to 1080p30 by default (the toggle path below
         // may override with captureScreenAudio for the browser tab-audio case).
-        // maxFrameRate MUST be an explicit double: on native desktop
-        // livekit_client builds `mandatory: {'frameRate': maxFrameRate}` whenever
-        // `maxFrameRate != 0.0`, and a null maxFrameRate satisfies that guard,
-        // emitting `{'frameRate': null}`. flutter_webrtc's native ParseConstraints
-        // has no case for a null value and falls through to `std::get<int>`,
-        // aborting with std::bad_variant_access the instant capture starts.
-        defaultScreenShareCaptureOptions: const ScreenShareCaptureOptions(
-          params: VideoParametersPresets.screenShareH1080FPS30,
-          maxFrameRate: 30.0,
-        ),
+        defaultScreenShareCaptureOptions:
+            screenShareCaptureOptionsFor(ScreenShareFrameRate.standard),
       ),
     );
     _bindRoomListeners();
@@ -645,26 +643,123 @@ class LiveKitCallService {
     _emitParticipants();
   }
 
-  /// Publish options for the local screen-share track.
+  /// Screen-share encoding tier. [standard] is the LAN-tuned default (30 fps,
+  /// higher bitrate ceiling) for smooth motion content (e.g. Kodi/video
+  /// playback through Spaces); [lowBandwidth] is the previous 15 fps preset,
+  /// kept available for a constrained-network fallback.
   ///
-  /// simulcast is deliberately OFF: screen-share simulcast is unreliable on
-  /// web (the SFU can end up with NO usable layer, so the track never surfaces
-  /// for viewers, which is exactly the silent "nothing appears in the room"
-  /// failure this path fixes). The content-friendly quality (1080p30, 4 Mbps
-  /// ceiling) and the resolution-first degradation policy live HERE, on the
-  /// publish side, NOT forced onto the capture (getDisplayMedia) constraints,
-  /// so the browser is free to hand us whatever surface/resolution the user
-  /// picks without rejecting the capture.
-  static const VideoPublishOptions _screenSharePublishOptions =
-      VideoPublishOptions(
-    name: VideoPublishOptions.defaultScreenShareName,
-    simulcast: false,
-    screenShareEncoding: VideoEncoding(
-      maxFramerate: 30,
-      maxBitrate: 4 * 1000 * 1000,
-    ),
-    degradationPreference: DegradationPreference.maintainResolution,
-  );
+  /// SOURCE FINDINGS (livekit_client 2.5.0+hotfix.3, installed at
+  /// ~/.pub-cache/hosted/pub.dev/livekit_client-2.5.0+hotfix.3/lib/):
+  ///
+  /// - When no explicit `screenShareEncoding` is supplied, the SDK derives one
+  ///   from `VideoParametersPresets.allScreenShare` by picking the FIRST
+  ///   preset whose width >= the capture width (src/utils.dart
+  ///   `_findAppropriateEncoding`, called from `computeVideoEncodings` around
+  ///   utils.dart:396-426). For a 1920x1080 capture that preset list
+  ///   (src/types/video_parameters.dart:112-118) is
+  ///   `[h360FPS3, h720FPS5, h720FPS15, h1080FPS15, h1080FPS30]` - the loop
+  ///   breaks at the FIRST width-1920 entry, `screenShareH1080FPS15`
+  ///   (2.5 Mbps @ 15 fps, video_parameters.dart:290-296), never reaching
+  ///   `screenShareH1080FPS30` (4 Mbps @ 30 fps, video_parameters.dart:298-
+  ///   304) right after it. So the SDK's own un-tuned default for a 1080p
+  ///   screen share silently caps at 15 fps - an explicit encoding is
+  ///   required to get 30 fps, which is what [standard] supplies.
+  /// - `4 * 1000 * 1000` is not an arbitrary number: it is exactly the SDK's
+  ///   own `screenShareH1080FPS30` preset bitrate (video_parameters.dart:298-
+  ///   304), the highest 1080p/30fps ceiling the SDK authors ship. It sits
+  ///   inside the 3-6 Mbps LAN range and needs no further justification than
+  ///   "use the SDK's own top preset for this resolution/framerate".
+  /// - `degradationPreference` for screen-share is NOT `maintainFramerate` by
+  ///   SDK default: `LocalParticipant.getDefaultDegradationPreference`
+  ///   (src/participant/local.dart:547-557) returns `maintainResolution` for
+  ///   ANY `TrackSource.screenShareVideo` track (or any track >=1080p) when
+  ///   the caller does not set one explicitly - "drop framerate to keep
+  ///   sharpness". That is backwards for motion content: Chef streams
+  ///   video/Kodi through this share, so smoothness (stable framerate) matters
+  ///   more than the WebRTC encoder shaving resolution under mild bandwidth
+  ///   pressure. Both tiers below therefore explicitly set
+  ///   `DegradationPreference.maintainFramerate`, overriding the SDK's
+  ///   screen-share default.
+  /// - simulcast stays OFF for both tiers. Two independent reasons from
+  ///   source: (1) on web, screen-share simulcast has been unreliable enough
+  ///   that the SFU can end up with no usable layer (the original "nothing
+  ///   appears in the room" failure this file already worked around).
+  ///   (2) Even where it negotiates, the SDK's own default LOW simulcast
+  ///   layer for screen-share (src/utils.dart
+  ///   `_computeDefaultScreenShareSimulcastParams`, utils.dart:228-253) is
+  ///   `scaleResolutionDownBy: 2, maxFramerate: 3` - a half-resolution,
+  ///   3 fps layer. That layer is useless for motion content and buys nothing
+  ///   on a gigabit LAN with one viewer tier, so there is no upside to
+  ///   simulcast here, only extra encoder/negotiation overhead.
+  @visibleForTesting
+  static VideoPublishOptions screenSharePublishOptionsFor(
+    ScreenShareFrameRate tier,
+  ) {
+    final encoding = switch (tier) {
+      // Matches the SDK's own screenShareH1080FPS30 preset (see doc above).
+      ScreenShareFrameRate.standard =>
+        const VideoEncoding(maxFramerate: 30, maxBitrate: 4 * 1000 * 1000),
+      // Matches the SDK's own screenShareH1080FPS15 preset
+      // (video_parameters.dart:290-296): 2.5 Mbps @ 15 fps.
+      ScreenShareFrameRate.lowBandwidth =>
+        const VideoEncoding(maxFramerate: 15, maxBitrate: 2500 * 1000),
+    };
+    debugPrint(
+      'screen-share publish encoding: tier=$tier maxFramerate='
+      '${encoding.maxFramerate} maxBitrate=${encoding.maxBitrate} '
+      'simulcast=false degradationPreference=maintainFramerate',
+    );
+    return VideoPublishOptions(
+      name: VideoPublishOptions.defaultScreenShareName,
+      simulcast: false,
+      screenShareEncoding: encoding,
+      degradationPreference: DegradationPreference.maintainFramerate,
+    );
+  }
+
+  /// Capture-side options for [tier] (see [screenSharePublishOptionsFor] for
+  /// the encoding side and the SDK-source rationale).
+  ///
+  /// The capture [VideoParameters] preset and its `maxFrameRate` are kept in
+  /// step with the publish encoding for the same tier: a 30 fps publish
+  /// ceiling is pointless if `getDisplayMedia` itself only ever hands the
+  /// encoder 15 fps of frames, and vice versa.
+  ///
+  /// `maxFrameRate` MUST be an explicit non-null double: on native desktop,
+  /// livekit_client's `ScreenShareCaptureOptions.toMediaConstraintsMap`
+  /// (src/track/options.dart:185-200) emits `mandatory: {'frameRate':
+  /// maxFrameRate}` whenever `maxFrameRate != 0.0` - and `null != 0.0` is
+  /// true in Dart, so an unset (null) `maxFrameRate` still satisfies that
+  /// guard and emits `{'frameRate': null}`. flutter_webrtc's native
+  /// `ParseConstraints` has no branch for a null (`std::monostate`) value and
+  /// falls through to `std::get<int>(v)`, throwing `std::bad_variant_access`
+  /// and aborting (SIGABRT) the instant `getDisplayMedia` parses it - this is
+  /// the X11 capturer crash fixed in ee933f5. Both tiers below set an
+  /// explicit double so the native capturer keeps honoring the requested fps
+  /// instead of crashing.
+  @visibleForTesting
+  static ScreenShareCaptureOptions screenShareCaptureOptionsFor(
+    ScreenShareFrameRate tier, {
+    String? sourceId,
+    bool captureScreenAudio = false,
+  }) {
+    final (params, maxFrameRate) = switch (tier) {
+      ScreenShareFrameRate.standard => (
+          VideoParametersPresets.screenShareH1080FPS30,
+          30.0,
+        ),
+      ScreenShareFrameRate.lowBandwidth => (
+          VideoParametersPresets.screenShareH1080FPS15,
+          15.0,
+        ),
+    };
+    return ScreenShareCaptureOptions(
+      sourceId: sourceId,
+      captureScreenAudio: captureScreenAudio,
+      params: params,
+      maxFrameRate: maxFrameRate,
+    );
+  }
 
   /// Start / stop sharing the local screen, WITH audio (best-effort).
   ///
@@ -684,7 +779,15 @@ class LiveKitCallService {
   /// CONSTRAINT SAFETY: we do NOT force 1080p (or any exact resolution) onto
   /// the capture. Forcing capture constraints can make `getDisplayMedia` reject
   /// on some surfaces. Quality/encoding is set on the PUBLISH side via
-  /// [_screenSharePublishOptions] instead.
+  /// [screenSharePublishOptionsFor] instead.
+  ///
+  /// QUALITY: [frameRate] selects the tier built by
+  /// [screenShareCaptureOptionsFor] / [screenSharePublishOptionsFor] and
+  /// defaults to [ScreenShareFrameRate.standard] (1080p30, 4 Mbps, tuned for
+  /// LAN streaming of motion content - see the doc comment on
+  /// [screenSharePublishOptionsFor] for the SDK-source rationale).
+  /// [ScreenShareFrameRate.lowBandwidth] keeps the previous 15 fps / 2.5 Mbps
+  /// preset available for a constrained network.
   ///
   /// AUDIO (best-effort): when [withAudio] is true (the default) we ask the
   /// browser to also capture the shared surface's audio in the SAME
@@ -708,7 +811,8 @@ class LiveKitCallService {
   Future<void> setScreenShareEnabled(bool enabled,
       {bool withAudio = true,
       String? systemAudioDeviceId,
-      String? sourceId}) async {
+      String? sourceId,
+      ScreenShareFrameRate frameRate = ScreenShareFrameRate.standard}) async {
     final lp = _localParticipant;
     if (lp == null) return;
 
@@ -728,18 +832,13 @@ class LiveKitCallService {
     // constraint), so it does not cause the capture to reject. [sourceId] is
     // null on web (unchanged, browser-native picker) and set on native
     // desktop, where flutter_webrtc needs it to resolve the capture source.
-    // maxFrameRate MUST be set to an explicit double. On native desktop,
-    // livekit_client emits `mandatory: {'frameRate': maxFrameRate}` whenever
-    // `maxFrameRate != 0.0`, and a null maxFrameRate passes that guard, yielding
-    // `{'frameRate': null}`. flutter_webrtc's native ParseConstraints has no
-    // branch for a null value and falls through to `std::get<int>`, aborting
-    // with std::bad_variant_access the moment getDisplayMedia parses it. A
-    // concrete double keeps the value in the double branch the parser handles.
-    final captureOptions = ScreenShareCaptureOptions(
+    // See [screenShareCaptureOptionsFor] for why maxFrameRate must be an
+    // explicit double (native-desktop SIGABRT fixed in ee933f5) and for how
+    // [frameRate] maps to the capture preset / fps.
+    final captureOptions = screenShareCaptureOptionsFor(
+      frameRate,
       sourceId: sourceId,
       captureScreenAudio: true,
-      params: VideoParametersPresets.screenShareH1080FPS15,
-      maxFrameRate: 15.0,
     );
 
     // Capture the display. This is the FIRST await, so the getDisplayMedia
@@ -776,7 +875,7 @@ class LiveKitCallService {
         try {
           await lp.publishVideoTrack(
             track,
-            publishOptions: _screenSharePublishOptions,
+            publishOptions: screenSharePublishOptionsFor(frameRate),
           );
         } catch (e) {
           // Boundary diagnostic: the video publish IS the user-visible share, so
