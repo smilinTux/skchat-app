@@ -787,11 +787,12 @@ class _WatchStage extends StatelessWidget {
               const SizedBox(width: 6),
               const Expanded(
                 child: Text(
-                  // Same guidance as the call screen-share path: on Linux, full
-                  // system audio through getDisplayMedia is unreliable, so pick a
-                  // PulseAudio \"Monitor of ...\" source as your mic to stream
-                  // desktop audio (e.g. the fight) to listeners.
-                  "Desktop audio? Pick a \"Monitor of ...\" source as your mic so listeners hear it.",
+                  // The dedicated system-audio toggle in the Screen share
+                  // panel (ScreenSharePanel, "Share system audio") captures
+                  // and publishes desktop audio directly, so this hint just
+                  // points there instead of asking listeners to hand-pick a
+                  // PulseAudio monitor device as their mic.
+                  "Desktop audio? Turn on \"Share system audio\" in the Screen share panel so listeners hear it.",
                   style: TextStyle(
                     color: SovereignColors.textTertiary,
                     fontSize: 11,
