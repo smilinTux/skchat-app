@@ -10,9 +10,7 @@ class SystemAudioSources {
   static bool isMonitor(MediaDevice device) {
     final id = device.deviceId.toLowerCase();
     final label = device.label.toLowerCase();
-    return id.contains('.monitor') ||
-        label.contains('monitor of') ||
-        label.startsWith('monitor');
+    return id.endsWith('.monitor') || label.contains('monitor of');
   }
 
   /// The monitor inputs among [devices], preserving order.

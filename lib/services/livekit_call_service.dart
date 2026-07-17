@@ -557,7 +557,17 @@ class LiveKitCallService {
   // ── Track controls ────────────────────────────────────────────────────────
 
   /// Mute / unmute the local microphone.
+  ///
+  /// System audio and the voice mic are mutually exclusive: both would
+  /// otherwise publish as `TrackSource.microphone`, and LiveKit's
+  /// `getTrackPublicationBySource(microphone)` returns whichever published
+  /// first, silently dropping the other. So enabling the real mic while a
+  /// system-audio track is live stops the system-audio track first, leaving
+  /// at most one microphone-source publication at any time.
   Future<void> setMicEnabled(bool enabled) async {
+    if (enabled && isSharingSystemAudio) {
+      await stopScreenShareSystemAudio();
+    }
     await _localParticipant?.setMicrophoneEnabled(enabled);
     _emitParticipants();
   }
@@ -994,6 +1004,14 @@ class LiveKitCallService {
   Future<void> startScreenShareSystemAudio(String deviceId) async {
     final lp = _localParticipant;
     if (lp == null || _systemAudioTrack != null) return;
+    // Mutually exclusive with the voice mic: both publish as
+    // TrackSource.microphone, so leaving the real mic live would leave two
+    // microphone-source publications and make mic lookups grab the wrong
+    // one. Disable it first via the existing mic path so the system-audio
+    // track is the only microphone-source publication.
+    if (lp.isMicrophoneEnabled()) {
+      await lp.setMicrophoneEnabled(false);
+    }
     final track = await LocalAudioTrack.create(
       SystemAudioSources.captureOptions(deviceId),
     );

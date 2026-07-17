@@ -40,11 +40,18 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
   }
 
   Future<void> _loadSystemAudioSources() async {
-    final list = await Hardware.instance.enumerateDevices(
-      type: 'audioinput',
-    );
-    final monitors = SystemAudioSources.monitors(list);
-    final defaultId = SystemAudioSources.autoSelect(list)?.deviceId;
+    List<MediaDevice> monitors = const [];
+    String? defaultId;
+    try {
+      final list = await Hardware.instance.enumerateDevices(
+        type: 'audioinput',
+      );
+      monitors = SystemAudioSources.monitors(list);
+      defaultId = SystemAudioSources.autoSelect(list)?.deviceId;
+    } catch (_) {
+      // Leave _monitors empty; the switch already disables itself and shows
+      // the hint when there is nothing to select.
+    }
     if (mounted) {
       setState(() {
         _monitors = monitors;
