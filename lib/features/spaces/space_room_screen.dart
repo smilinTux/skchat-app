@@ -15,6 +15,7 @@ import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
 import "screen_share_helper.dart";
+import "fullscreen_video_stage.dart";
 import "terminal_panel.dart";
 import "doc_panel.dart";
 import "whiteboard_panel.dart";
@@ -879,54 +880,49 @@ class _WatchStage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: Stack(
-            children: [
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Container(
-                  color: Colors.black,
-                  child: VideoTrackRenderer(primary.track),
-                ),
+        // FullscreenableVideo owns the fullscreen toggle (overlay button,
+        // double-tap, Esc / exit control on the pushed route) and pops
+        // itself automatically if this tile is removed from the tree
+        // (i.e. the share ends while the viewer is fullscreen).
+        FullscreenableVideo(
+          aspectRatio: 16 / 9,
+          borderRadius: 14,
+          semanticsLabel: "$who is sharing their screen",
+          video: VideoTrackRenderer(primary.track),
+          // "Streaming: <identity>" label pill, top-left, in both modes.
+          overlay: Positioned(
+            left: 10,
+            top: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: soul.withValues(alpha: 0.6)),
               ),
-              // "Streaming: <identity>" label pill, top-left.
-              Positioned(
-                left: 10,
-                top: 10,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: soul.withValues(alpha: 0.6)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: soul,
+                    ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: soul,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        "Streaming: $who",
-                        style: const TextStyle(
-                          color: SovereignColors.textPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                  const SizedBox(width: 6),
+                  Text(
+                    "Streaming: $who",
+                    style: const TextStyle(
+                      color: SovereignColors.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
         if (others > 0) ...[
