@@ -164,6 +164,109 @@ void main() {
     expect(find.text("VIDEO-1"), findsNothing);
   });
 
+  testWidgets(
+      "two rapid exit invocations (Esc key-repeat) pop ONLY the fullscreen "
+      "route, never the screen below", (tester) async {
+    // The tile lives on a PUSHED room route (as in the app, where the Space
+    // room screen sits above other routes), so an unguarded second pop()
+    // would pop the room screen itself, not just the fullscreen route.
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const Scaffold(
+                    body: FullscreenableVideo(video: Text("VIDEO")),
+                  ),
+                ),
+              ),
+              child: const Text("OPEN ROOM"),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text("OPEN ROOM"));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.fullscreen_rounded), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
+
+    // Holding Esc on a Linux desktop auto-repeats the key, so the exit
+    // handler can be invoked a second time DURING the 150ms exit
+    // transition, while the fullscreen subtree (with its Focus
+    // onKeyEvent) is still mounted. Real key events are not
+    // deterministic here (the harness moves focus at pop time), so
+    // invoke the page's exit handler directly, twice, back to back.
+    final page = tester.widget<FullscreenVideoPage>(
+      find.byType(FullscreenVideoPage),
+    );
+    page.onExit();
+    page.onExit();
+    await tester.pumpAndSettle();
+
+    // Exactly one pop: fullscreen gone, the room route with the tile is
+    // still on top (NOT popped back to the launcher screen).
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsNothing);
+    expect(find.byIcon(Icons.fullscreen_rounded), findsOneWidget);
+    expect(find.text("VIDEO"), findsOneWidget);
+    expect(find.text("OPEN ROOM"), findsNothing);
+  });
+
+  testWidgets(
+      "Esc racing a simultaneous share-end: no crash, single pop, room "
+      "screen intact", (tester) async {
+    final showTile = ValueNotifier<bool>(true);
+    addTearDown(showTile.dispose);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => Scaffold(
+                    body: ValueListenableBuilder<bool>(
+                      valueListenable: showTile,
+                      builder: (context, show, _) => show
+                          ? const FullscreenableVideo(video: Text("VIDEO"))
+                          : const Center(
+                              child: Text("No one is sharing anymore."),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+              child: const Text("OPEN ROOM"),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text("OPEN ROOM"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
+
+    // The viewer hits Esc in the same window the share ends: the Esc pop
+    // and the dispose()-driven auto-exit race each other.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    showTile.value = false;
+    await tester.pumpAndSettle();
+
+    // One pop total: fullscreen gone, the room route (now showing the
+    // share-ended state) is still on top, launcher never resurfaced.
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsNothing);
+    expect(find.text("No one is sharing anymore."), findsOneWidget);
+    expect(find.text("OPEN ROOM"), findsNothing);
+  });
+
   testWidgets("overlay content renders in both inline and fullscreen modes",
       (tester) async {
     await tester.pumpWidget(wrap(

@@ -1,4 +1,4 @@
-import "package:flutter/foundation.dart" show ValueListenable;
+import "package:flutter/foundation.dart" show ValueListenable, visibleForTesting;
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 
@@ -97,21 +97,28 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
     if (_fullscreenActive) return;
     setState(() => _fullscreenActive = true);
     final navigator = Navigator.of(context, rootNavigator: true);
-    final route = PageRouteBuilder<void>(
+    late final PageRouteBuilder<void> route;
+    route = PageRouteBuilder<void>(
       opaque: true,
       barrierColor: Colors.black,
       transitionDuration: const Duration(milliseconds: 150),
       pageBuilder: (routeContext, animation, secondaryAnimation) {
         return FadeTransition(
           opacity: animation,
-          child: _FullscreenVideoPage(
+          child: FullscreenVideoPage(
             videoListenable: _videoNotifier,
             overlayListenable: _overlayNotifier,
             aspectRatio: widget.aspectRatio,
             onExit: () {
-              if (Navigator.of(routeContext).canPop()) {
-                Navigator.of(routeContext).pop();
-              }
+              // Idempotent exit: the fullscreen subtree stays mounted
+              // (and focused) through the 150ms exit transition, so a
+              // second invocation can land mid-transition (Esc
+              // key-repeat on desktop). Guard on THIS route still being
+              // the live top route, not the navigator-global canPop(),
+              // or the second pop() would pop the Space room screen
+              // underneath.
+              if (!route.isCurrent) return;
+              navigator.pop();
             },
           ),
         );
@@ -215,8 +222,15 @@ class _FullscreenIconButton extends StatelessWidget {
 
 /// The immersive black fullscreen page: the video fills the window, exit is
 /// available via the corner control, double-tap, or Esc (desktop).
-class _FullscreenVideoPage extends StatelessWidget {
-  const _FullscreenVideoPage({
+///
+/// Public ONLY so tests can drive [onExit] directly (rapid repeat
+/// invocations are not reachable deterministically through real key
+/// events in the widget-test harness); always instantiated via
+/// [FullscreenableVideo], never directly.
+@visibleForTesting
+class FullscreenVideoPage extends StatelessWidget {
+  const FullscreenVideoPage({
+    super.key,
     required this.videoListenable,
     required this.overlayListenable,
     required this.aspectRatio,
