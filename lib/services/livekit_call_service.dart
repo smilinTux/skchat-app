@@ -203,7 +203,22 @@ class LiveKitCallService {
   /// (an explicit toggle, or the internal system-audio mutual-exclusion
   /// flip). Guards [_reconcileExternalMicMute] so a mute WE requested is
   /// never mistaken for a server-initiated one (see that method).
+  ///
+  /// RACE ANALYSIS: the SDK dispatches the local TrackMutedEvent for a
+  /// self-mute through its own room-event bus, an async chain roughly two
+  /// microtask hops deep relative to setMicrophoneEnabled()'s future
+  /// completing. Clearing this flag synchronously right after our own emit
+  /// sits at a similar microtask depth, so the ordering between the clear
+  /// and the SDK's dispatch was implementation-defined and an SDK bump
+  /// could flip it (a self-mute event landing AFTER the clear would fire a
+  /// spurious "muted by host" notice; cosmetic, state stays correct, but
+  /// avoidable). The clear is therefore DEFERRED one extra microtask (see
+  /// setMicEnabled) so the guard outlives the SDK's dispatch chain with
+  /// margin. [_selfMuteGeneration] keeps a deferred clear from an EARLIER
+  /// disable prematurely ending the guard window of a newer overlapping
+  /// one.
   bool _selfMuteInFlight = false;
+  int _selfMuteGeneration = 0;
 
   /// Stream of participant snapshots, updated whenever participants join,
   /// leave, or change their track state.
@@ -608,13 +623,19 @@ class LiveKitCallService {
     // Mark a caller-initiated disable in flight so the TrackMutedEvent
     // reconciliation in _bindRoomListeners can tell this apart from a
     // server-initiated mute (host force-mute) arriving with no local call
-    // ever made, see _reconcileExternalMicMute. Cleared only after the
-    // explicit emit below so the guard covers the SDK's own event dispatch
-    // for this exact call.
+    // ever made, see _reconcileExternalMicMute. Cleared one microtask AFTER
+    // the explicit emit below (not synchronously) so the guard outlives the
+    // SDK's own ~2-hop microtask dispatch of this exact call's
+    // TrackMutedEvent; see the race analysis on _selfMuteInFlight. The
+    // generation token makes a stale deferred clear a no-op when a newer
+    // disable has re-armed the guard in the meantime.
+    final gen = ++_selfMuteGeneration;
     if (!enabled) _selfMuteInFlight = true;
     await _localParticipant?.setMicrophoneEnabled(enabled);
     if (!_micEnabledCtl.isClosed) _micEnabledCtl.add(enabled);
-    _selfMuteInFlight = false;
+    scheduleMicrotask(() {
+      if (gen == _selfMuteGeneration) _selfMuteInFlight = false;
+    });
     _emitParticipants();
   }
 
