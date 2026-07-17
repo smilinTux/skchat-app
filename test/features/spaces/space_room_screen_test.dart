@@ -340,13 +340,14 @@ void main() {
   });
 
   testWidgets(
-      "demotion (grant revoked) stops publishing and reverts to raise hand",
+      "demotion (grant revoked) stops publishing and reverts to raise hand; "
+      "connect-time auto-publish is HOST-ONLY (a granted speaker starts muted)",
       (tester) async {
     final controller =
         StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
     addTearDown(controller.close);
-    // Already-granted speaker: goes live at connect (existing "any granted
-    // role goes live immediately" behavior).
+    // Non-host speaker joining (or rejoining) with a pre-authorized publish
+    // grant already on their snapshot.
     final live = <LiveKitParticipantSnapshot>[
       _snap("dana@dk.skworld", isLocal: true, canPublish: true),
       _snap("chef@dk.skworld", canPublish: true),
@@ -359,8 +360,18 @@ void main() {
     controller.add(live);
     await tester.pump(const Duration(milliseconds: 50));
 
+    // Auto-publish at connect is HOST-ONLY: this speaker holds the grant so
+    // the mic control renders, but they start MUTED (no hot-mic surprise on
+    // rejoin) and the service mic was never touched.
     expect(find.text("Raise hand"), findsNothing);
-    expect(find.text("Mute"), findsOneWidget); // live and unmuted
+    expect(find.text("Unmute"), findsOneWidget);
+    expect(find.text("Mute"), findsNothing);
+    verifyNever(() => svc.setMicEnabled(true));
+
+    // The speaker self-unmutes (X Spaces model) and goes live.
+    await tester.tap(find.text("Unmute"));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text("Mute"), findsOneWidget);
     verify(() => svc.setMicEnabled(true)).called(1);
 
     // Host revokes the grant (removeFromStage): dana's snapshot loses

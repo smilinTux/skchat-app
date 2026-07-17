@@ -83,6 +83,13 @@ class SpaceRoomNotifier
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _partSub;
   StreamSubscription<ConnectionState>? _connSub;
 
+  /// Set by [_cancel] (leave / provider dispose). The async participants
+  /// listener below can resume AFTER a fast demote-then-leave has already
+  /// disposed this notifier; writing state then throws, so every write
+  /// after an await checks this first (mirrors the call_device_picker
+  /// mounted guards).
+  bool _disposed = false;
+
   @override
   SpaceRoomState build(SpaceJoin arg) {
     ref.onDispose(_cancel);
@@ -106,6 +113,8 @@ class SpaceRoomNotifier
         // publishing and drop back to the listener control (X Spaces model,
         // no lingering hot mic once the grant is gone).
         await svc.setMicEnabled(false);
+        // The await may resume after leave() disposed this notifier.
+        if (_disposed) return;
         state = state.copyWith(isMicEnabled: false);
       }
     });
@@ -115,21 +124,22 @@ class SpaceRoomNotifier
 
     try {
       await svc.connectWithToken(wsUrl: arg.url, token: arg.token);
-      final participants = svc.currentParticipants;
-      // Anyone who ALREADY holds the publish grant at connect time (the
-      // host, or a speaker rejoining with a pre-authorized token) goes live
-      // on mic immediately. This is keyed off the actual LiveKit grant, not
-      // [SpaceJoin.isHost]. A grant gained LATER via promotion (see
-      // [raiseHand] and the participants listener above) never auto-
-      // unmutes; the speaker self-unmutes, matching the X Spaces model.
-      final canPublish = _localCanPublish(participants);
-      if (canPublish) {
+      // ONLY the host goes live on mic at connect time. Any non-host
+      // participant, even a speaker rejoining with a pre-authorized
+      // publish grant, starts MUTED and self-unmutes via the button (X
+      // Spaces convention, no hot-mic surprises on rejoin). Mic control
+      // VISIBILITY is separately gated on the actual publish grant in the
+      // control bar, and a grant gained later via promotion (see
+      // [raiseHand] and the participants listener above) never
+      // auto-unmutes either.
+      final goLive = arg.isHost;
+      if (goLive) {
         await svc.setMicEnabled(true);
       }
       state = state.copyWith(
-        participants: participants,
+        participants: svc.currentParticipants,
         isConnected: true,
-        isMicEnabled: canPublish,
+        isMicEnabled: goLive,
       );
     } on Object catch (e) {
       state = state.copyWith(error: e.toString());
@@ -203,6 +213,7 @@ class SpaceRoomNotifier
   }
 
   void _cancel() {
+    _disposed = true;
     _partSub?.cancel();
     _connSub?.cancel();
   }
