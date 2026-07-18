@@ -133,4 +133,46 @@ void main() {
       await svc.dispose();
     });
   });
+
+  // PERMFIX: a promoted speaker's own client only ever receives the publish
+  // grant as a bare ParticipantPermissionsUpdatedEvent (see the long doc
+  // comment on that binding in _bindRoomListeners): the metadata value is
+  // unchanged, so ParticipantMetadataUpdatedEvent never fires for that
+  // update, and canPublish went stale on the local snapshot until some
+  // unrelated event forced a re-snapshot ("Raise hand" instead of
+  // mute/unmute). _bindRoomListeners now binds
+  // ParticipantPermissionsUpdatedEvent to the SAME re-emit path
+  // (_onParticipantMetadataChanged) the metadata event already uses.
+  // debugSimulatePermissionsChange fires that exact path without needing a
+  // live Room/SDK connection, mirroring debugSimulateMetadataChange above.
+  group('PERMFIX: permissions-updated re-emit (promoted-speaker freshness)',
+      () {
+    test(
+        'debugSimulatePermissionsChange emits participants twice via the '
+        'same re-emit path as the metadata event: nothing delivered '
+        'synchronously, then two emissions once the microtask queue drains',
+        () async {
+      final svc = LiveKitCallService();
+      final emissions = <List<LiveKitParticipantSnapshot>>[];
+      final sub = svc.participants.listen(emissions.add);
+
+      svc.debugSimulatePermissionsChange();
+      expect(emissions, isEmpty);
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emissions.length, 2);
+
+      await sub.cancel();
+      await svc.dispose();
+    });
+
+    test('debugSimulatePermissionsChange is a safe no-op shape with no room',
+        () async {
+      final svc = LiveKitCallService();
+      svc.debugSimulatePermissionsChange();
+      await Future<void>.delayed(Duration.zero);
+      await svc.dispose();
+    });
+  });
 }

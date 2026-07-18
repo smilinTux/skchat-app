@@ -1116,6 +1116,19 @@ class LiveKitCallService {
       // against that gap without inventing a new event or a poll loop.
       ..on<ParticipantMetadataUpdatedEvent>(
           (_) => _onParticipantMetadataChanged())
+      // PERMFIX: the gap the comment above documents is not hypothetical.
+      // ParticipantPermissionsUpdatedEvent is emitted ONLY by
+      // LocalParticipant.setPermissions, which means it fires for the LOCAL
+      // participant, exactly the promoted speaker on their own client. A
+      // permission-only signal frame (no metadata change alongside it) left
+      // this event completely unbound, so a promoted speaker's own snapshot
+      // never refreshed canPublish and their control bar kept showing
+      // "Raise hand" instead of mute/unmute until an unrelated event forced
+      // a re-snapshot. Bind it to the SAME re-emit path as the metadata
+      // event above (also covers the demotion direction, canPublish
+      // true->false, if that too arrives as a permission-only frame).
+      ..on<ParticipantPermissionsUpdatedEvent>(
+          (_) => _onParticipantMetadataChanged())
       // Connection-quality changes are NOT surfaced by the plain
       // Room.addListener change signal, so re-emit the participant snapshots
       // here whenever the SFU updates a participant's link quality. This keeps
@@ -1152,6 +1165,15 @@ class LiveKitCallService {
   /// test/services/livekit_call_service_snapshot_test.dart.
   @visibleForTesting
   void debugSimulateMetadataChange() => _onParticipantMetadataChanged();
+
+  /// PERMFIX test-only hook: fires the exact same re-emit path a real
+  /// `ParticipantPermissionsUpdatedEvent` from `_bindRoomListeners` would
+  /// trigger (the promoted-speaker publish grant arriving as a
+  /// permission-only signal frame), without needing a live [Room] / LiveKit
+  /// connection. Mirrors [debugSimulateMetadataChange]. See
+  /// test/services/livekit_call_service_snapshot_test.dart.
+  @visibleForTesting
+  void debugSimulatePermissionsChange() => _onParticipantMetadataChanged();
 
   /// Reconcile a mute event against the LOCAL mic publication, surfacing a
   /// server-initiated mute (the moderation layer's host force-mute,
