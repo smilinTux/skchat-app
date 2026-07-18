@@ -1123,11 +1123,14 @@ class _WatchStage extends StatelessWidget {
         // FullscreenableVideo owns the fullscreen toggle (overlay button,
         // double-tap, Esc / exit control on the pushed route) and pops
         // itself automatically if this tile is removed from the tree
-        // (i.e. the share/go-live ends while the viewer is fullscreen).
+        // (i.e. the share/go-live ends while the viewer is fullscreen). It
+        // also wraps this video (screen-share or camera go-live alike) in a
+        // ZoomableVideo internally, so the viewer can pinch-to-zoom and pan
+        // it both here inline and in fullscreen.
         FullscreenableVideo(
           aspectRatio: 16 / 9,
           borderRadius: 14,
-          semanticsLabel: "$who $verb",
+          semanticsLabel: "$who $verb. Pinch to zoom, double-tap for fullscreen.",
           video: VideoTrackRenderer(primary.track),
           // "Streaming: <identity>" / "Live: <identity>" label pill,
           // top-left, in both modes.

@@ -68,21 +68,89 @@ void main() {
     expect(find.byIcon(Icons.fullscreen_rounded), findsOneWidget);
   });
 
-  testWidgets("double-tap while fullscreen exits back to the tile",
+  testWidgets(
+      "pinch-zoom works on the inline tile (before ever going fullscreen)",
       (tester) async {
     await tester.pumpWidget(wrap(
-      const FullscreenableVideo(video: Text("VIDEO")),
+      const FullscreenableVideo(
+        video: SizedBox(width: 200, height: 200, child: Text("VIDEO")),
+      ),
+    ));
+    await tester.pump();
+
+    final viewer =
+        tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+    expect(viewer.minScale, 1.0);
+    expect(viewer.maxScale, 5.0);
+    final controller = viewer.transformationController!;
+    expect(controller.value, Matrix4.identity());
+
+    final center = tester.getCenter(find.byType(InteractiveViewer));
+    final gesture1 = await tester.createGesture();
+    final gesture2 = await tester.createGesture();
+    await gesture1.down(center - const Offset(20, 0));
+    await gesture2.down(center + const Offset(20, 0));
+    await tester.pump();
+    await gesture1.moveTo(center - const Offset(60, 0));
+    await gesture2.moveTo(center + const Offset(60, 0));
+    await tester.pump();
+    await gesture1.up();
+    await gesture2.up();
+    await tester.pumpAndSettle();
+
+    expect(controller.value, isNot(Matrix4.identity()));
+    // Zooming inline never entered fullscreen: pinch/pan is a scale
+    // gesture, not a tap, so it never contends with the double-tap-to-enter
+    // gesture living on the same tile.
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsNothing);
+  });
+
+  testWidgets(
+      "double-tap while fullscreen resets the zoom instead of exiting "
+      "(M7's exit-on-double-tap is superseded by zoom-reset once zoomable)",
+      (tester) async {
+    await tester.pumpWidget(wrap(
+      const FullscreenableVideo(
+        video: SizedBox(width: 200, height: 200, child: Text("VIDEO")),
+      ),
     ));
     await tester.pump();
     await tester.tap(find.byIcon(Icons.fullscreen_rounded));
     await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
 
+    // Pinch-zoom in while fullscreen.
+    final viewer =
+        tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+    final controller = viewer.transformationController!;
+    final center = tester.getCenter(find.byType(InteractiveViewer));
+    final gesture1 = await tester.createGesture();
+    final gesture2 = await tester.createGesture();
+    await gesture1.down(center - const Offset(20, 0));
+    await gesture2.down(center + const Offset(20, 0));
+    await tester.pump();
+    await gesture1.moveTo(center - const Offset(60, 0));
+    await gesture2.moveTo(center + const Offset(60, 0));
+    await tester.pump();
+    await gesture1.up();
+    await gesture2.up();
+    await tester.pumpAndSettle();
+    expect(controller.value, isNot(Matrix4.identity()));
+
+    // Double-tap: resets the zoom, does NOT leave fullscreen.
     await tester.tap(find.text("VIDEO"));
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text("VIDEO"));
     await tester.pumpAndSettle();
 
+    expect(controller.value, Matrix4.identity());
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
+
+    // Explicit exit control still works after a zoom-reset double-tap.
+    await tester.tap(find.byIcon(Icons.fullscreen_exit_rounded));
+    await tester.pumpAndSettle();
     expect(find.byIcon(Icons.fullscreen_exit_rounded), findsNothing);
+    expect(find.byIcon(Icons.fullscreen_rounded), findsOneWidget);
   });
 
   testWidgets("Esc key leaves fullscreen on desktop", (tester) async {

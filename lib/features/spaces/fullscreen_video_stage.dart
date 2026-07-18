@@ -3,11 +3,13 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 
 import "../../core/theme/sovereign_colors.dart";
+import "zoomable_video.dart";
 
 /// Wraps a video widget (e.g. a screen-share [VideoTrackRenderer]) with a
 /// fullscreen toggle: an overlay button on the tile, double-tap to enter
 /// fullscreen, and a black immersive route with an exit control + Esc
-/// support to leave it.
+/// support to leave it. Both the inline tile and the fullscreen page also
+/// let the viewer pinch-to-zoom and pan the video (see [ZoomableVideo]).
 ///
 /// Fullscreen is implemented as a plain route push onto the ROOT navigator
 /// (so it covers the whole window, not just the Space room's own nested
@@ -22,6 +24,20 @@ import "../../core/theme/sovereign_colors.dart";
 /// active (the share it renders has ended, so the caller stops building it),
 /// [dispose] pops the fullscreen route so the viewer is not left staring at
 /// a stale black screen.
+///
+/// Gesture split (zoom vs. fullscreen double-tap): [video] is pinch/pan
+/// zoomable in BOTH the inline tile and the fullscreen page, each via its
+/// own [ZoomableVideo] with [ZoomableVideo.enableInternalDoubleTapReset] set
+/// to false, so neither installs its own double-tap recognizer:
+/// - Inline: the tile's own double-tap gesture (below) still means "enter
+///   fullscreen", unchanged from before zoom existed. There is no ambiguity
+///   because the tile's ZoomableVideo has no double-tap of its own to
+///   compete with it.
+/// - Fullscreen: double-tap now means "reset zoom" (it used to mean
+///   "exit"), driven through [_fullscreenZoomController] from the
+///   fullscreen page's own (still sole) double-tap handler. Leaving
+///   fullscreen is still always available via the explicit exit button and
+///   Esc, just no longer via double-tap.
 class FullscreenableVideo extends StatefulWidget {
   const FullscreenableVideo({
     super.key,
@@ -54,6 +70,15 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
   Route<void>? _route;
   late final ValueNotifier<Widget> _videoNotifier;
   late final ValueNotifier<Widget?> _overlayNotifier;
+
+  /// Drives the fullscreen page's zoom reset. Only ever attached to the
+  /// fullscreen page's [ZoomableVideo] (see [FullscreenVideoPage]); the
+  /// inline tile's own [ZoomableVideo] manages its own, unconnected zoom
+  /// state, so zoom does not carry over between inline and fullscreen (each
+  /// starts fresh at fit), which is expected: entering/exiting fullscreen
+  /// swaps to a differently-sized presentation of the video anyway.
+  final ZoomableVideoController _fullscreenZoomController =
+      ZoomableVideoController();
 
   @override
   void initState() {
@@ -90,6 +115,7 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
     }
     _videoNotifier.dispose();
     _overlayNotifier.dispose();
+    _fullscreenZoomController.dispose();
     super.dispose();
   }
 
@@ -109,6 +135,7 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
             videoListenable: _videoNotifier,
             overlayListenable: _overlayNotifier,
             aspectRatio: widget.aspectRatio,
+            zoomController: _fullscreenZoomController,
             onExit: () {
               // Idempotent exit: the fullscreen subtree stays mounted
               // (and focused) through the 150ms exit transition, so a
@@ -159,7 +186,19 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
               behavior: HitTestBehavior.opaque,
               onTap: () => _setHovering(!_hovering),
               onDoubleTap: _enterFullscreen,
-              child: Container(color: Colors.black, child: widget.video),
+              child: Container(
+                color: Colors.black,
+                // enableInternalDoubleTapReset: false because this tile's
+                // OWN double-tap (above) already means "enter fullscreen";
+                // a second, internal double-tap-to-reset recognizer here
+                // would compete with it ambiguously. Pinch/pan zoom still
+                // works: it is a scale gesture, not a tap, so it never
+                // enters that same arena.
+                child: ZoomableVideo(
+                  enableInternalDoubleTapReset: false,
+                  child: widget.video,
+                ),
+              ),
             ),
             if (widget.overlay != null) widget.overlay!,
             Positioned(
@@ -220,8 +259,12 @@ class _FullscreenIconButton extends StatelessWidget {
   }
 }
 
-/// The immersive black fullscreen page: the video fills the window, exit is
-/// available via the corner control, double-tap, or Esc (desktop).
+/// The immersive black fullscreen page: the video fills the window, pinch
+/// to zoom and pan, double-tap resets the zoom, and exit is available via
+/// the corner control or Esc (desktop). Double-tap no longer exits (see
+/// [FullscreenableVideo]'s class doc for the gesture-split rationale): the
+/// zoom-reset lives on the same surface, so there is exactly one
+/// double-tap recognizer here, never a competing pair.
 ///
 /// Public ONLY so tests can drive [onExit] directly (rapid repeat
 /// invocations are not reachable deterministically through real key
@@ -234,12 +277,18 @@ class FullscreenVideoPage extends StatelessWidget {
     required this.videoListenable,
     required this.overlayListenable,
     required this.aspectRatio,
+    required this.zoomController,
     required this.onExit,
   });
 
   final ValueListenable<Widget> videoListenable;
   final ValueListenable<Widget?> overlayListenable;
   final double aspectRatio;
+
+  /// Drives the zoom reset from this page's own double-tap handler (below)
+  /// rather than [ZoomableVideo] installing a second, internal double-tap
+  /// recognizer that would compete with it.
+  final ZoomableVideoController zoomController;
   final VoidCallback onExit;
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -262,19 +311,26 @@ class FullscreenVideoPage extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Double-tap anywhere on the video surface exits. Kept as a
-              // sibling of (not ancestor of) the exit button below so the
-              // button's single tap resolves immediately, no gesture-arena
-              // double-tap wait.
+              // Double-tap anywhere on the video surface resets the zoom
+              // (see the gesture-split note on FullscreenableVideo; this
+              // used to exit fullscreen, but that meaning moved to the
+              // explicit exit control + Esc once the video became
+              // zoomable). Kept as a sibling of (not ancestor of) the exit
+              // button below so the button's single tap resolves
+              // immediately, no gesture-arena double-tap wait.
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onDoubleTap: onExit,
+                onDoubleTap: zoomController.reset,
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: aspectRatio,
                     child: ValueListenableBuilder<Widget>(
                       valueListenable: videoListenable,
-                      builder: (context, video, _) => video,
+                      builder: (context, video, _) => ZoomableVideo(
+                        controller: zoomController,
+                        enableInternalDoubleTapReset: false,
+                        child: video,
+                      ),
                     ),
                   ),
                 ),
