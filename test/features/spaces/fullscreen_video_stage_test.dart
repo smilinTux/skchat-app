@@ -153,6 +153,57 @@ void main() {
     expect(find.byIcon(Icons.fullscreen_rounded), findsOneWidget);
   });
 
+  testWidgets(
+      "re-entering fullscreen after zooming and exiting via the exit "
+      "control (no double-tap reset first) starts fresh at fit, not still "
+      "zoomed", (tester) async {
+    await tester.pumpWidget(wrap(
+      const FullscreenableVideo(
+        video: SizedBox(width: 200, height: 200, child: Text("VIDEO")),
+      ),
+    ));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+    await tester.pumpAndSettle();
+
+    // Pinch-zoom in while fullscreen.
+    final firstController = tester
+        .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+        .transformationController!;
+    final center = tester.getCenter(find.byType(InteractiveViewer));
+    final gesture1 = await tester.createGesture();
+    final gesture2 = await tester.createGesture();
+    await gesture1.down(center - const Offset(20, 0));
+    await gesture2.down(center + const Offset(20, 0));
+    await tester.pump();
+    await gesture1.moveTo(center - const Offset(60, 0));
+    await gesture2.moveTo(center + const Offset(60, 0));
+    await tester.pump();
+    await gesture1.up();
+    await gesture2.up();
+    await tester.pumpAndSettle();
+    expect(firstController.value, isNot(Matrix4.identity()));
+
+    // Leave via the EXPLICIT exit control, deliberately NOT double-tapping
+    // to reset the zoom first.
+    await tester.tap(find.byIcon(Icons.fullscreen_exit_rounded));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsNothing);
+
+    // Re-enter fullscreen.
+    await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
+
+    // Fresh at fit: the same underlying ZoomableVideoController is reused
+    // across enter/exit cycles, so without an explicit reset-on-entry this
+    // would still read the stale zoomed transform from before.
+    final secondController = tester
+        .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+        .transformationController!;
+    expect(secondController.value, Matrix4.identity());
+  });
+
   testWidgets("Esc key leaves fullscreen on desktop", (tester) async {
     await tester.pumpWidget(wrap(
       const FullscreenableVideo(video: Text("VIDEO")),

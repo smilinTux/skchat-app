@@ -74,9 +74,18 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
   /// Drives the fullscreen page's zoom reset. Only ever attached to the
   /// fullscreen page's [ZoomableVideo] (see [FullscreenVideoPage]); the
   /// inline tile's own [ZoomableVideo] manages its own, unconnected zoom
-  /// state, so zoom does not carry over between inline and fullscreen (each
-  /// starts fresh at fit), which is expected: entering/exiting fullscreen
-  /// swaps to a differently-sized presentation of the video anyway.
+  /// state, so zoom does not carry over between inline and fullscreen.
+  ///
+  /// This controller (and its [TransformationController]) is created ONCE
+  /// and reused across every fullscreen enter/exit cycle for the lifetime
+  /// of this State, so [_enterFullscreen] explicitly snaps it back to
+  /// identity on every entry. Without that snap, a viewer who zoomed in,
+  /// then left fullscreen via the exit button or Esc WITHOUT first
+  /// double-tapping to reset, would find the stale zoomed transform still
+  /// bound on re-entry. Resetting on entry (rather than relying on however
+  /// the previous session ended) keeps "every fullscreen entry starts at
+  /// fit" true even for an abrupt exit (e.g. the dispose()-driven
+  /// auto-exit).
   final ZoomableVideoController _fullscreenZoomController =
       ZoomableVideoController();
 
@@ -121,6 +130,10 @@ class _FullscreenableVideoState extends State<FullscreenableVideo> {
 
   Future<void> _enterFullscreen() async {
     if (_fullscreenActive) return;
+    // Always start fresh at fit, regardless of how a PREVIOUS fullscreen
+    // session ended (see the doc comment on _fullscreenZoomController).
+    _fullscreenZoomController.transformationController.value =
+        Matrix4.identity();
     setState(() => _fullscreenActive = true);
     final navigator = Navigator.of(context, rootNavigator: true);
     late final PageRouteBuilder<void> route;
