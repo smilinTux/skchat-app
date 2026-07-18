@@ -12,6 +12,22 @@ import "../../services/spaces_service.dart";
 import "../profile/profile_screen.dart";
 import "space_models.dart";
 
+/// The identity value a Space's `host_fqid` is compared against: this
+/// device's capauth fingerprint, falling back to the display name when no
+/// fingerprint has been fetched yet. Mirrors exactly how
+/// `_CreateSpaceSheetState._submit` derives `hostFqid` when creating a Space,
+/// so a returning host resolves to the same value that was stored at
+/// creation time.
+String localHostIdentityValue(LocalIdentity identity) =>
+    identity.fingerprint.isNotEmpty ? identity.fingerprint : identity.displayName;
+
+/// Whether the local user is the host of [space], per [identity]. True only
+/// when the Space has a non-empty `hostFqid` that matches this device's host
+/// identity value; an empty `hostFqid` (unknown host) is never a match.
+bool isHostOfSpace(SpaceSummary space, LocalIdentity identity) =>
+    space.hostFqid.isNotEmpty &&
+    space.hostFqid == localHostIdentityValue(identity);
+
 /// A per-app-launch suffix that makes THIS device's LiveKit participant identity
 /// unique. Two of the same user's devices resolve to the same capauth
 /// fingerprint; without a per-device suffix LiveKit treats both connections as
@@ -110,21 +126,22 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         itemCount: spaces.length,
         itemBuilder: (context, i) => _SpaceCard(
           space: spaces[i],
-          onJoin: () => _joinListener(context, ref, spaces[i]),
+          onJoin: () => _join(context, ref, spaces[i]),
         ),
       ),
     );
   }
 
-  Future<void> _joinListener(
+  Future<void> _join(
     BuildContext context,
     WidgetRef ref,
     SpaceSummary space,
   ) async {
     final svc = ref.read(spacesServiceProvider);
-    final identity = ref.read(localIdentityProvider).fingerprint;
-    final name = ref.read(localIdentityProvider).displayName;
-    final ident = identity.isNotEmpty ? identity : name;
+    final identity = ref.read(localIdentityProvider);
+    final rawIdent = identity.fingerprint;
+    final name = identity.displayName;
+    final ident = rawIdent.isNotEmpty ? rawIdent : name;
     // Make the LiveKit participant identity unique per device so joining from
     // two of the user's own devices does not collide (same capauth fingerprint
     // -> LiveKit evicts the duplicate -> the "only one connects, they ping-pong"
@@ -132,10 +149,12 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     final uniqueIdent = "$ident~$_deviceParticipantSuffix";
     final displayName = name.isNotEmpty ? name : ident;
     try {
-      final join = await svc.joinListener(
-        space.spaceId,
-        identity: uniqueIdent,
-        name: displayName,
+      final join = await _joinAsAppropriateRole(
+        svc,
+        space: space,
+        identity: identity,
+        uniqueIdent: uniqueIdent,
+        displayName: displayName,
       );
       if (!context.mounted) return;
       context.push(AppRoutes.spaceRoomPath(space.spaceId), extra: join);
@@ -148,6 +167,42 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         ),
       );
     }
+  }
+
+  /// Joins [space] as its host when the local user IS that Space's host
+  /// (per [isHostOfSpace]), otherwise as a listener.
+  ///
+  /// The host branch still asks the server for a host-role token via
+  /// `joinHost`, which independently re-verifies the requester against
+  /// `host_fqid` server-side (this client-side check is only what decides
+  /// which endpoint to call, it does not weaken that server check). If the
+  /// server ever rejects the host join anyway (stale directory data, a
+  /// fingerprint that rotated, etc.) this falls back to a normal listener
+  /// join so the user still gets into the Space instead of seeing an error.
+  Future<SpaceJoin> _joinAsAppropriateRole(
+    SpacesService svc, {
+    required SpaceSummary space,
+    required LocalIdentity identity,
+    required String uniqueIdent,
+    required String displayName,
+  }) async {
+    if (isHostOfSpace(space, identity)) {
+      try {
+        return await svc.joinHost(
+          space.spaceId,
+          requester: localHostIdentityValue(identity),
+        );
+      } on Object catch (e) {
+        debugPrint(
+          "joinHost rejected for ${space.spaceId} ($e); falling back to listener join",
+        );
+      }
+    }
+    return svc.joinListener(
+      space.spaceId,
+      identity: uniqueIdent,
+      name: displayName,
+    );
   }
 
   Future<void> _showCreateSheet(BuildContext context, WidgetRef ref) async {
