@@ -773,6 +773,20 @@ class LiveKitCallService {
   ///   3 fps layer. That layer is useless for motion content and buys nothing
   ///   on a gigabit LAN with one viewer tier, so there is no upside to
   ///   simulcast here, only extra encoder/negotiation overhead.
+  /// AVSYNC-fix: shared `PublishOptions.stream` name for BOTH the screen-share
+  /// VIDEO publish ([screenSharePublishOptionsFor]) and the screen-share
+  /// system-AUDIO publish ([screenShareAudioPublishOptions]). Per
+  /// `options.dart` (livekit_client 2.5.0+hotfix.3): "Audio and video tracks
+  /// with the same stream name will be placed in the same MediaStream and
+  /// offer better synchronization." Before this constant existed the video
+  /// publish set no stream name at all while the audio publish already set
+  /// `'screenshare'`, so `buildStreamId` (src/utils.dart:647) never grouped
+  /// them into one MediaStream and the receiver ran two unrelated RTP
+  /// timelines that drifted out of lip-sync. Both publishers now reference
+  /// this single constant so they cannot drift apart again.
+  @visibleForTesting
+  static const String screenShareStreamName = 'screenshare';
+
   @visibleForTesting
   static VideoPublishOptions screenSharePublishOptionsFor(
     ScreenShareFrameRate tier,
@@ -788,9 +802,25 @@ class LiveKitCallService {
     };
     return VideoPublishOptions(
       name: VideoPublishOptions.defaultScreenShareName,
+      stream: screenShareStreamName,
       simulcast: false,
       screenShareEncoding: encoding,
       degradationPreference: DegradationPreference.maintainFramerate,
+    );
+  }
+
+  /// The screen-share system-audio `AudioPublishOptions`, factored out so it
+  /// is directly assertable in tests against [screenSharePublishOptionsFor]
+  /// without needing a live LiveKit room (see [startScreenShareSystemAudio],
+  /// which publishes with exactly these options). Shares
+  /// [screenShareStreamName] with the video publish so the two tracks group
+  /// into one MediaStream (see the AVSYNC-fix doc comment above
+  /// [screenShareStreamName]).
+  @visibleForTesting
+  static AudioPublishOptions screenShareAudioPublishOptions() {
+    return const AudioPublishOptions(
+      name: 'screenshare-audio',
+      stream: screenShareStreamName,
     );
   }
 
@@ -1415,10 +1445,7 @@ class LiveKitCallService {
     try {
       await lp.publishAudioTrack(
         track,
-        publishOptions: const AudioPublishOptions(
-          name: 'screenshare-audio',
-          stream: 'screenshare',
-        ),
+        publishOptions: screenShareAudioPublishOptions(),
       );
     } catch (_) {
       await track.stop();

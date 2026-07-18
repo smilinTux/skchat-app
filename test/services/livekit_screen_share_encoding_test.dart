@@ -97,6 +97,53 @@ void main() {
     });
   });
 
+  // AVSYNC-fix: the screen-share VIDEO publish previously carried no stream
+  // name while the system-audio publish already set stream:'screenshare'
+  // (livekit_call_service.dart ~1380). livekit_client's buildStreamId
+  // (utils.dart:647) only groups tracks into one MediaStream when they share
+  // a stream name (options.dart PublishOptions.stream doc: "Audio and video
+  // tracks with the same stream name will be placed in the same MediaStream
+  // and offer better synchronization"), so the receiver ran two unrelated RTP
+  // timelines and system audio drifted out of lip-sync with the shared video.
+  // Both sides must reference the same shared constant so they cannot drift
+  // apart again.
+  group('screen-share video + system-audio grouping (lip-sync)', () {
+    test('screenSharePublishOptionsFor sets a non-null stream name for every '
+        'tier', () {
+      for (final tier in ScreenShareFrameRate.values) {
+        final opts = LiveKitCallService.screenSharePublishOptionsFor(tier);
+        expect(opts.stream, isNotNull, reason: 'tier=$tier');
+      }
+    });
+
+    test('the screen-share video publish stream matches the system-audio '
+        'publish stream, so the SDK groups them into one MediaStream', () {
+      final videoOpts = LiveKitCallService.screenSharePublishOptionsFor(
+        ScreenShareFrameRate.standard,
+      );
+      final audioOpts = LiveKitCallService.screenShareAudioPublishOptions();
+
+      expect(videoOpts.stream, audioOpts.stream);
+      expect(videoOpts.stream, 'screenshare');
+    });
+
+    test('adding the stream name does not disturb the M8 encoding tuning '
+        '(maxBitrate/framerate/degradation, simulcast off)', () {
+      final opts = LiveKitCallService.screenSharePublishOptionsFor(
+        ScreenShareFrameRate.standard,
+      );
+
+      expect(opts.screenShareEncoding!.maxFramerate, 30);
+      expect(opts.screenShareEncoding!.maxBitrate, 4 * 1000 * 1000);
+      expect(opts.simulcast, isFalse);
+      expect(
+        opts.degradationPreference,
+        DegradationPreference.maintainFramerate,
+      );
+      expect(opts.name, VideoPublishOptions.defaultScreenShareName);
+    });
+  });
+
   // REGRESSION (M8 review): the RoomOptions the service connects with must
   // NOT carry screen-share publish tuning as the room-wide video default.
   // The SDK routes any video publish that passes no explicit options through
