@@ -685,10 +685,44 @@ class LiveKitCallService {
     _emitParticipants();
   }
 
-  /// Enable / disable the local camera.
-  Future<void> setCameraEnabled(bool enabled) async {
-    await _localParticipant?.setCameraEnabled(enabled);
+  /// Enable / disable the local camera, optionally choosing the facing
+  /// ([CameraPosition.front], the default selfie facing, or
+  /// [CameraPosition.back]). Additive: every existing bare
+  /// `setCameraEnabled(true)` caller (conf_screen.dart, livekit_call_screen.dart)
+  /// keeps its old behavior unchanged, since front is exactly what the SDK's
+  /// own `CameraCaptureOptions()` default already resolved to before this
+  /// parameter existed.
+  ///
+  /// Camera and screen share are mutually exclusive live video sources
+  /// (Spaces "Go live": camera XOR screen). Going live on camera stops an
+  /// active screen share first, mirroring the mic / system-audio exclusion
+  /// in [setMicEnabled], but purely video and independent of that one.
+  Future<void> setCameraEnabled(bool enabled,
+      {CameraPosition cameraPosition = CameraPosition.front}) async {
+    if (enabled) await stopScreenShareForCamera();
+    await _localParticipant?.setCameraEnabled(
+      enabled,
+      cameraCaptureOptions: CameraCaptureOptions(cameraPosition: cameraPosition),
+    );
     _emitParticipants();
+  }
+
+  /// Stop an active screen share so the camera can go live. Camera XOR
+  /// screen: only one live video source at a time. Safe no-op when no
+  /// screen share is live. Never touches the mic / system-audio track.
+  Future<void> stopScreenShareForCamera() async {
+    if (_localParticipant?.isScreenShareEnabled() ?? false) {
+      await setScreenShareEnabled(false);
+    }
+  }
+
+  /// Stop an active camera so a screen share can go live. Camera XOR
+  /// screen: only one live video source at a time (the mirror image of
+  /// [stopScreenShareForCamera]). Safe no-op when no camera is live.
+  Future<void> stopCameraForScreenShare() async {
+    if (_localParticipant?.isCameraEnabled() ?? false) {
+      await setCameraEnabled(false);
+    }
   }
 
   /// Screen-share encoding tier. [standard] is the LAN-tuned default (30 fps,
@@ -869,6 +903,12 @@ class LiveKitCallService {
       _emitParticipants();
       return;
     }
+
+    // Camera XOR screen: only one live video source at a time (mirrors the
+    // mic / system-audio exclusion above, but purely video and independent
+    // of it). Stop an active camera before starting the screen share so no
+    // participant ever publishes both.
+    await stopCameraForScreenShare();
 
     // Capture options: request screen audio in the single getDisplayMedia call.
     // The preset only supplies "ideal" web hints (never an exact/mandatory
@@ -1459,6 +1499,27 @@ class LiveKitCallService {
         true,
         cameraCaptureOptions: CameraCaptureOptions(deviceId: deviceId),
       );
+    }
+  }
+
+  /// Flip the live camera between front and back ([CameraPosition]) WITHOUT
+  /// dropping the call. Mirrors [switchCameraDevice] exactly, one level up:
+  /// if a camera track is already published, its capture is restarted in
+  /// place on the new [position] via livekit_client's
+  /// `LocalVideoTrack.setCameraPosition` extension (`restartTrack` under the
+  /// hood - same track, new facing, no unpublish/republish flicker). If no
+  /// camera track is live yet, the camera is published directly on the
+  /// requested facing via [setCameraEnabled] (which also applies the camera
+  /// / screen mutual exclusion).
+  Future<void> switchCameraPosition(CameraPosition position) async {
+    final lp = _localParticipant;
+    if (lp == null) return;
+    final track = lp.getTrackPublicationBySource(TrackSource.camera)?.track;
+    if (track is LocalVideoTrack) {
+      await track.setCameraPosition(position);
+      _emitParticipants();
+    } else {
+      await setCameraEnabled(true, cameraPosition: position);
     }
   }
 

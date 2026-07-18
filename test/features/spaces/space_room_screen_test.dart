@@ -37,12 +37,15 @@ LiveKitParticipantSnapshot _snap(
   bool canPublish = false,
   bool handRaised = false,
   bool invitedToStage = false,
+  bool isCameraEnabled = false,
+  bool isScreenSharing = false,
 }) {
   return LiveKitParticipantSnapshot(
     identity: identity,
     isLocal: isLocal,
     isMuted: isMuted,
-    isCameraEnabled: false,
+    isCameraEnabled: isCameraEnabled,
+    isScreenSharing: isScreenSharing,
     isSpeaking: isSpeaking,
     canPublish: canPublish,
     handRaised: handRaised,
@@ -59,6 +62,9 @@ void main() {
     // opens a Hive box best-effort on build; on the test VM Hive has no
     // default path without this (mirrors conversation_history_reply_test.dart).
     Hive.init(Directory.systemTemp.createTempSync("skchat_test_hive").path);
+    // CAM: mocktail needs a dummy CameraPosition to satisfy any()/
+    // captureAny() used with the named cameraPosition argument below.
+    registerFallbackValue(CameraPosition.front);
   });
 
   final join = const SpaceJoin(
@@ -108,6 +114,12 @@ void main() {
     when(() => svc.setScreenShareEnabled(any(),
         systemAudioDeviceId: any(named: "systemAudioDeviceId"),
         sourceId: any(named: "sourceId"))).thenAnswer((_) async {});
+    // CAM: camera go-live / flip default stubs. Individual tests override
+    // these to simulate a permission-deny / no-camera failure.
+    when(() => svc.setCameraEnabled(any(),
+        cameraPosition:
+            any(named: "cameraPosition"))).thenAnswer((_) async {});
+    when(() => svc.switchCameraPosition(any())).thenAnswer((_) async {});
 
     spaces = MockSpacesService();
     when(() => spaces.mute(
@@ -847,12 +859,17 @@ void main() {
   // into conf_screen.dart / livekit_call_screen.dart, so a provider override
   // reaches this entry point too and tests never touch the real
   // desktopCapturer platform channel.
+  //
+  // CAM: "Go live" now opens a source chooser first (Camera front/back,
+  // Screen share desktop-only) instead of resolving a screen share
+  // directly, so these tests tap "Go live" then the "Screen share" chooser
+  // option before asserting the resolver / setScreenShareEnabled behavior.
 
   group("M9 screen-share resolver DI", () {
     testWidgets(
-        "tapping Go live resolves the source through the injected fake "
-        "resolver and passes the chosen sourceId to setScreenShareEnabled",
-        (tester) async {
+        "tapping Go live then Screen share resolves the source through the "
+        "injected fake resolver and passes the chosen sourceId to "
+        "setScreenShareEnabled", (tester) async {
       var resolverCalls = 0;
       Future<({bool proceed, String? sourceId})> fakeResolver(
           BuildContext context) async {
@@ -867,6 +884,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Screen share"));
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(resolverCalls, 1);
@@ -888,6 +907,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Screen share"));
       await tester.pump(const Duration(milliseconds: 50));
 
       verifyNever(() => svc.setScreenShareEnabled(any(),
@@ -899,18 +920,16 @@ void main() {
   });
 
   // ── Z1: mobile-web screen-share origination is impossible (no
-  // getDisplayMedia on a phone browser). The Go live control must detect
-  // this via isMobileWebProvider and short-circuit to a friendly message
-  // BEFORE ever calling setScreenShareEnabled, instead of letting
-  // livekit_client's own lkPlatformIsWebMobile() guard throw a raw
-  // exception the user sees as "Screen share failed: LiveKit Exception:
-  // ...".
+  // getDisplayMedia on a phone browser). CAM: the "Go live" chooser now
+  // hides the Screen share option entirely on mobile web (instead of the
+  // old immediate friendly-message short-circuit), showing only the camera
+  // options; picking a camera reaches the real go-live path there. Desktop
+  // still offers Screen share and resolves it exactly as before.
 
   group("Z1 mobile-web Go live guard", () {
     testWidgets(
-        "on mobile web, tapping Go live shows the friendly message and "
-        "never calls setScreenShareEnabled or the source resolver",
-        (tester) async {
+        "on mobile web, the Go live chooser hides Screen share and shows "
+        "only the camera options", (tester) async {
       var resolverCalls = 0;
       Future<({bool proceed, String? sourceId})> fakeResolver(
           BuildContext context) async {
@@ -926,17 +945,23 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.text("Go live"));
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Camera (front)"), findsOneWidget);
+      expect(find.text("Camera (back)"), findsOneWidget);
+      expect(find.text("Screen share"), findsNothing);
+
+      // Dismiss without picking: never touches the screen-share path.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
 
       expect(resolverCalls, 0);
       verifyNever(() => svc.setScreenShareEnabled(any(),
           systemAudioDeviceId: any(named: "systemAudioDeviceId"),
           sourceId: any(named: "sourceId")));
-      expect(
-        find.textContaining("Screen sharing needs the desktop app"),
-        findsOneWidget,
-      );
-      // Never the raw LiveKit exception text.
+      // Never the raw LiveKit exception text, and never the old
+      // "needs the desktop app" message either (nothing ever tried to
+      // originate a share on mobile).
       expect(find.textContaining("Screen share failed"), findsNothing);
       expect(find.textContaining("LiveKit"), findsNothing);
       // The button stays put, not stuck mid-share.
@@ -944,9 +969,9 @@ void main() {
     });
 
     testWidgets(
-        "on desktop (isMobileWebProvider false), Go live still resolves "
-        "the source and starts the share as before",
-        (tester) async {
+        "on desktop (isMobileWebProvider false), the chooser offers Screen "
+        "share and picking it still resolves the source and starts the "
+        "share as before", (tester) async {
       var resolverCalls = 0;
       Future<({bool proceed, String? sourceId})> fakeResolver(
           BuildContext context) async {
@@ -962,6 +987,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Screen share"), findsOneWidget);
+
+      await tester.tap(find.text("Screen share"));
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(resolverCalls, 1);
@@ -971,6 +1001,183 @@ void main() {
         find.textContaining("Screen sharing needs the desktop app"),
         findsNothing,
       );
+    });
+  });
+
+  // ── CAM: Spaces "Go live" with camera (front/back), plus the source
+  // chooser. Mobile browsers cannot screen-share (Z1), but CAN publish a
+  // camera (getUserMedia), so "Go live" now offers Camera (front, default) /
+  // Camera (back) / Screen (desktop only) everywhere. Camera XOR screen:
+  // choosing one stops the other; "Go live" becomes "Stop" while either is
+  // live; a Flip control appears only while the camera is the live source.
+
+  group("CAM camera go-live", () {
+    testWidgets(
+        "picking Camera (front) publishes with front facing (the chooser's "
+        "default)", (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Camera (front)"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setCameraEnabled(true,
+          cameraPosition: CameraPosition.front)).called(1);
+    });
+
+    testWidgets("picking Camera (back) publishes with back facing",
+        (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Camera (back)"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setCameraEnabled(true,
+          cameraPosition: CameraPosition.back)).called(1);
+    });
+
+    testWidgets(
+        "dismissing the chooser without a pick never calls setCameraEnabled "
+        "or setScreenShareEnabled", (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      // Tap the scrim outside the sheet content to dismiss without a pick.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      verifyNever(() => svc.setCameraEnabled(any(),
+          cameraPosition: any(named: "cameraPosition")));
+      verifyNever(() => svc.setScreenShareEnabled(any(),
+          systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+          sourceId: any(named: "sourceId")));
+      expect(find.text("Go live"), findsOneWidget);
+    });
+
+    testWidgets(
+        "while the camera is live, the control relabels to Stop and a Flip "
+        "control appears; Flip switches the live camera's facing",
+        (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isCameraEnabled: true),
+        _snap("alice"),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Stop"), findsOneWidget);
+      expect(find.text("Go live"), findsNothing);
+      expect(find.text("Flip"), findsOneWidget);
+
+      await tester.tap(find.text("Flip"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Front is the chooser's implicit default facing at connect time (no
+      // go-live tap happened in this test), so the first flip targets back.
+      verify(() => svc.switchCameraPosition(CameraPosition.back)).called(1);
+    });
+
+    testWidgets(
+        "Flip is never shown while a screen share (not camera) is the live "
+        "source", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isScreenSharing: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Stop"), findsOneWidget);
+      expect(find.text("Flip"), findsNothing);
+    });
+
+    testWidgets(
+        "Stop while the camera is live tears down the camera, not the "
+        "screen share", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isCameraEnabled: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Stop"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setCameraEnabled(false)).called(1);
+      verifyNever(() => svc.setScreenShareEnabled(any(),
+          systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+          sourceId: any(named: "sourceId")));
+    });
+
+    testWidgets(
+        "Stop while the screen share is live tears down the screen, not "
+        "the camera", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isScreenSharing: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Stop"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setScreenShareEnabled(false)).called(1);
+      verifyNever(() => svc.setCameraEnabled(false));
+    });
+
+    testWidgets(
+        "a getUserMedia permission deny / no-camera error shows a plain "
+        "non-blocking message, mirroring the mic error handling",
+        (tester) async {
+      when(() => svc.setCameraEnabled(any(),
+              cameraPosition: any(named: "cameraPosition")))
+          .thenThrow(Exception("NotAllowedError"));
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Camera (front)"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining("Camera unavailable"), findsOneWidget);
+      // Non-blocking: the control stays put, not stuck mid-attempt.
+      expect(find.text("Go live"), findsOneWidget);
     });
   });
 

@@ -45,6 +45,7 @@ class SpaceRoomState {
     required this.handRaised,
     this.externalMuteNonce = 0,
     this.invitePromptDismissed = false,
+    this.cameraFacing = CameraPosition.front,
     this.error,
   });
 
@@ -52,6 +53,15 @@ class SpaceRoomState {
   final bool isConnected;
   final bool isMicEnabled;
   final bool handRaised;
+
+  /// Which way the local camera is currently facing (front/selfie, the
+  /// default, or back). Local-only UI state: LiveKit does not surface camera
+  /// facing on the participant snapshot, so [SpaceRoomNotifier.goLiveCamera] /
+  /// [SpaceRoomNotifier.flipCamera] track it here, seeded by whichever option
+  /// the "Go live" chooser picked. Drives the Flip control's target facing
+  /// and stays put (harmless) once the camera stops; the next go-live starts
+  /// fresh from whatever the chooser is tapped with.
+  final CameraPosition cameraFacing;
 
   /// Bumped every time [LiveKitCallService.externalMuteEvents] fires (a
   /// server-initiated mute of OUR mic, e.g. a host force-mute). Not a
@@ -77,6 +87,7 @@ class SpaceRoomState {
     bool? handRaised,
     int? externalMuteNonce,
     bool? invitePromptDismissed,
+    CameraPosition? cameraFacing,
     String? error,
   }) {
     return SpaceRoomState(
@@ -87,6 +98,7 @@ class SpaceRoomState {
       externalMuteNonce: externalMuteNonce ?? this.externalMuteNonce,
       invitePromptDismissed:
           invitePromptDismissed ?? this.invitePromptDismissed,
+      cameraFacing: cameraFacing ?? this.cameraFacing,
       error: error,
     );
   }
@@ -276,6 +288,44 @@ class SpaceRoomNotifier
           systemAudioDeviceId: systemAudioDeviceId,
           sourceId: sourceId,
         );
+  }
+
+  /// Go live on camera with the chosen [position] (front, the chooser's
+  /// default, or back). Reuses [LiveKitCallService.setCameraEnabled], which
+  /// also enforces the camera / screen mutual exclusion (stops an active
+  /// screen share first). Records [position] on state so [flipCamera] and
+  /// the control bar's Flip control know the current facing.
+  Future<void> goLiveCamera(CameraPosition position) async {
+    await ref
+        .read(liveKitCallServiceProvider)
+        .setCameraEnabled(true, cameraPosition: position);
+    if (_disposed) return;
+    state = state.copyWith(cameraFacing: position);
+  }
+
+  /// Flip the live camera between front and back without stopping. Reuses
+  /// [LiveKitCallService.switchCameraPosition] (restarts the published
+  /// track in place, no unpublish/republish). Visible only while the
+  /// camera is the live source (see the control bar's Flip control).
+  Future<void> flipCamera() async {
+    final next = state.cameraFacing == CameraPosition.front
+        ? CameraPosition.back
+        : CameraPosition.front;
+    await ref.read(liveKitCallServiceProvider).switchCameraPosition(next);
+    if (_disposed) return;
+    state = state.copyWith(cameraFacing: next);
+  }
+
+  /// Stop whichever video source (camera and/or screen) is currently live.
+  /// The Go live control becomes "Stop" the moment either is live and tears
+  /// down exactly what is live, nothing more.
+  Future<void> stopLive({
+    required bool isCameraLive,
+    required bool isScreenLive,
+  }) async {
+    final svc = ref.read(liveKitCallServiceProvider);
+    if (isCameraLive) await svc.setCameraEnabled(false);
+    if (isScreenLive) await svc.setScreenShareEnabled(false);
   }
 
   Future<void> raiseHand(String identity) async {
@@ -840,17 +890,20 @@ class _Stage extends ConsumerWidget {
     final raisedHands = listeners.where((p) => p.handRaised).toList();
 
     // Watch-party stage: the moment ANY participant (local or remote) publishes
-    // a screen-share, it becomes the big main stage above the speaker rings for
-    // EVERY role (host, speaker, listener). No share = normal audio-room layout.
-    final shares =
-        resolveScreenShares(ref.read(liveKitCallServiceProvider).room,
+    // a screen-share OR goes live on camera, it becomes the big main stage
+    // above the speaker rings for EVERY role (host, speaker, listener). No
+    // live video = normal audio-room layout. resolveStageVideos generalizes
+    // the old screen-share-only lookup to also include camera go-lives
+    // (TrackSource.camera), see screen_share_helper.dart.
+    final videos =
+        resolveStageVideos(ref.read(liveKitCallServiceProvider).room,
             state.participants);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
-        if (shares.isNotEmpty) ...[
-          _WatchStage(shares: shares),
+        if (videos.isNotEmpty) ...[
+          _WatchStage(videos: videos),
           const SizedBox(height: 24),
         ],
         if (join.isHost && raisedHands.isNotEmpty) ...[
@@ -1051,16 +1104,18 @@ class _Stage extends ConsumerWidget {
 /// subscribed listener. Nothing here mutes or gates them, so the fight is
 /// heard as well as seen.
 class _WatchStage extends StatelessWidget {
-  const _WatchStage({required this.shares});
+  const _WatchStage({required this.videos});
 
-  final List<ScreenShare> shares;
+  final List<StageVideo> videos;
 
   @override
   Widget build(BuildContext context) {
-    final primary = shares.first;
-    final others = shares.length - 1;
+    final primary = videos.first;
+    final others = videos.length - 1;
     final soul = _soulColorFor(primary.identity);
     final who = primary.isLocal ? "You" : primary.identity;
+    final verb = primary.isCamera ? "is live on camera" : "is sharing their screen";
+    final label = primary.isCamera ? "Live: $who" : "Streaming: $who";
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1068,13 +1123,14 @@ class _WatchStage extends StatelessWidget {
         // FullscreenableVideo owns the fullscreen toggle (overlay button,
         // double-tap, Esc / exit control on the pushed route) and pops
         // itself automatically if this tile is removed from the tree
-        // (i.e. the share ends while the viewer is fullscreen).
+        // (i.e. the share/go-live ends while the viewer is fullscreen).
         FullscreenableVideo(
           aspectRatio: 16 / 9,
           borderRadius: 14,
-          semanticsLabel: "$who is sharing their screen",
+          semanticsLabel: "$who $verb",
           video: VideoTrackRenderer(primary.track),
-          // "Streaming: <identity>" label pill, top-left, in both modes.
+          // "Streaming: <identity>" / "Live: <identity>" label pill,
+          // top-left, in both modes.
           overlay: Positioned(
             left: 10,
             top: 10,
@@ -1098,7 +1154,7 @@ class _WatchStage extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    "Streaming: $who",
+                    label,
                     style: const TextStyle(
                       color: SovereignColors.textPrimary,
                       fontSize: 12,
@@ -1113,14 +1169,17 @@ class _WatchStage extends StatelessWidget {
         if (others > 0) ...[
           const SizedBox(height: 8),
           Text(
-            others == 1 ? "+1 other is also sharing" : "+$others others are also sharing",
+            others == 1 ? "+1 other is also live" : "+$others others are also live",
             style: const TextStyle(
               color: SovereignColors.textTertiary,
               fontSize: 11,
             ),
           ),
         ],
-        if (primary.isLocal) ...[
+        // The system-audio hint only applies to a screen share (the
+        // dedicated toggle lives in the Screen share panel); a camera
+        // go-live has no such control, so the hint stays screen-only.
+        if (primary.isLocal && !primary.isCamera) ...[
           const SizedBox(height: 8),
           Row(
             children: [
@@ -1418,6 +1477,79 @@ class _RaisedHand extends StatelessWidget {
   }
 }
 
+// ── Go live chooser ─────────────────────────────────────────────────────────
+
+/// The three options the "Go live" chooser offers a speaker: camera facing
+/// front (the default) or back, or a desktop screen share.
+enum _GoLiveChoice { cameraFront, cameraBack, screen }
+
+/// "Go live" source chooser sheet: Camera (front) [default emphasis], Camera
+/// (back), and Screen share (desktop only, hidden on mobile web via the
+/// existing isMobileWebProvider guard - Z1: screen capture is impossible on
+/// a mobile browser). Matches the room's other action sheets
+/// (_hostActions / _laneTile above): a SafeArea'd Column of ListTiles in a
+/// rounded surfaceRaised sheet.
+///
+/// Returns the tapped choice, or null if the sheet was dismissed without a
+/// pick (a silent no-op for the caller, same cancelled-pick contract as
+/// [resolveScreenShareSource]).
+Future<_GoLiveChoice?> _showGoLiveChooser(
+  BuildContext context,
+  WidgetRef ref,
+) {
+  final showScreen = !ref.read(isMobileWebProvider);
+  return showModalBottomSheet<_GoLiveChoice>(
+    context: context,
+    backgroundColor: SovereignColors.surfaceRaised,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (sheetCtx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+            child: Row(
+              children: [
+                Text(
+                  "Go live with",
+                  style: TextStyle(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.videocam_rounded,
+                color: SovereignColors.accentEncrypt),
+            title: const Text("Camera (front)"),
+            onTap: () =>
+                Navigator.of(sheetCtx).pop(_GoLiveChoice.cameraFront),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cameraswitch_rounded,
+                color: SovereignColors.accentEncrypt),
+            title: const Text("Camera (back)"),
+            onTap: () =>
+                Navigator.of(sheetCtx).pop(_GoLiveChoice.cameraBack),
+          ),
+          if (showScreen)
+            ListTile(
+              leading: const Icon(Icons.screen_share_outlined,
+                  color: SovereignColors.accentEncrypt),
+              title: const Text("Screen share"),
+              onTap: () => Navigator.of(sheetCtx).pop(_GoLiveChoice.screen),
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+}
+
 // ── Control bar ──────────────────────────────────────────────────────────────
 
 class _ControlBar extends ConsumerWidget {
@@ -1435,9 +1567,9 @@ class _ControlBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(spaceRoomProvider(join).notifier);
 
-    // Local participant snapshot: drives the share affordance. Anyone the
-    // LiveKit grant lets publish (host or an invited speaker) can go live with
-    // a screen-share; listeners cannot.
+    // Local participant snapshot: drives the Go live affordance. Anyone the
+    // LiveKit grant lets publish (host or an invited speaker) can go live
+    // with a camera or a screen-share; listeners cannot.
     LiveKitParticipantSnapshot? local;
     for (final p in state.participants) {
       if (p.isLocal) {
@@ -1446,7 +1578,12 @@ class _ControlBar extends ConsumerWidget {
       }
     }
     final canShare = join.isHost || (local?.canPublish ?? false);
-    final isSharing = local?.isScreenSharing ?? false;
+    final isCameraLive = local?.isCameraEnabled ?? false;
+    final isScreenLive = local?.isScreenSharing ?? false;
+    // Camera XOR screen: at most one is ever true at a time (enforced
+    // service-side, see LiveKitCallService.setCameraEnabled /
+    // setScreenShareEnabled), so either flag alone means "live".
+    final isLive = isCameraLive || isScreenLive;
     // Mute/unmute is gated on the actual LiveKit publish grant (host OR a
     // promoted speaker), not [SpaceJoin.isHost]: a promoted speaker must get
     // real mic controls without rejoining, and a demoted one must lose them.
@@ -1455,6 +1592,41 @@ class _ControlBar extends ConsumerWidget {
     // banner's own dismissal (see _InvitedToStageBanner / invitePromptDismissed
     // above): the button stays the accept path even after "Not now".
     final isInvited = _shouldOfferJoinStage(local);
+
+    // Screen-share start: resolves the capture source (desktop needs an
+    // explicit one; web keeps its own native picker), then publishes. Shared
+    // by the "Screen share" chooser option below.
+    Future<void> startScreenShare() async {
+      try {
+        final resolve = ref.read(screenShareSourceResolverProvider);
+        final picked = await resolve(context);
+        if (!picked.proceed) return;
+        await notifier.toggleScreenShare(true, sourceId: picked.sourceId);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Screen share failed: $e")),
+          );
+        }
+      }
+    }
+
+    // Camera go-live: publishes with the chosen facing via
+    // SpaceRoomNotifier.goLiveCamera (which reuses
+    // LiveKitCallService.setCameraEnabled). A getUserMedia permission deny /
+    // no-camera error is non-fatal, mirrors the mic error handling: a plain
+    // SnackBar, the room stays connected.
+    Future<void> startCamera(CameraPosition position) async {
+      try {
+        await notifier.goLiveCamera(position);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Camera unavailable: $e")),
+          );
+        }
+      }
+    }
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
@@ -1486,67 +1658,65 @@ class _ControlBar extends ConsumerWidget {
               // AND-gate when invited_to_stage is already true (X1).
               onTap: () => notifier.raiseHand(join.identity),
             ),
-          // Go live: prominent screen-share affordance for the host and any
-          // speaker with publish, NOT buried in the lane sheet. Reuses
-          // setScreenShareEnabled (which captures screen audio). Doubles as the
-          // stop control once live.
+          // Go live: prominent affordance for the host and any speaker with
+          // publish, NOT buried in the lane sheet. Tapping it while NOT live
+          // opens the source chooser (Camera front/back, Screen desktop-
+          // only); tapping it while EITHER video source is live stops
+          // whichever one is live.
           if (canShare)
             _RoundButton(
-              icon: isSharing
-                  ? Icons.stop_screen_share_rounded
-                  : Icons.screen_share_rounded,
-              label: isSharing ? "Stop" : "Go live",
-              active: isSharing,
+              icon: isLive ? Icons.stop_circle_outlined : Icons.videocam_rounded,
+              label: isLive ? "Stop" : "Go live",
+              active: isLive,
               activeColor: SovereignColors.accentEncrypt,
               onTap: () async {
-                // Z1: mobile browsers (iOS Safari, Android Chrome) have no
-                // getDisplayMedia, so a share can never actually start
-                // here. Short-circuit BEFORE the resolver / notifier so the
-                // raw livekit_client lkPlatformIsWebMobile() exception
-                // never surfaces; show a friendly message instead.
-                if (ref.read(isMobileWebProvider)) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          "Screen sharing needs the desktop app. Native "
-                          "mobile screen share is coming soon. You can "
-                          "still watch shares here.",
-                        ),
-                      ),
-                    );
-                  }
+                if (isLive) {
+                  await notifier.stopLive(
+                    isCameraLive: isCameraLive,
+                    isScreenLive: isScreenLive,
+                  );
                   return;
                 }
-                try {
-                  final goingLive = !isSharing;
-                  String? sourceId;
-                  if (goingLive) {
-                    // Desktop needs an explicit capture source before
-                    // getDisplayMedia can resolve one; web keeps using its
-                    // own native picker. A cancelled desktop pick aborts
-                    // silently, no share, no error. Routed through
-                    // screenShareSourceResolverProvider (same DI seam as
-                    // conf_screen.dart / livekit_call_screen.dart) so a test
-                    // can inject a fake resolver; the default IS
-                    // resolveScreenShareSource, unchanged.
-                    final resolve = ref.read(screenShareSourceResolverProvider);
-                    final picked = await resolve(context);
-                    if (!picked.proceed) return;
-                    sourceId = picked.sourceId;
-                  }
-                  await notifier.toggleScreenShare(
-                    goingLive,
-                    sourceId: sourceId,
-                  );
-                } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Screen share failed: $e")),
-                    );
-                  }
+                final choice = await _showGoLiveChooser(context, ref);
+                if (choice == null) return; // sheet dismissed, silent no-op
+                switch (choice) {
+                  case _GoLiveChoice.cameraFront:
+                    await startCamera(CameraPosition.front);
+                  case _GoLiveChoice.cameraBack:
+                    await startCamera(CameraPosition.back);
+                  case _GoLiveChoice.screen:
+                    // Z1: mobile browsers (iOS Safari, Android Chrome) have
+                    // no getDisplayMedia, so a share can never actually
+                    // start here. The chooser already hides this option on
+                    // mobile web (see _showGoLiveChooser), so this is a
+                    // defensive re-check, not the primary guard.
+                    if (ref.read(isMobileWebProvider)) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              "Screen sharing needs the desktop app. Native "
+                              "mobile screen share is coming soon. You can "
+                              "still watch shares here.",
+                            ),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+                    await startScreenShare();
                 }
               },
+            ),
+          // Flip the live camera between front and back without stopping.
+          // Only meaningful (and shown) while the camera is the actual live
+          // video source; a live screen share has no facing to flip.
+          if (canShare && isCameraLive)
+            _RoundButton(
+              icon: Icons.cameraswitch_rounded,
+              label: "Flip",
+              activeColor: SovereignColors.soulLumina,
+              onTap: notifier.flipCamera,
             ),
           // Quick emoji reactions: floats to everyone in the Space.
           ReactionsButton(identity: join.identity),

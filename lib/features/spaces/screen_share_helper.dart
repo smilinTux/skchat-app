@@ -123,19 +123,35 @@ Future<({bool proceed, String? sourceId})> resolveScreenShareSource(
 /// whether the share is the local participant's own screen.
 typedef ScreenShare = ({String identity, VideoTrack track, bool isLocal});
 
-/// Resolve every live screen-share [VideoTrack] in the [room], keyed to the
-/// [participants] snapshot list.
+/// One live video source feeding the Space watch stage: a screen share OR a
+/// camera go-live. Mirrors [ScreenShare]'s shape ([identity], [track],
+/// [isLocal]) plus [isCamera] so the stage can pick the right label/icon
+/// (camera go-live vs screen share) while sharing one render path (the same
+/// [VideoTrackRenderer] tile either way).
+typedef StageVideo = ({
+  String identity,
+  VideoTrack track,
+  bool isLocal,
+  bool isCamera,
+});
+
+/// Resolve every live [VideoTrack] published on [source] in the [room],
+/// keyed to the [participants] snapshot list. Shared lookup behind
+/// [resolveScreenShares] (TrackSource.screenShareVideo) and
+/// [resolveCameraShares] (TrackSource.camera): only the [TrackSource]
+/// differs, so the identity-keyed room-graph walk lives here once.
 ///
 /// The [LiveKitParticipantSnapshot] does not carry the underlying track, so we
 /// look it up in the live room by identity via
-/// `getTrackPublicationBySource(TrackSource.screenShareVideo)` (the same
-/// approach the call grid uses for camera tracks). Unlike the older
-/// remote-only lookup this ALSO returns the LOCAL participant's own share, so
-/// the watch stage can show the host what they are streaming. Callers that
-/// only want remote shares can filter on `!s.isLocal`.
-List<ScreenShare> resolveScreenShares(
+/// `getTrackPublicationBySource(source)` (the same approach the call grid
+/// uses for camera tracks). Unlike an older remote-only lookup this ALSO
+/// returns the LOCAL participant's own publication, so the watch stage can
+/// show the host what they are streaming. Callers that only want remote
+/// video can filter on `!s.isLocal`.
+List<ScreenShare> _resolveTracksBySource(
   Room? room,
   List<LiveKitParticipantSnapshot> participants,
+  TrackSource source,
 ) {
   if (room == null) return const [];
   final out = <ScreenShare>[];
@@ -143,8 +159,7 @@ List<ScreenShare> resolveScreenShares(
     if (p.isLocal) {
       final local = room.localParticipant;
       if (local == null) continue;
-      final pub =
-          local.getTrackPublicationBySource(TrackSource.screenShareVideo);
+      final pub = local.getTrackPublicationBySource(source);
       final track = pub?.track;
       if (track is VideoTrack) {
         out.add((identity: p.identity, track: track as VideoTrack, isLocal: true));
@@ -153,12 +168,61 @@ List<ScreenShare> resolveScreenShares(
     }
     final remote = room.remoteParticipants[p.identity];
     if (remote == null) continue;
-    final pub =
-        remote.getTrackPublicationBySource(TrackSource.screenShareVideo);
+    final pub = remote.getTrackPublicationBySource(source);
     final track = pub?.track;
     if (track is VideoTrack) {
       out.add((identity: p.identity, track: track as VideoTrack, isLocal: false));
     }
   }
   return out;
+}
+
+/// Resolve every live screen-share [VideoTrack] in the [room], keyed to the
+/// [participants] snapshot list. See [_resolveTracksBySource] for the shared
+/// lookup. Used by [ScreenSharePanel], which is deliberately screen-share
+/// only; unchanged by the Spaces camera go-live feature.
+List<ScreenShare> resolveScreenShares(
+  Room? room,
+  List<LiveKitParticipantSnapshot> participants,
+) =>
+    _resolveTracksBySource(room, participants, TrackSource.screenShareVideo);
+
+/// Resolve every live CAMERA [VideoTrack] in the [room] (a Spaces "Go live"
+/// camera publish, `TrackSource.camera`), keyed to the [participants]
+/// snapshot list. Same identity-keyed lookup as [resolveScreenShares], just a
+/// different [TrackSource].
+List<ScreenShare> resolveCameraShares(
+  Room? room,
+  List<LiveKitParticipantSnapshot> participants,
+) =>
+    _resolveTracksBySource(room, participants, TrackSource.camera);
+
+/// Resolve every live video source feeding the Space watch stage: screen
+/// shares first (kept in their existing priority position when both exist),
+/// then camera go-lives. Used by `_Stage` (space_room_screen.dart) INSTEAD
+/// of [resolveScreenShares] alone so the stage (and therefore fullscreen)
+/// renders a camera go-live too, not only a screen share. [resolveScreenShares]
+/// itself stays unchanged for [ScreenSharePanel]'s screen-only lane.
+List<StageVideo> resolveStageVideos(
+  Room? room,
+  List<LiveKitParticipantSnapshot> participants,
+) {
+  final screens = resolveScreenShares(room, participants);
+  final cameras = resolveCameraShares(room, participants);
+  return [
+    for (final s in screens)
+      (
+        identity: s.identity,
+        track: s.track,
+        isLocal: s.isLocal,
+        isCamera: false,
+      ),
+    for (final c in cameras)
+      (
+        identity: c.identity,
+        track: c.track,
+        isLocal: c.isLocal,
+        isCamera: true,
+      ),
+  ];
 }
