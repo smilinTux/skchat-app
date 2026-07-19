@@ -15,6 +15,14 @@ void main() {
       expect(SystemAudioSources.isMonitor(
           _dev('alsa_input.pci-0000_00_1f.3.analog-stereo', 'Built-in Microphone')),
           isFalse);
+      // Real PipeWire strings observed on .41 (see
+      // docs/spaces-system-audio-linux.md). isMonitor matches these correctly;
+      // the Linux gap is that libwebrtc never enumerates them, not the filter.
+      expect(SystemAudioSources.isMonitor(
+          _dev('easyeffects_sink.monitor', 'Monitor of EasyEffects Sink')),
+          isTrue);
+      expect(SystemAudioSources.isMonitor(
+          _dev('easyeffects_source', 'EasyEffects Source')), isFalse);
     });
 
     test('monitors filters to only monitor inputs, preserving order', () {

@@ -35,6 +35,16 @@ class SystemAudioSources {
 
   /// Capture options for a raw system-audio track: all WebRTC voice processing
   /// off, so music and video content is not gated or pumped into artifacts.
+  ///
+  /// LINUX CAVEAT (see docs/spaces-system-audio-linux.md): on Linux/PipeWire the
+  /// bundled libwebrtc ADM enumerates zero audio devices, so [monitors] is
+  /// always empty and this path is never reached from the panel. Do NOT try to
+  /// "fix" that by feeding a PulseAudio monitor name in here as [deviceId]:
+  /// verified on .41 that `RecordingDevices() == 0` makes the deviceId a no-op,
+  /// so WebRTC stays on the default mic and you silently re-capture the
+  /// microphone under a "system audio" label, recreating the echo. Real Linux
+  /// system-audio capture needs an out-of-band monitor capture (option 1 in the
+  /// doc), not this constraint.
   static AudioCaptureOptions captureOptions(String deviceId) =>
       AudioCaptureOptions(
         deviceId: deviceId,
