@@ -1,5 +1,4 @@
 import "dart:async";
-import "dart:math";
 
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -8,37 +7,32 @@ import "package:go_router/go_router.dart";
 
 import "../../core/router/app_router.dart";
 import "../../core/theme/theme.dart";
+import "../../services/spaces_identity_service.dart";
 import "../../services/spaces_service.dart";
-import "../profile/profile_screen.dart";
 import "space_models.dart";
 
 /// The identity value a Space's `host_fqid` is compared against: this
-/// device's capauth fingerprint, falling back to the display name when no
-/// fingerprint has been fetched yet. Mirrors exactly how
-/// `_CreateSpaceSheetState._submit` derives `hostFqid` when creating a Space,
-/// so a returning host resolves to the same value that was stored at
-/// creation time.
-String localHostIdentityValue(LocalIdentity identity) =>
-    identity.fingerprint.isNotEmpty ? identity.fingerprint : identity.displayName;
+/// device's stable, unique-per-device Spaces id ([SpacesIdentity.id]).
+///
+/// This is DELIBERATELY not the shared node/capauth identity
+/// (`localIdentityProvider` in profile_screen.dart): that identity is fetched
+/// from the local SKComms daemon, which is one sovereign node shared by every
+/// browser hitting the same /app/ deployment, so two different people used to
+/// resolve to the SAME LiveKit identity and LiveKit would evict the
+/// duplicate, kicking the host the moment someone else joined.
+/// [spacesIdentityProvider] instead generates + persists a per-device id, so
+/// two different devices always differ and the SAME device is always stable
+/// across reloads. Mirrors exactly how `_CreateSpaceSheetState._submit`
+/// derives `hostFqid` when creating a Space, so a returning host resolves to
+/// the same value that was stored at creation time.
+String localHostIdentityValue(SpacesIdentity identity) => identity.id;
 
 /// Whether the local user is the host of [space], per [identity]. True only
 /// when the Space has a non-empty `hostFqid` that matches this device's host
 /// identity value; an empty `hostFqid` (unknown host) is never a match.
-bool isHostOfSpace(SpaceSummary space, LocalIdentity identity) =>
+bool isHostOfSpace(SpaceSummary space, SpacesIdentity identity) =>
     space.hostFqid.isNotEmpty &&
     space.hostFqid == localHostIdentityValue(identity);
-
-/// A per-app-launch suffix that makes THIS device's LiveKit participant identity
-/// unique. Two of the same user's devices resolve to the same capauth
-/// fingerprint; without a per-device suffix LiveKit treats both connections as
-/// one participant and evicts whichever joined first, so the two devices
-/// ping-pong and only one stays connected. Stable for the process lifetime so a
-/// reconnect keeps the same identity. The human display name is unaffected;
-/// only the internal LiveKit identity carries the suffix.
-final String _deviceParticipantSuffix = () {
-  final r = Random();
-  return List<String>.generate(4, (_) => r.nextInt(16).toRadixString(16)).join();
-}();
 
 /// Polls the sovereign /spaces API for live Spaces every 5s.
 ///
@@ -138,23 +132,16 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     SpaceSummary space,
   ) async {
     final svc = ref.read(spacesServiceProvider);
-    final identity = ref.read(localIdentityProvider);
-    final rawIdent = identity.fingerprint;
-    final name = identity.displayName;
-    final ident = rawIdent.isNotEmpty ? rawIdent : name;
-    // Make the LiveKit participant identity unique per device so joining from
-    // two of the user's own devices does not collide (same capauth fingerprint
-    // -> LiveKit evicts the duplicate -> the "only one connects, they ping-pong"
-    // bug). The display name stays clean; only this internal identity is suffixed.
-    final uniqueIdent = "$ident~$_deviceParticipantSuffix";
-    final displayName = name.isNotEmpty ? name : ident;
+    // Await (not read) the Spaces identity: on first launch it is still
+    // generating + persisting the device id/alias, and we need the FINAL
+    // persisted value, not a transient loading placeholder, before deciding
+    // whether this device is the Space's host and what identity to join as.
+    final identity = await ref.read(spacesIdentityProvider.future);
     try {
       final join = await _joinAsAppropriateRole(
         svc,
         space: space,
         identity: identity,
-        uniqueIdent: uniqueIdent,
-        displayName: displayName,
       );
       if (!context.mounted) return;
       context.push(AppRoutes.spaceRoomPath(space.spaceId), extra: join);
@@ -176,15 +163,19 @@ class SpacesDirectoryScreen extends ConsumerWidget {
   /// `joinHost`, which independently re-verifies the requester against
   /// `host_fqid` server-side (this client-side check is only what decides
   /// which endpoint to call, it does not weaken that server check). If the
-  /// server ever rejects the host join anyway (stale directory data, a
-  /// fingerprint that rotated, etc.) this falls back to a normal listener
-  /// join so the user still gets into the Space instead of seeing an error.
+  /// server ever rejects the host join anyway (stale directory data, etc.)
+  /// this falls back to a normal listener join so the user still gets into
+  /// the Space instead of seeing an error.
+  ///
+  /// The listener join uses [identity]'s device id directly as the LiveKit
+  /// participant identity, with no per-device suffix: the id is already
+  /// globally unique per device (see [SpacesIdentity]), so a suffix would
+  /// only add the risk of the host's own participant identity no longer
+  /// matching the `host_fqid` it minted at create time.
   Future<SpaceJoin> _joinAsAppropriateRole(
     SpacesService svc, {
     required SpaceSummary space,
-    required LocalIdentity identity,
-    required String uniqueIdent,
-    required String displayName,
+    required SpacesIdentity identity,
   }) async {
     if (isHostOfSpace(space, identity)) {
       try {
@@ -200,8 +191,8 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     }
     return svc.joinListener(
       space.spaceId,
-      identity: uniqueIdent,
-      name: displayName,
+      identity: identity.id,
+      name: identity.displayName,
     );
   }
 
@@ -599,10 +590,12 @@ class _CreateSpaceSheetState extends ConsumerState<_CreateSpaceSheet> {
 
     setState(() => _submitting = true);
     final svc = ref.read(spacesServiceProvider);
-    final hostFqid = () {
-      final id = ref.read(localIdentityProvider);
-      return id.fingerprint.isNotEmpty ? id.fingerprint : id.displayName;
-    }();
+    // Await the FINAL persisted Spaces identity (not a transient loading
+    // placeholder): this device's id becomes `host_fqid`, so the host's own
+    // future LiveKit participant identity (which is also this same id, see
+    // [localHostIdentityValue]) is guaranteed to match it exactly.
+    final identity = await ref.read(spacesIdentityProvider.future);
+    final hostFqid = localHostIdentityValue(identity);
 
     try {
       final join = await svc.create(
