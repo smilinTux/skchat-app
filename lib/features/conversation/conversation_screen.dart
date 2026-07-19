@@ -586,6 +586,17 @@ class ConversationScreen extends ConsumerWidget {
 
     return AppBar(
       backgroundColor: SovereignColors.surfaceBase,
+      // Pin the M3 surface-tint/elevation overlay OFF explicitly on this bar.
+      // Without this, an AppBar with an opaque hardcoded backgroundColor can
+      // pick up Material 3's default elevation-tint blend (a grey wash) once
+      // the message list registers as "scrolled under" (the conversation list
+      // opens already showing content, so this is scrolled-under on first
+      // frame), instead of falling through to the theme's transparent tint
+      // like every other screen's app bar does. Forcing it to transparent
+      // here removes the grey band regardless of ambient theme resolution.
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
       leading: IconButton(
         icon: const Icon(Icons.arrow_back_rounded),
         onPressed: () => Navigator.of(context).maybePop(),
