@@ -394,6 +394,18 @@ class SpaceRoomNotifier
             identity: identity,
           );
 
+  /// SHARECTL-app: host-only. Disables or restores a speaker's video
+  /// sharing (camera + screen-share); their mic is untouched either way.
+  /// See the host sheet's "Disable sharing" / "Allow sharing" action above.
+  Future<void> setSharing(String requester, String identity,
+          {required bool allow}) =>
+      ref.read(spacesServiceProvider).setSharing(
+            arg.spaceId,
+            requester: requester,
+            identity: identity,
+            allow: allow,
+          );
+
   Future<void> end(String requester) =>
       ref.read(spacesServiceProvider).end(arg.spaceId, requester: requester);
 
@@ -1064,6 +1076,32 @@ class _Stage extends ConsumerWidget {
                   }
                 },
               ),
+              // SHARECTL-app: host-only per-speaker video sharing toggle.
+              // Reflects the target's CURRENT permission
+              // ([LiveKitParticipantSnapshot.canPublishVideo], derived from
+              // their live LiveKit canPublishSources grant): "Disable
+              // sharing" while they can still share video, flipping to
+              // "Allow sharing" once the host has revoked it. Their mic
+              // (canPublish) is untouched by this action either way.
+              ListTile(
+                leading: Icon(
+                  target.canPublishVideo
+                      ? Icons.screen_share_outlined
+                      : Icons.stop_screen_share_outlined,
+                  color: SovereignColors.accentWarning,
+                ),
+                title: Text(target.canPublishVideo
+                    ? "Disable sharing"
+                    : "Allow sharing"),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  notifier.setSharing(
+                    join.identity,
+                    identity,
+                    allow: !target.canPublishVideo,
+                  );
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.arrow_downward_rounded,
                     color: SovereignColors.accentWarning),
@@ -1591,6 +1629,11 @@ class _ControlBar extends ConsumerWidget {
     // promoted speaker), not [SpaceJoin.isHost]: a promoted speaker must get
     // real mic controls without rejoining, and a demoted one must lose them.
     final canPublish = local?.canPublish ?? false;
+    // SHARECTL-app: the host can revoke video sources (camera + screen-
+    // share) from a speaker independent of their mic. Defaults true (see
+    // LiveKitParticipantSnapshot.canPublishVideo doc comment) so this only
+    // ever narrows the existing [canShare] affordance, never widens it.
+    final canPublishVideoLocal = local?.canPublishVideo ?? true;
     // X1: an outstanding, not-yet-accepted host invite. Independent of the
     // banner's own dismissal (see _InvitedToStageBanner / invitePromptDismissed
     // above): the button stays the accept path even after "Not now".
@@ -1633,126 +1676,147 @@ class _ControlBar extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (canPublish)
-            _RoundButton(
-              icon: state.isMicEnabled
-                  ? Icons.mic_rounded
-                  : Icons.mic_off_rounded,
-              label: state.isMicEnabled ? "Mute" : "Unmute",
-              active: !state.isMicEnabled,
-              activeColor: SovereignColors.accentWarning,
-              onTap: notifier.toggleMic,
-            )
-          else
-            _RoundButton(
-              icon: state.handRaised
-                  ? Icons.back_hand_rounded
-                  : Icons.back_hand_outlined,
-              label: isInvited
-                  ? "Join stage"
-                  : (state.handRaised ? "Lower" : "Raise hand"),
-              active: state.handRaised || isInvited,
-              activeColor: SovereignColors.soulLumina,
-              // Same call either way (raise hand / accept invite / lower):
-              // the server's raise-hand endpoint is what completes the
-              // AND-gate when invited_to_stage is already true (X1).
-              onTap: () => notifier.raiseHand(join.identity),
+          // SHARECTL-app: the host disabled this speaker's own sharing.
+          // Go live is hidden below (the canShare && canPublishVideoLocal
+          // gate on the _RoundButton further down); mic mute/unmute stays
+          // available via the separate canPublish branch, which this flag
+          // does not touch.
+          if (canShare && !canPublishVideoLocal)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                "The host turned off your sharing",
+                style: TextStyle(
+                  color: SovereignColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
             ),
-          // Go live: prominent affordance for the host and any speaker with
-          // publish, NOT buried in the lane sheet. Tapping it while NOT live
-          // opens the source chooser (Camera front/back, Screen desktop-
-          // only); tapping it while EITHER video source is live stops
-          // whichever one is live.
-          if (canShare)
-            _RoundButton(
-              icon: isLive ? Icons.stop_circle_outlined : Icons.videocam_rounded,
-              label: isLive ? "Stop" : "Go live",
-              active: isLive,
-              activeColor: SovereignColors.accentEncrypt,
-              onTap: () async {
-                if (isLive) {
-                  await notifier.stopLive(
-                    isCameraLive: isCameraLive,
-                    isScreenLive: isScreenLive,
-                  );
-                  return;
-                }
-                final choice = await _showGoLiveChooser(context, ref);
-                if (choice == null) return; // sheet dismissed, silent no-op
-                switch (choice) {
-                  case _GoLiveChoice.cameraFront:
-                    await startCamera(CameraPosition.front);
-                  case _GoLiveChoice.cameraBack:
-                    await startCamera(CameraPosition.back);
-                  case _GoLiveChoice.screen:
-                    // Z1: mobile browsers (iOS Safari, Android Chrome) have
-                    // no getDisplayMedia, so a share can never actually
-                    // start here. The chooser already hides this option on
-                    // mobile web (see _showGoLiveChooser), so this is a
-                    // defensive re-check, not the primary guard.
-                    if (ref.read(isMobileWebProvider)) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              "Screen sharing needs the desktop app. Native "
-                              "mobile screen share is coming soon. You can "
-                              "still watch shares here.",
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+            if (canPublish)
+              _RoundButton(
+                icon: state.isMicEnabled
+                    ? Icons.mic_rounded
+                    : Icons.mic_off_rounded,
+                label: state.isMicEnabled ? "Mute" : "Unmute",
+                active: !state.isMicEnabled,
+                activeColor: SovereignColors.accentWarning,
+                onTap: notifier.toggleMic,
+              )
+            else
+              _RoundButton(
+                icon: state.handRaised
+                    ? Icons.back_hand_rounded
+                    : Icons.back_hand_outlined,
+                label: isInvited
+                    ? "Join stage"
+                    : (state.handRaised ? "Lower" : "Raise hand"),
+                active: state.handRaised || isInvited,
+                activeColor: SovereignColors.soulLumina,
+                // Same call either way (raise hand / accept invite / lower):
+                // the server's raise-hand endpoint is what completes the
+                // AND-gate when invited_to_stage is already true (X1).
+                onTap: () => notifier.raiseHand(join.identity),
+              ),
+            // Go live: prominent affordance for the host and any speaker with
+            // publish, NOT buried in the lane sheet. Tapping it while NOT live
+            // opens the source chooser (Camera front/back, Screen desktop-
+            // only); tapping it while EITHER video source is live stops
+            // whichever one is live.
+            if (canShare && canPublishVideoLocal)
+              _RoundButton(
+                icon: isLive ? Icons.stop_circle_outlined : Icons.videocam_rounded,
+                label: isLive ? "Stop" : "Go live",
+                active: isLive,
+                activeColor: SovereignColors.accentEncrypt,
+                onTap: () async {
+                  if (isLive) {
+                    await notifier.stopLive(
+                      isCameraLive: isCameraLive,
+                      isScreenLive: isScreenLive,
+                    );
+                    return;
+                  }
+                  final choice = await _showGoLiveChooser(context, ref);
+                  if (choice == null) return; // sheet dismissed, silent no-op
+                  switch (choice) {
+                    case _GoLiveChoice.cameraFront:
+                      await startCamera(CameraPosition.front);
+                    case _GoLiveChoice.cameraBack:
+                      await startCamera(CameraPosition.back);
+                    case _GoLiveChoice.screen:
+                      // Z1: mobile browsers (iOS Safari, Android Chrome) have
+                      // no getDisplayMedia, so a share can never actually
+                      // start here. The chooser already hides this option on
+                      // mobile web (see _showGoLiveChooser), so this is a
+                      // defensive re-check, not the primary guard.
+                      if (ref.read(isMobileWebProvider)) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                "Screen sharing needs the desktop app. Native "
+                                "mobile screen share is coming soon. You can "
+                                "still watch shares here.",
+                              ),
                             ),
-                          ),
-                        );
+                          );
+                        }
+                        return;
                       }
-                      return;
-                    }
-                    await startScreenShare();
-                }
-              },
-            ),
-          // Flip the live camera between front and back without stopping.
-          // Only meaningful (and shown) while the camera is the actual live
-          // video source; a live screen share has no facing to flip.
-          if (canShare && isCameraLive)
+                      await startScreenShare();
+                  }
+                },
+              ),
+            // Flip the live camera between front and back without stopping.
+            // Only meaningful (and shown) while the camera is the actual live
+            // video source; a live screen share has no facing to flip.
+            if (canShare && isCameraLive && canPublishVideoLocal)
+              _RoundButton(
+                icon: Icons.cameraswitch_rounded,
+                label: "Flip",
+                activeColor: SovereignColors.soulLumina,
+                onTap: notifier.flipCamera,
+              ),
+            // Quick emoji reactions: floats to everyone in the Space.
+            ReactionsButton(identity: join.identity),
+            // Cast the Space's shared video to a TV (Chromecast / AirPlay) over
+            // HLS. The Space's live audio + chat stay on the phone.
             _RoundButton(
-              icon: Icons.cameraswitch_rounded,
-              label: "Flip",
+              icon: Icons.cast_rounded,
+              label: ref.watch(activeCastSessionProvider) != null
+                  ? "Casting"
+                  : "Cast",
+              active: ref.watch(activeCastSessionProvider) != null,
               activeColor: SovereignColors.soulLumina,
-              onTap: notifier.flipCamera,
+              onTap: () => showCastToTvSheet(
+                context,
+                ref,
+                room: join.room,
+                // Forward the room token so the backend authorizes the egress
+                // start even when casting from a phone over the public Funnel.
+                token: join.token,
+              ),
             ),
-          // Quick emoji reactions: floats to everyone in the Space.
-          ReactionsButton(identity: join.identity),
-          // Cast the Space's shared video to a TV (Chromecast / AirPlay) over
-          // HLS. The Space's live audio + chat stay on the phone.
-          _RoundButton(
-            icon: Icons.cast_rounded,
-            label: ref.watch(activeCastSessionProvider) != null
-                ? "Casting"
-                : "Cast",
-            active: ref.watch(activeCastSessionProvider) != null,
-            activeColor: SovereignColors.soulLumina,
-            onTap: () => showCastToTvSheet(
-              context,
-              ref,
-              room: join.room,
-              // Forward the room token so the backend authorizes the egress
-              // start even when casting from a phone over the public Funnel.
-              token: join.token,
-            ),
+            if (join.isHost)
+              _RoundButton(
+                icon: Icons.stop_circle_outlined,
+                label: "End",
+                active: true,
+                activeColor: SovereignColors.accentDanger,
+                onTap: () async {
+                  await notifier.end(join.identity);
+                  onLeave();
+                },
+              ),
+            _LeaveButton(onTap: onLeave),
+            ],
           ),
-          if (join.isHost)
-            _RoundButton(
-              icon: Icons.stop_circle_outlined,
-              label: "End",
-              active: true,
-              activeColor: SovereignColors.accentDanger,
-              onTap: () async {
-                await notifier.end(join.identity);
-                onLeave();
-              },
-            ),
-          _LeaveButton(onTap: onLeave),
         ],
       ),
     );

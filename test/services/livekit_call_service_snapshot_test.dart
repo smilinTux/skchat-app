@@ -175,4 +175,83 @@ void main() {
       await svc.dispose();
     });
   });
+
+  // SHARECTL-app: the host can revoke a speaker's VIDEO sources (camera +
+  // screen-share) while leaving their microphone alone (see
+  // docs/superpowers/specs/2026-07-18-spaces-host-share-control-design.md in
+  // the skchat server repo). The wire signal is
+  // `ParticipantPermissions.canPublishSources`, a
+  // `List<lk_models.TrackSource>` of the INSTALLED livekit_client
+  // 2.5.0+hotfix.3 proto enum (lib/src/proto/livekit_models.pbenum.dart:
+  // TrackSource.{UNKNOWN,CAMERA,MICROPHONE,SCREEN_SHARE,SCREEN_SHARE_AUDIO}),
+  // NOT the client-facing `TrackSource` enum the rest of this file uses for
+  // `getTrackPublicationBySource` (types/other.dart: camera, microphone,
+  // screenShareVideo, screenShareAudio). The livekit_client barrel exports
+  // only the latter under the bare name `TrackSource` (src/extensions.dart's
+  // `toLKType()` bridge between the two is deliberately NOT re-exported,
+  // barrel `show`s only `WidgetsBindingCompatible` from that file), so
+  // canPublishVideoFromSourceNames reads the proto enum's `.name` (a
+  // `ProtobufEnum` member, always public) rather than importing the internal
+  // proto library by path. Kept on plain `List<String>` so it stays
+  // independently unit-testable without constructing real proto instances.
+  group('LiveKitParticipantSnapshot.canPublishVideoFromSourceNames', () {
+    test('empty list means no source restriction encoded: defaults true '
+        '(default policy unchanged - any speaker can share until the host '
+        'explicitly narrows the grant)', () {
+      expect(
+        LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(const []),
+        isTrue,
+      );
+    });
+
+    test('full sources (mic + camera + screen share + screen share audio) '
+        'is true', () {
+      expect(
+        LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(const [
+          'MICROPHONE',
+          'CAMERA',
+          'SCREEN_SHARE',
+          'SCREEN_SHARE_AUDIO',
+        ]),
+        isTrue,
+      );
+    });
+
+    test('mic-only (host disabled sharing) is false', () {
+      expect(
+        LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(
+            const ['MICROPHONE']),
+        isFalse,
+      );
+    });
+
+    test('camera alone (no screen share) is still true', () {
+      expect(
+        LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(
+            const ['MICROPHONE', 'CAMERA']),
+        isTrue,
+      );
+    });
+
+    test('screen share alone (no camera) is still true', () {
+      expect(
+        LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(
+            const ['MICROPHONE', 'SCREEN_SHARE']),
+        isTrue,
+      );
+    });
+  });
+
+  group('LiveKitParticipantSnapshot.canPublishVideo default', () {
+    test('defaults to true when not supplied (matches the unchanged-default '
+        'sharing policy)', () {
+      const snap = LiveKitParticipantSnapshot(
+        identity: 'chef',
+        isLocal: true,
+        isMuted: false,
+        isCameraEnabled: false,
+      );
+      expect(snap.canPublishVideo, isTrue);
+    });
+  });
 }

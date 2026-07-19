@@ -67,6 +67,7 @@ class LiveKitParticipantSnapshot {
     required this.isCameraEnabled,
     this.isScreenSharing = false,
     this.canPublish = false,
+    this.canPublishVideo = true,
     this.handRaised = false,
     this.invitedToStage = false,
     this.isSpeaking = false,
@@ -90,6 +91,26 @@ class LiveKitParticipantSnapshot {
   /// self-mutes still has [canPublish] == true (a muted speaker, not a
   /// listener). Sourced from `Participant.permissions.canPublish`.
   final bool canPublish;
+
+  /// SHARECTL-app: whether this participant's LiveKit grant currently
+  /// allows publishing VIDEO sources (camera or screen-share), independent
+  /// of [canPublish] (the overall publish grant, which stays true so a
+  /// speaker can still talk). Derived from
+  /// `Participant.permissions.canPublishSources` via
+  /// [canPublishVideoFromSourceNames]; see that method's doc comment for
+  /// the installed livekit_client 2.5.0+hotfix.3 API this reads.
+  ///
+  /// Defaults to true: an EMPTY canPublishSources list means the server has
+  /// not applied a source-level restriction (the default policy is
+  /// unchanged, "any speaker can share everything" per
+  /// docs/superpowers/specs/2026-07-18-spaces-host-share-control-design.md
+  /// in the skchat server repo), so an empty list must NOT read as "no
+  /// video allowed." Once the host disables sharing (server narrows
+  /// canPublishSources to mic-only), this flips false; re-allow (full
+  /// sources restored) flips it back. Gates the local speaker's own "Go
+  /// live" affordance in space_room_screen.dart's control bar, and lets the
+  /// host sheet reflect a remote speaker's current sharing state.
+  final bool canPublishVideo;
 
   /// Whether this participant has raised their hand (✋) to be invited to
   /// the stage. Parsed from the `hand_raised` key of the participant
@@ -155,6 +176,42 @@ class LiveKitParticipantSnapshot {
       // Malformed metadata, treat as no invite.
     }
     return false;
+  }
+
+  /// SHARECTL-app: derives [canPublishVideo] from the raw source NAMES
+  /// reported by `ParticipantPermissions.canPublishSources`.
+  ///
+  /// API confirmed against the INSTALLED livekit_client 2.5.0+hotfix.3
+  /// source: `ParticipantPermissions.canPublishSources` (lib/src/types/
+  /// participant_permissions.dart) is a `List<lk_models.TrackSource>`,
+  /// where `lk_models.TrackSource` is the PROTOBUF enum (lib/src/proto/
+  /// livekit_models.pbenum.dart: UNKNOWN=0, CAMERA=1, MICROPHONE=2,
+  /// SCREEN_SHARE=3, SCREEN_SHARE_AUDIO=4), NOT the client-facing
+  /// `TrackSource` enum the rest of this file uses for
+  /// `getTrackPublicationBySource`/`setSourceEnabled` (lib/src/types/
+  /// other.dart: unknown, camera, microphone, screenShareVideo,
+  /// screenShareAudio). The livekit_client barrel (lib/livekit_client.dart)
+  /// exports `other.dart`'s `TrackSource` under the bare name and does NOT
+  /// export the proto enum or the `toLKType()` bridge between the two
+  /// (`export 'src/extensions.dart' show WidgetsBindingCompatible;` hides
+  /// it), so this method takes each entry's `.name` (a `ProtobufEnum`
+  /// member, always public, e.g. protobuf-4.2.0/lib/src/protobuf/
+  /// protobuf_enum.dart) rather than importing the internal proto library
+  /// by path. Call sites map the real SDK values with `.name` before
+  /// calling this (see [_snapshotLocal]/[_snapshotRemote] in
+  /// LiveKitCallService), which keeps this derivation on plain
+  /// `List<String>` and independently unit-testable.
+  ///
+  /// An EMPTY list means the server has not applied a source-level
+  /// restriction (default policy unchanged: any speaker can share
+  /// everything), so this defaults to true rather than false. The server
+  /// contract (2026-07-18-spaces-host-share-control-design.md) narrows the
+  /// list to `[MICROPHONE]` to disable sharing and restores all four names
+  /// to re-allow it.
+  static bool canPublishVideoFromSourceNames(List<String> sourceNames) {
+    if (sourceNames.isEmpty) return true;
+    return sourceNames.contains('CAMERA') ||
+        sourceNames.contains('SCREEN_SHARE');
   }
 }
 
@@ -1282,6 +1339,8 @@ class LiveKitCallService {
       isScreenSharing:
           p.getTrackPublicationBySource(TrackSource.screenShareVideo) != null,
       canPublish: p.permissions.canPublish,
+      canPublishVideo: LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(
+          p.permissions.canPublishSources.map((s) => s.name).toList()),
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       invitedToStage:
           LiveKitParticipantSnapshot.parseInvitedToStage(p.metadata),
@@ -1300,6 +1359,8 @@ class LiveKitCallService {
       isScreenSharing:
           p.getTrackPublicationBySource(TrackSource.screenShareVideo) != null,
       canPublish: p.permissions.canPublish,
+      canPublishVideo: LiveKitParticipantSnapshot.canPublishVideoFromSourceNames(
+          p.permissions.canPublishSources.map((s) => s.name).toList()),
       handRaised: LiveKitParticipantSnapshot.parseHandRaised(p.metadata),
       invitedToStage:
           LiveKitParticipantSnapshot.parseInvitedToStage(p.metadata),

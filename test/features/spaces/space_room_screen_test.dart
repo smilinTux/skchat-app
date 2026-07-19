@@ -35,6 +35,11 @@ LiveKitParticipantSnapshot _snap(
   bool isMuted = false,
   bool isSpeaking = false,
   bool canPublish = false,
+  // SHARECTL-app: defaults true, matching LiveKitParticipantSnapshot's own
+  // default (an empty canPublishSources list means no source restriction
+  // has been applied yet). Tests that exercise the host-disabled-sharing
+  // path pass this false explicitly.
+  bool canPublishVideo = true,
   bool handRaised = false,
   bool invitedToStage = false,
   bool isCameraEnabled = false,
@@ -48,6 +53,7 @@ LiveKitParticipantSnapshot _snap(
     isScreenSharing: isScreenSharing,
     isSpeaking: isSpeaking,
     canPublish: canPublish,
+    canPublishVideo: canPublishVideo,
     handRaised: handRaised,
     invitedToStage: invitedToStage,
   );
@@ -148,6 +154,13 @@ void main() {
     // as needed.
     when(() => spaces.raiseHand(any(), identity: any(named: "identity")))
         .thenAnswer((_) async => false);
+    // SHARECTL-app: host-controlled per-speaker sharing toggle.
+    when(() => spaces.setSharing(
+          any(),
+          requester: any(named: "requester"),
+          identity: any(named: "identity"),
+          allow: any(named: "allow"),
+        )).thenAnswer((_) async => true);
   });
 
   Widget wrapFor(SpaceJoin join, {List<Override> extraOverrides = const []}) {
@@ -1475,6 +1488,163 @@ void main() {
       // ...and the lane's own panel opened in its place (_openLane path,
       // untouched by this change).
       expect(find.byType(SpaceChatPanel), findsOneWidget);
+    });
+  });
+
+  // ── SHARECTL-app: host-controlled per-speaker video sharing ──────────────
+  //
+  // The host can revoke a speaker's video sharing (camera + screen-share)
+  // while leaving their mic alone, and re-allow it. Two surfaces:
+  // - Host sheet (per-speaker, host-only): "Disable sharing" / "Allow
+  //   sharing", reflecting the target's current
+  //   LiveKitParticipantSnapshot.canPublishVideo and calling
+  //   SpacesService.setSharing with the flipped allow value.
+  // - The (possibly local) speaker's own "Go live": hidden with a short
+  //   note the moment their OWN canPublishVideo goes false; mic mute/
+  //   unmute is untouched (a separate LiveKit grant, canPublish).
+  group("SHARECTL-app host-controlled sharing", () {
+    testWidgets(
+        "host sheet offers Disable sharing for a speaker who can currently "
+        "share, and it calls setSharing with allow=false", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true), // canPublishVideo defaults true
+        _snap("alice"), // listener
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("dana"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text("Disable sharing"), findsOneWidget);
+      expect(find.text("Allow sharing"), findsNothing);
+
+      await tester.tap(find.text("Disable sharing"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      verify(() => spaces.setSharing(
+            "s1",
+            requester: "chef@dk.skworld",
+            identity: "dana",
+            allow: false,
+          )).called(1);
+    });
+
+    testWidgets(
+        "host sheet offers Allow sharing for a speaker whose sharing is "
+        "already disabled, and it calls setSharing with allow=true",
+        (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, canPublishVideo: false),
+        _snap("alice"),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("dana"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text("Allow sharing"), findsOneWidget);
+      expect(find.text("Disable sharing"), findsNothing);
+
+      await tester.tap(find.text("Allow sharing"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      verify(() => spaces.setSharing(
+            "s1",
+            requester: "chef@dk.skworld",
+            identity: "dana",
+            allow: true,
+          )).called(1);
+    });
+
+    testWidgets(
+        "the sharing toggle never appears on the host's own tile or a "
+        "listener tile", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true),
+        _snap("alice"), // listener
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Host's own tile: no moderation sheet at all.
+      await tester.tap(find.text("You"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text("Disable sharing"), findsNothing);
+      expect(find.text("Allow sharing"), findsNothing);
+
+      // Listener tile: Invite to speak only, no sharing toggle.
+      await tester.tap(find.text("alice"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text("Invite to speak"), findsOneWidget);
+      expect(find.text("Disable sharing"), findsNothing);
+      expect(find.text("Allow sharing"), findsNothing);
+    });
+
+    testWidgets(
+        "a local speaker whose own sharing is disabled sees Go live hidden "
+        "with a note, and keeps mute/unmute", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true, canPublish: true, canPublishVideo: false),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Go live"), findsNothing);
+      expect(find.text("Stop"), findsNothing);
+      expect(find.text("The host turned off your sharing"), findsOneWidget);
+      // Mic control (canPublish is untouched) stays available: dana starts
+      // MUTED (SP2 default), so the control reads "Unmute".
+      expect(find.text("Unmute"), findsOneWidget);
+    });
+
+    testWidgets(
+        "re-allowing sharing (canPublishVideo true again) restores Go live "
+        "and clears the note", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Go live"), findsOneWidget);
+      expect(find.text("The host turned off your sharing"), findsNothing);
     });
   });
 }

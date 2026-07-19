@@ -117,4 +117,49 @@ void main() {
     final onStage = await svc.raiseHand("s1", identity: "guest-1");
     expect(onStage, isTrue);
   });
+
+  // SHARECTL-app: host-controlled per-speaker sharing toggle.
+  group("setSharing", () {
+    test("posts requester/identity/allow=false and returns the sharing flag",
+        () async {
+      adapter.routes["/spaces/s1/set-sharing"] = {"ok": true, "sharing": false};
+      final sharing = await svc.setSharing(
+        "s1",
+        requester: "chef@dk.skworld",
+        identity: "dana",
+        allow: false,
+      );
+      expect(sharing, isFalse);
+      expect(adapter.lastRequest?.uri.path, "/spaces/s1/set-sharing");
+      final body = adapter.lastRequest?.data as Map;
+      expect(body["requester"], "chef@dk.skworld");
+      expect(body["identity"], "dana");
+      expect(body["allow"], isFalse);
+    });
+
+    test("posts allow=true and returns the sharing flag", () async {
+      adapter.routes["/spaces/s1/set-sharing"] = {"ok": true, "sharing": true};
+      final sharing = await svc.setSharing(
+        "s1",
+        requester: "chef@dk.skworld",
+        identity: "dana",
+        allow: true,
+      );
+      expect(sharing, isTrue);
+      final body = adapter.lastRequest?.data as Map;
+      expect(body["allow"], isTrue);
+    });
+
+    test("falls back to the requested allow if the server omits sharing",
+        () async {
+      adapter.routes["/spaces/s1/set-sharing"] = {"ok": true};
+      final sharing = await svc.setSharing(
+        "s1",
+        requester: "chef@dk.skworld",
+        identity: "dana",
+        allow: true,
+      );
+      expect(sharing, isTrue);
+    });
+  });
 }

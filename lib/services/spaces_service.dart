@@ -66,6 +66,21 @@ class SpacesService {
           {required String requester, required String identity}) =>
       _post("/spaces/$id/kick", {"requester": requester, "identity": identity});
 
+  /// SHARECTL-app: host-only. Disables (`allow: false`) or restores
+  /// (`allow: true`) a speaker's VIDEO sharing (camera + screen-share);
+  /// their microphone is left untouched either way. Mirrors the
+  /// mute/kick/invite moderation calls above. Returns the server's
+  /// resulting `sharing` flag (mirrors [raiseHand]'s `on_stage` return),
+  /// defaulting to the requested [allow] if the server omits it.
+  Future<bool> setSharing(String id,
+      {required String requester,
+      required String identity,
+      required bool allow}) async {
+    final r = await _post("/spaces/$id/set-sharing",
+        {"requester": requester, "identity": identity, "allow": allow});
+    return r["sharing"] as bool? ?? allow;
+  }
+
   Future<void> end(String id, {required String requester}) =>
       _post("/spaces/$id/end", {"requester": requester});
 
