@@ -1646,5 +1646,133 @@ void main() {
       expect(find.text("Go live"), findsOneWidget);
       expect(find.text("The host turned off your sharing"), findsNothing);
     });
+
+    // SHARECTL-app follow-up: the host can disable sharing WHILE the
+    // speaker is already live. The Stop control is the same _RoundButton
+    // as Go live (gated on canPublishVideo), so it disappears the instant
+    // the grant flips, leaving no in-app way to stop an already-live
+    // share. The notifier's participants listener now auto-stops the live
+    // video source the moment the LOCAL canPublishVideo flips true ->
+    // false, mirroring the existing demotion auto-mute pattern.
+    testWidgets(
+        "a live camera share auto-stops the moment the host disables "
+        "sharing mid-session, and mic mute/unmute stays available",
+        (tester) async {
+      final controller =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(controller.close);
+      final live = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true, canPublish: true, isCameraEnabled: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => controller.stream);
+      when(() => svc.currentParticipants).thenReturn(live);
+
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      controller.add(live);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Stop"), findsOneWidget);
+
+      // Host disables sharing WHILE dana is still live on camera: the
+      // server permission update arrives before the local track actually
+      // unpublishes (the exact race this fix closes), so the snapshot
+      // still reports isCameraEnabled true alongside canPublishVideo:
+      // false.
+      controller.add(<LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true,
+            canPublish: true,
+            isCameraEnabled: true,
+            canPublishVideo: false),
+        _snap("chef@dk.skworld", canPublish: true),
+      ]);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setCameraEnabled(false)).called(1);
+      verifyNever(() => svc.setScreenShareEnabled(any(),
+          systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+          sourceId: any(named: "sourceId")));
+      // No stuck/absent control: Stop and Go live are both gone (the
+      // canPublishVideo gate), the disabled note shows instead, and mic
+      // mute/unmute is untouched.
+      expect(find.text("Stop"), findsNothing);
+      expect(find.text("Go live"), findsNothing);
+      expect(find.text("The host turned off your sharing"), findsOneWidget);
+      expect(find.text("Unmute"), findsOneWidget);
+    });
+
+    testWidgets(
+        "a live screen share auto-stops the moment the host disables "
+        "sharing mid-session", (tester) async {
+      final controller =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(controller.close);
+      final live = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true, canPublish: true, isScreenSharing: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => controller.stream);
+      when(() => svc.currentParticipants).thenReturn(live);
+
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      controller.add(live);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Stop"), findsOneWidget);
+
+      controller.add(<LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true,
+            canPublish: true,
+            isScreenSharing: true,
+            canPublishVideo: false),
+        _snap("chef@dk.skworld", canPublish: true),
+      ]);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setScreenShareEnabled(false)).called(1);
+      verifyNever(() => svc.setCameraEnabled(any(),
+          cameraPosition: any(named: "cameraPosition")));
+      expect(find.text("Stop"), findsNothing);
+      expect(find.text("The host turned off your sharing"), findsOneWidget);
+      expect(find.text("Unmute"), findsOneWidget);
+    });
+
+    testWidgets(
+        "sharing disabled while NOT live calls no stop path (nothing to "
+        "stop, no spurious call)", (tester) async {
+      final controller =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(controller.close);
+      final notLive = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => controller.stream);
+      when(() => svc.currentParticipants).thenReturn(notLive);
+
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      controller.add(notLive);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      controller.add(<LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true, canPublish: true, canPublishVideo: false),
+        _snap("chef@dk.skworld", canPublish: true),
+      ]);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verifyNever(() => svc.setCameraEnabled(any(),
+          cameraPosition: any(named: "cameraPosition")));
+      verifyNever(() => svc.setScreenShareEnabled(any(),
+          systemAudioDeviceId: any(named: "systemAudioDeviceId"),
+          sourceId: any(named: "sourceId")));
+    });
   });
 }

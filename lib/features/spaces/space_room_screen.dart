@@ -194,9 +194,11 @@ class SpaceRoomNotifier
     _partSub = svc.participants.listen((list) async {
       final wasSpeaker = _localCanPublish(state.participants);
       final wasInvited = _localInvited(state.participants);
+      final previousLocal = _localSnapshot(state.participants);
       state = state.copyWith(participants: list);
       final isSpeaker = _localCanPublish(list);
       final isInvited = _localInvited(list);
+      final currentLocal = _localSnapshot(list);
       if (isInvited && !wasInvited) {
         // X1: a fresh invite (false -> true). Clear any earlier dismissal
         // so the "invited to speak" banner (re)appears for THIS invite,
@@ -211,6 +213,30 @@ class SpaceRoomNotifier
         // The await may resume after leave() disposed this notifier.
         if (_disposed) return;
         state = state.copyWith(isMicEnabled: false);
+      }
+      // SHARECTL-app: the host revoked THIS speaker's video sharing while
+      // they were already live (camera or screen). The Stop control is the
+      // SAME _RoundButton as Go live, gated on canPublishVideo (see
+      // _ControlBar), so it disappears the instant the grant flips,
+      // leaving no in-app way to stop an already-live share. Mirrors the
+      // demotion auto-mute above: detect the true -> false transition on
+      // the LOCAL participant's canPublishVideo and auto-stop whichever
+      // video source is still live via the same stopLive path the Stop
+      // button itself calls, so the control reverts cleanly to the
+      // disabled "Go live" state instead of leaving a stuck live share.
+      // This is the cooperative client-side half; a server force-unpublish
+      // backstop is being added in parallel for the uncooperative case.
+      final wasCanPublishVideo = previousLocal?.canPublishVideo ?? true;
+      final isCanPublishVideo = currentLocal?.canPublishVideo ?? true;
+      if (wasCanPublishVideo &&
+          !isCanPublishVideo &&
+          currentLocal != null &&
+          (currentLocal.isCameraEnabled || currentLocal.isScreenSharing)) {
+        await stopLive(
+          isCameraLive: currentLocal.isCameraEnabled,
+          isScreenLive: currentLocal.isScreenSharing,
+        );
+        if (_disposed) return;
       }
     });
     _connSub = svc.connectionState.listen((cs) {
