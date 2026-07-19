@@ -288,11 +288,13 @@ class SpaceRoomNotifier
     _connSub = svc.connectionState.listen((cs) {
       state = state.copyWith(isConnected: cs == ConnectionState.connected);
     });
-    // Mirrors the mic-enabled state whenever LiveKitCallService changes it
-    // for ANY reason, including the system-audio mutual exclusion silently
-    // flipping it internally (system audio starting force-disables the mic;
-    // enabling the mic force-stops system audio). Without this, the
-    // control-bar label goes stale until the user taps mute/unmute.
+    // Mirrors the mic-enabled state whenever LiveKitCallService changes it,
+    // for ANY reason (today: an explicit caller toggle). DECOUPLE: content
+    // audio (TrackSource.screenShareAudio) is an independent coexisting
+    // source and never flips the mic internally, so it is not one of those
+    // reasons; see the DECOUPLE doc comment on LiveKitCallService.
+    // setMicEnabled. Without this listener, the control-bar label goes
+    // stale until the user taps mute/unmute.
     _micSub = svc.micEnabledChanges.listen((enabled) {
       if (_disposed) return;
       state = state.copyWith(isMicEnabled: enabled);

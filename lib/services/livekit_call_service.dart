@@ -302,9 +302,11 @@ class LiveKitCallService {
   final _externalMuteCtl = StreamController<void>.broadcast();
 
   /// True while [setMicEnabled] has an in-flight caller-initiated disable
-  /// (an explicit toggle, or the internal system-audio mutual-exclusion
-  /// flip). Guards [_reconcileExternalMicMute] so a mute WE requested is
-  /// never mistaken for a server-initiated one (see that method).
+  /// (an explicit toggle; content audio, TrackSource.screenShareAudio, is an
+  /// independent coexisting source and does NOT flip this, see the DECOUPLE
+  /// doc comment on [setMicEnabled]). Guards [_reconcileExternalMicMute] so
+  /// a mute WE requested is never mistaken for a server-initiated one (see
+  /// that method).
   ///
   /// RACE ANALYSIS: the SDK dispatches the local TrackMutedEvent for a
   /// self-mute through its own room-event bus, an async chain roughly two
@@ -335,20 +337,23 @@ class LiveKitCallService {
   Stream<ConnectionState> get connectionState => _connStateCtl.stream;
 
   /// Emits the local microphone's enabled state whenever [setMicEnabled]
-  /// changes it, for ANY reason: an explicit caller toggle, or an INTERNAL
-  /// flip made to enforce the system-audio mutual exclusion (system audio
-  /// starting force-disables the mic; enabling the mic force-stops system
-  /// audio). Every mic-enabled change funnels through [setMicEnabled], so
-  /// this is the single seam UI state should follow instead of tracking its
-  /// own copy that only updates on a manual toggle call, see
-  /// `SpaceRoomNotifier` for the consumer.
+  /// changes it, for ANY reason: today that is an explicit caller toggle.
+  /// DECOUPLE: the mic (TrackSource.microphone) and content audio
+  /// (TrackSource.screenShareAudio, see [startScreenShareSystemAudio]) are
+  /// independent coexisting sources, so starting/stopping content audio
+  /// never flips the mic and is NOT one of the reasons this stream emits.
+  /// Every mic-enabled change funnels through [setMicEnabled], so this is
+  /// the single seam UI state should follow instead of tracking its own
+  /// copy that only updates on a manual toggle call, see `SpaceRoomNotifier`
+  /// for the consumer.
   Stream<bool> get micEnabledChanges => _micEnabledCtl.stream;
 
   /// Fires whenever the local mic goes muted from OUTSIDE this service, i.e.
   /// a server-initiated mute the local side never requested (the moderation
   /// layer's host force-mute, `MuteRoomTrackRequest`, muting the target's
   /// live mic publication). Every caller-initiated disable (an explicit
-  /// toggle, or the system-audio mutual exclusion) already funnels through
+  /// toggle; content audio starting/stopping does NOT count, see the
+  /// DECOUPLE doc comment on [setMicEnabled]) already funnels through
   /// [setMicEnabled] and is excluded here (see [_reconcileExternalMicMute]),
   /// so this is purely the "someone else did this to me" signal the UI can
   /// use to show a "muted by host" notice. [micEnabledChanges] still carries
@@ -751,8 +756,10 @@ class LiveKitCallService {
   ///
   /// Camera and screen share are mutually exclusive live video sources
   /// (Spaces "Go live": camera XOR screen). Going live on camera stops an
-  /// active screen share first, mirroring the mic / system-audio exclusion
-  /// in [setMicEnabled], but purely video and independent of that one.
+  /// active screen share first. This XOR is purely about video sources and
+  /// is independent of audio: it is unrelated to the mic / content-audio
+  /// relationship, which (per DECOUPLE, see [setMicEnabled]) is NOT
+  /// exclusive at all.
   Future<void> setCameraEnabled(bool enabled,
       {CameraPosition cameraPosition = CameraPosition.front}) async {
     if (enabled) await stopScreenShareForCamera();
@@ -765,7 +772,9 @@ class LiveKitCallService {
 
   /// Stop an active screen share so the camera can go live. Camera XOR
   /// screen: only one live video source at a time. Safe no-op when no
-  /// screen share is live. Never touches the mic / system-audio track.
+  /// screen share is live. Never touches the mic or the content-audio
+  /// track (see [stopScreenShareSystemAudio], called separately by
+  /// [setScreenShareEnabled] when a share is stopped outright).
   Future<void> stopScreenShareForCamera() async {
     if (_localParticipant?.isScreenShareEnabled() ?? false) {
       await setScreenShareEnabled(false);
@@ -993,10 +1002,11 @@ class LiveKitCallService {
       return;
     }
 
-    // Camera XOR screen: only one live video source at a time (mirrors the
-    // mic / system-audio exclusion above, but purely video and independent
-    // of it). Stop an active camera before starting the screen share so no
-    // participant ever publishes both.
+    // Camera XOR screen: only one live video source at a time (a video-only
+    // exclusion, unrelated to audio: the mic / content-audio relationship is
+    // NOT exclusive, see DECOUPLE on setMicEnabled). Stop an active camera
+    // before starting the screen share so no participant ever publishes
+    // both.
     await stopCameraForScreenShare();
 
     // Capture options: request screen audio in the single getDisplayMedia call.
@@ -1318,12 +1328,14 @@ class LiveKitCallService {
   /// OWN microphone-source publication, so the reconciliation is scoped to
   /// exactly the target-visibility gap described above.
   ///
-  /// [_selfMuteInFlight] excludes a mute WE requested (an explicit toggle,
-  /// or the system-audio mutual exclusion), both of which already emit
-  /// through [setMicEnabled] itself, so this only fires for the remaining
-  /// "someone else did this to me" case. X model: strictly one-directional,
-  /// no auto-unmute is ever inferred from a TrackUnmutedEvent here, the
-  /// speaker only goes live again via their own [setMicEnabled] call.
+  /// [_selfMuteInFlight] excludes a mute WE requested (an explicit toggle),
+  /// which already emits through [setMicEnabled] itself, so this only fires
+  /// for the remaining "someone else did this to me" case. DECOUPLE: content
+  /// audio starting or stopping never touches the mic, so it is not a
+  /// caller-initiated-disable case this needs to exclude. X model: strictly
+  /// one-directional, no auto-unmute is ever inferred from a
+  /// TrackUnmutedEvent here, the speaker only goes live again via their own
+  /// [setMicEnabled] call.
   void _reconcileExternalMicMute(TrackMutedEvent event) {
     if (_selfMuteInFlight) return;
     if (event.participant is! LocalParticipant) return;
@@ -1549,6 +1561,16 @@ class LiveKitCallService {
   /// the old mutual-exclusion behavior (publish under
   /// `TrackSource.microphone`, force-mute the real mic first), see git
   /// history / the design spec.
+  ///
+  /// NOTE: this copies `mediaStream`/`mediaStreamTrack`/`currentOptions`
+  /// only, NOT `processor` (a `LocalTrack` can carry a post-capture
+  /// `TrackProcessor` set via `setProcessor`). Today
+  /// [SystemAudioSources.captureOptions] never sets one, so
+  /// `capturedTrack.processor` is always null here and this is a no-op in
+  /// practice. Flagged as a latent gap: if a processor is ever attached to
+  /// the system-audio capture in the future, it would need to be re-applied
+  /// to the retagged track explicitly (e.g. via `setProcessor`), since this
+  /// helper does not carry it across.
   @visibleForTesting
   static LocalAudioTrack retagAsScreenShareAudio(
     LocalAudioTrack capturedTrack,
