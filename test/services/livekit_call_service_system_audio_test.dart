@@ -1,13 +1,27 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:livekit_client/livekit_client.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:skchat/services/livekit_call_service.dart';
 
 class _FakeLocalTrack extends Mock implements LocalTrack {}
 
+class _FakeLocalAudioTrack extends Mock implements LocalAudioTrack {}
+
 class _FakeLocalParticipant extends Mock implements LocalParticipant {}
 
+class _FakeMediaStream extends Mock implements rtc.MediaStream {}
+
+class _FakeMediaStreamTrack extends Mock implements rtc.MediaStreamTrack {}
+
 void main() {
+  // Needed only by the DECOUPLE group's real-capture-attempt test below:
+  // LocalAudioTrack.create() reaches into flutter_webrtc's platform-channel
+  // singletons, which need a bound TestWidgetsFlutterBinding to fail with a
+  // normal (catchable) MissingPluginException instead of a raw
+  // "Binding has not yet been initialized" error escaping the test zone.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('isSharingSystemAudio is false before any share', () {
     final svc = LiveKitCallService();
     expect(svc.isSharingSystemAudio, isFalse);
@@ -27,15 +41,11 @@ void main() {
     expect(svc.isSharingSystemAudio, isFalse);
   });
 
-  // IF1: startScreenShareSystemAudio() enforces "at most one microphone-
-  // source publication" by disabling the real mic through setMicEnabled(),
-  // NOT a raw lp.setMicrophoneEnabled() call, so that internal flip is
-  // observable on micEnabledChanges the same as an explicit caller toggle.
-  // A no-room service has no local participant to actually flip, so this
-  // exercises the seam at the level that IS unit-testable without a live
-  // LiveKit room/SDK: setMicEnabled() itself must emit regardless of
-  // whether a local participant exists yet, mirroring how _emitParticipants
-  // already fires unconditionally.
+  // setMicEnabled() itself must emit on every call regardless of whether a
+  // local participant exists yet (mirrors how _emitParticipants already
+  // fires unconditionally). A no-room service has no local participant to
+  // actually flip, so this exercises the seam at the level that IS
+  // unit-testable without a live LiveKit room/SDK.
   test('setMicEnabled emits on micEnabledChanges for every call, even with '
       'no room', () async {
     final svc = LiveKitCallService();
@@ -49,6 +59,122 @@ void main() {
 
     expect(events, [false, true]);
     await sub.cancel();
+  });
+
+  // DECOUPLE: content audio (TrackSource.screenShareAudio) and the voice mic
+  // (TrackSource.microphone) are independent wire sources now, so neither
+  // toggle should touch the other's track. There used to be a mutual
+  // exclusion here (both published as TrackSource.microphone and collided on
+  // getTrackPublicationBySource); these tests pin down that it is gone in
+  // BOTH directions, plus the source-tagging mechanism itself.
+  group('DECOUPLE: content audio and the voice mic are independent', () {
+    test(
+        'retagAsScreenShareAudio tags the track TrackSource.screenShareAudio '
+        'while wrapping the SAME mediaStream/mediaStreamTrack/currentOptions '
+        '(the internal-ctor pattern the SDK itself uses for '
+        'createScreenShareTracksWithAudio)', () {
+      final captured = _FakeLocalAudioTrack();
+      final stream = _FakeMediaStream();
+      final track = _FakeMediaStreamTrack();
+      const options = AudioCaptureOptions(
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      );
+      when(() => captured.mediaStream).thenReturn(stream);
+      when(() => captured.mediaStreamTrack).thenReturn(track);
+      when(() => captured.currentOptions).thenReturn(options);
+
+      final retagged = LiveKitCallService.retagAsScreenShareAudio(captured);
+
+      expect(retagged.source, TrackSource.screenShareAudio);
+      expect(retagged.mediaStream, same(stream));
+      expect(retagged.mediaStreamTrack, same(track));
+      expect(retagged.currentOptions, same(options));
+    });
+
+    test(
+        'startScreenShareSystemAudio no longer force-mutes the real mic '
+        'first: setMicEnabled is never invoked as a side effect on the way '
+        'to capturing content audio', () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.isMicrophoneEnabled()).thenReturn(true);
+      when(() => lp.setMicrophoneEnabled(any(),
+              audioCaptureOptions: any(named: 'audioCaptureOptions')))
+          .thenAnswer((_) async => null);
+      svc.debugLocalParticipant = lp;
+
+      final micEvents = <bool>[];
+      final sub = svc.micEnabledChanges.listen(micEvents.add);
+
+      // The real LocalAudioTrack.create() capture has no platform channel in
+      // this unit-test sandbox and will throw; that failure is irrelevant to
+      // what this test asserts, which is that nothing calls setMicEnabled
+      // (observable via micEnabledChanges) or the participant's real
+      // setMicrophoneEnabled on the way there. The OLD mutual-exclusion
+      // behavior this replaces called setMicEnabled(false) BEFORE ever
+      // attempting the capture, so that call would have already landed by
+      // the time the capture throws; its absence here is the regression
+      // guard for the removal.
+      try {
+        await svc.startScreenShareSystemAudio('sink.a.monitor');
+      } catch (_) {
+        // Expected: no real capture device in this sandbox.
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      expect(micEvents, isEmpty);
+      verifyNever(() => lp.setMicrophoneEnabled(any(),
+          audioCaptureOptions: any(named: 'audioCaptureOptions')));
+      await sub.cancel();
+    });
+
+    test(
+        'enabling the mic while content audio is live does not stop or '
+        'alter the content-audio track: both coexist', () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.setMicrophoneEnabled(any(),
+              audioCaptureOptions: any(named: 'audioCaptureOptions')))
+          .thenAnswer((_) async => null);
+      final monitor = _FakeLocalTrack();
+      when(() => monitor.sid).thenReturn('TR_monitor');
+      when(() => monitor.stop()).thenAnswer((_) async => true);
+      svc.debugLocalParticipant = lp;
+      svc.debugSystemAudioTrack = monitor;
+
+      await svc.setMicEnabled(true);
+
+      // The mic came on independently; the content-audio track was never
+      // touched and stays live.
+      verify(() => lp.setMicrophoneEnabled(true,
+          audioCaptureOptions: any(named: 'audioCaptureOptions'))).called(1);
+      verifyNever(() => monitor.stop());
+      expect(svc.isSharingSystemAudio, isTrue);
+    });
+
+    test(
+        'muting the mic while content audio is live does not stop or alter '
+        'the content-audio track', () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.setMicrophoneEnabled(any(),
+              audioCaptureOptions: any(named: 'audioCaptureOptions')))
+          .thenAnswer((_) async => null);
+      final monitor = _FakeLocalTrack();
+      when(() => monitor.sid).thenReturn('TR_monitor');
+      when(() => monitor.stop()).thenAnswer((_) async => true);
+      svc.debugLocalParticipant = lp;
+      svc.debugSystemAudioTrack = monitor;
+
+      await svc.setMicEnabled(false);
+
+      verify(() => lp.setMicrophoneEnabled(false,
+          audioCaptureOptions: any(named: 'audioCaptureOptions'))).called(1);
+      verifyNever(() => monitor.stop());
+      expect(svc.isSharingSystemAudio, isTrue);
+    });
   });
 
   // M1: externalMuteEvents is the "server-initiated mute" signal (a host

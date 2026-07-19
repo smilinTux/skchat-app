@@ -713,16 +713,15 @@ class LiveKitCallService {
 
   /// Mute / unmute the local microphone.
   ///
-  /// System audio and the voice mic are mutually exclusive: both would
-  /// otherwise publish as `TrackSource.microphone`, and LiveKit's
-  /// `getTrackPublicationBySource(microphone)` returns whichever published
-  /// first, silently dropping the other. So enabling the real mic while a
-  /// system-audio track is live stops the system-audio track first, leaving
-  /// at most one microphone-source publication at any time.
+  /// DECOUPLE: the voice mic (`TrackSource.microphone`) and content/system
+  /// audio (`TrackSource.screenShareAudio`, see [startScreenShareSystemAudio])
+  /// are DISTINCT wire sources now, so they are fully independent: enabling
+  /// or disabling the mic never touches an active content-audio share, and
+  /// starting/stopping content audio never touches the mic. There used to be
+  /// a mutual exclusion here (both published as `TrackSource.microphone` and
+  /// collided on `getTrackPublicationBySource`); that collision is gone now
+  /// that content audio has its own source, so the exclusion was removed.
   Future<void> setMicEnabled(bool enabled) async {
-    if (enabled && isSharingSystemAudio) {
-      await stopScreenShareSystemAudio();
-    }
     // Mark a caller-initiated disable in flight so the TrackMutedEvent
     // reconciliation in _bindRoomListeners can tell this apart from a
     // server-initiated mute (host force-mute) arriving with no local call
@@ -830,20 +829,26 @@ class LiveKitCallService {
   ///   3 fps layer. That layer is useless for motion content and buys nothing
   ///   on a gigabit LAN with one viewer tier, so there is no upside to
   ///   simulcast here, only extra encoder/negotiation overhead.
-  /// AVSYNC-fix: shared `PublishOptions.stream` name for BOTH the screen-share
-  /// VIDEO publish ([screenSharePublishOptionsFor]) and the screen-share
-  /// system-AUDIO publish ([screenShareAudioPublishOptions]). Per
-  /// `options.dart` (livekit_client 2.5.0+hotfix.3): "Audio and video tracks
-  /// with the same stream name will be placed in the same MediaStream and
-  /// offer better synchronization." Before this constant existed the video
-  /// publish set no stream name at all while the audio publish already set
-  /// `'screenshare'`, so `buildStreamId` (src/utils.dart:647) never grouped
-  /// them into one MediaStream and the receiver ran two unrelated RTP
-  /// timelines that drifted out of lip-sync. Both publishers now reference
-  /// this single constant so they cannot drift apart again.
-  @visibleForTesting
-  static const String screenShareStreamName = 'screenshare';
-
+  /// DECOUPLE: this used to carry a shared `PublishOptions.stream` name
+  /// (`'screenshare'`) on BOTH the screen-share VIDEO publish
+  /// ([screenSharePublishOptionsFor]) and the screen-share system-AUDIO
+  /// publish ([screenShareAudioPublishOptions]) as a lip-sync workaround
+  /// (AVSYNC-fix). That workaround only worked because BOTH tracks published
+  /// as `TrackSource.microphone`/`screenShareVideo`-adjacent wire sources at
+  /// the time, so `buildStreamId` (src/utils.dart:647) happened to combine
+  /// them into the same literal stream id. Now that system audio publishes as
+  /// its own distinct `TrackSource.screenShareAudio` (see
+  /// [startScreenShareSystemAudio]), `buildStreamId` gives `screenShareVideo`
+  /// and `screenShareAudio` DIFFERENT fixed suffixes, so a shared custom
+  /// `stream:` name would make the two literal ids diverge instead of match.
+  /// `PublishOptions.stream`'s own doc comment (`options.dart`) states the
+  /// server pairs `screen_share` + `screen_share_audio` by DEFAULT when no
+  /// custom stream name is given, which is exactly the pairing the SDK's own
+  /// `LocalVideoTrack.createScreenShareTracksWithAudio` relies on (it passes
+  /// no custom `stream:` at all). So the custom name is dropped here in favor
+  /// of that server-side default pairing; verify with a real two-client
+  /// lip-sync check after this change (source alone cannot confirm the SFU's
+  /// grouping behavior).
   @visibleForTesting
   static VideoPublishOptions screenSharePublishOptionsFor(
     ScreenShareFrameRate tier,
@@ -859,7 +864,6 @@ class LiveKitCallService {
     };
     return VideoPublishOptions(
       name: VideoPublishOptions.defaultScreenShareName,
-      stream: screenShareStreamName,
       simulcast: false,
       screenShareEncoding: encoding,
       degradationPreference: DegradationPreference.maintainFramerate,
@@ -867,17 +871,15 @@ class LiveKitCallService {
   }
 
   /// The screen-share system-audio `AudioPublishOptions`, factored out so it
-  /// is directly assertable in tests against [screenSharePublishOptionsFor]
-  /// without needing a live LiveKit room (see [startScreenShareSystemAudio],
-  /// which publishes with exactly these options). Shares
-  /// [screenShareStreamName] with the video publish so the two tracks group
-  /// into one MediaStream (see the AVSYNC-fix doc comment above
-  /// [screenShareStreamName]).
+  /// is directly assertable in tests (see [startScreenShareSystemAudio],
+  /// which publishes with exactly these options). No custom `stream:` name
+  /// (see the DECOUPLE doc comment above [screenSharePublishOptionsFor]):
+  /// pairing with the screen-share video now relies on the SDK/server's own
+  /// default `screenShareVideo` + `screenShareAudio` grouping.
   @visibleForTesting
   static AudioPublishOptions screenShareAudioPublishOptions() {
     return const AudioPublishOptions(
       name: 'screenshare-audio',
-      stream: screenShareStreamName,
     );
   }
 
@@ -1464,45 +1466,52 @@ class LiveKitCallService {
   bool get isSharingSystemAudio => _systemAudioTrack != null;
 
   /// Capture [deviceId] (a monitor source) with all voice processing off and
-  /// publish it as the screen-share audio track. Best-effort: a failure here
-  /// must never abort the video share, so callers wrap it. Guards when there is
-  /// no room, or when a system-audio track is already being shared.
+  /// publish it as a DISTINCT `TrackSource.screenShareAudio` track, fully
+  /// independent of the voice mic (`TrackSource.microphone`, [setMicEnabled]).
+  /// Best-effort: a failure here must never abort the video share, so callers
+  /// wrap it. Guards when there is no room, or when a system-audio track is
+  /// already being shared.
   ///
-  /// PROTOCOL-SOURCE CAVEAT (re-verified against `livekit_client`
-  /// 2.5.0+hotfix.3; the constraint has held unchanged since at least 2.2.6):
-  /// the public `LocalAudioTrack.create()` factory (see
-  /// `track/local/audio.dart`) hardcodes `TrackSource.microphone` on every
-  /// track it returns; the `TrackSource.screenShareAudio` value is only ever
-  /// set by the SDK's own `@internal` `LocalAudioTrack` constructor, invoked
-  /// internally from `LocalVideoTrack.createScreenShareTracksWithAudio` (see
-  /// `track/local/video.dart`) for a browser `getDisplayMedia` audio track,
-  /// and `AudioPublishOptions` still has no field to override the published
-  /// source; `LocalParticipant.publishAudioTrack` derives the wire-level
-  /// source from `track.source` itself (see `participant/local.dart`), not
-  /// from publish options. So a device-captured (PulseAudio monitor) track
-  /// cannot be tagged `screenShareAudio` at the LiveKit-protocol level through
-  /// any supported public API. We publish it as the accepted substitute: a
-  /// distinct publish `name`/`stream` so it is identifiable and groupable on
-  /// the receiving side, while the wire-level source remains `microphone`
-  /// (voice processing off). This is the settled approach, not a pending
-  /// question; there is no supported way in 2.5.0+hotfix.3 to mint a
-  /// `screenShareAudio`-sourced track from a device id.
+  /// DECOUPLE (re-verified against `livekit_client` 2.5.0+hotfix.3): the
+  /// public `LocalAudioTrack.create()` factory (`track/local/audio.dart`)
+  /// hardcodes `TrackSource.microphone` on every track it returns, and
+  /// `AudioPublishOptions` has no field to override the published source;
+  /// `LocalParticipant.publishAudioTrack` derives the wire-level source from
+  /// `track.source` itself (`participant/local.dart`), which is `final` and
+  /// set only at construction (`track.dart`). So the source can only be
+  /// chosen by constructing the `LocalAudioTrack` directly. The SDK's own
+  /// `LocalVideoTrack.createScreenShareTracksWithAudio`
+  /// (`track/local/video.dart:259-265`) does exactly this: it builds a
+  /// `LocalAudioTrack` tagged `TrackSource.screenShareAudio` via the
+  /// package's `@internal` constructor (`track/local/audio.dart:117-127`),
+  /// wrapping a captured `MediaStream`/`MediaStreamTrack` pair. That
+  /// constructor does not care where the stream came from (`getDisplayMedia`
+  /// there, our PulseAudio monitor `getUserMedia` capture here), so we reuse
+  /// it: capture via the public `LocalAudioTrack.create()` factory as before
+  /// (unchanged capture options / voice-processing-off), then re-wrap that
+  /// track's already-public `mediaStream`/`mediaStreamTrack`/`currentOptions`
+  /// in a NEW `LocalAudioTrack` built via the internal constructor tagged
+  /// `TrackSource.screenShareAudio`, and publish THAT. `@internal` is an
+  /// analyzer lint only (no runtime or language-level restriction), so this
+  /// compiles and runs; see the `ignore:` comment at the call site. RISK:
+  /// this is an internal SDK surface and can change or vanish on a
+  /// livekit_client version bump with no semver signal, re-verify this
+  /// constructor's signature on every SDK upgrade. Fallback if it breaks: the
+  /// old mutual-exclusion behavior (publish under `TrackSource.microphone`,
+  /// force-mute the real mic first), see git history / the design spec.
   Future<void> startScreenShareSystemAudio(String deviceId) async {
     final lp = _localParticipant;
     if (lp == null || _systemAudioTrack != null) return;
-    // Mutually exclusive with the voice mic: both publish as
-    // TrackSource.microphone, so leaving the real mic live would leave two
-    // microphone-source publications and make mic lookups grab the wrong
-    // one. Disable it first via setMicEnabled (NOT a raw lp.
-    // setMicrophoneEnabled call) so this internal flip also emits on
-    // [micEnabledChanges] and any UI mirroring mic state (e.g.
-    // SpaceRoomNotifier) stays in sync without a manual resync tap.
-    if (lp.isMicrophoneEnabled()) {
-      await setMicEnabled(false);
-    }
-    final track = await LocalAudioTrack.create(
+    final capturedMicTrack = await LocalAudioTrack.create(
       SystemAudioSources.captureOptions(deviceId),
     );
+    // Re-tag the captured monitor track as TrackSource.screenShareAudio
+    // instead of publishing capturedMicTrack (which is stuck at
+    // TrackSource.microphone by the public factory, see the doc comment
+    // above); never call capturedMicTrack.stop() or publish it, it is
+    // discarded as a plain Dart wrapper object once `track` owns the same
+    // underlying MediaStreamTrack.
+    final track = retagAsScreenShareAudio(capturedMicTrack);
     try {
       await lp.publishAudioTrack(
         track,
@@ -1514,6 +1523,43 @@ class LiveKitCallService {
     }
     _systemAudioTrack = track;
     _emitParticipants();
+  }
+
+  /// Re-tags [capturedTrack] (captured via the public
+  /// `LocalAudioTrack.create()` factory, which hardcodes
+  /// `TrackSource.microphone`) as `TrackSource.screenShareAudio`, wrapping
+  /// the SAME underlying `mediaStream`/`mediaStreamTrack`/`currentOptions`,
+  /// via the package's `@internal` `LocalAudioTrack` constructor. This is
+  /// the exact pattern the SDK itself uses in
+  /// `LocalVideoTrack.createScreenShareTracksWithAudio`
+  /// (`track/local/video.dart:259-265`) to mint a `screenShareAudio` track
+  /// from a captured `MediaStream`/`MediaStreamTrack` pair; that constructor
+  /// does not care where the stream came from (`getDisplayMedia` there, our
+  /// PulseAudio monitor `getUserMedia` capture here). `@internal` is an
+  /// analyzer lint only (no runtime or language-level restriction), so this
+  /// compiles and runs. Factored out of [startScreenShareSystemAudio] so the
+  /// re-tagging step itself is directly unit-testable without a real
+  /// capture device: a test can pass a fake `LocalAudioTrack` with stubbed
+  /// `mediaStream`/`mediaStreamTrack`/`currentOptions` and assert the
+  /// returned track's `source` and identity-preserved fields.
+  ///
+  /// RISK: this relies on an internal SDK surface that can change or vanish
+  /// on a livekit_client version bump with no semver signal; re-verify this
+  /// constructor's signature on every SDK upgrade. Fallback if it breaks:
+  /// the old mutual-exclusion behavior (publish under
+  /// `TrackSource.microphone`, force-mute the real mic first), see git
+  /// history / the design spec.
+  @visibleForTesting
+  static LocalAudioTrack retagAsScreenShareAudio(
+    LocalAudioTrack capturedTrack,
+  ) {
+    // ignore: invalid_use_of_internal_member
+    return LocalAudioTrack(
+      TrackSource.screenShareAudio,
+      capturedTrack.mediaStream,
+      capturedTrack.mediaStreamTrack,
+      capturedTrack.currentOptions,
+    );
   }
 
   /// Test seam: inject the current system-audio monitor track so the

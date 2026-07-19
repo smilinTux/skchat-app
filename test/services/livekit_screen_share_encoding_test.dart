@@ -97,37 +97,32 @@ void main() {
     });
   });
 
-  // AVSYNC-fix: the screen-share VIDEO publish previously carried no stream
-  // name while the system-audio publish already set stream:'screenshare'
-  // (livekit_call_service.dart ~1380). livekit_client's buildStreamId
-  // (utils.dart:647) only groups tracks into one MediaStream when they share
-  // a stream name (options.dart PublishOptions.stream doc: "Audio and video
-  // tracks with the same stream name will be placed in the same MediaStream
-  // and offer better synchronization"), so the receiver ran two unrelated RTP
-  // timelines and system audio drifted out of lip-sync with the shared video.
-  // Both sides must reference the same shared constant so they cannot drift
-  // apart again.
+  // DECOUPLE: the AVSYNC-fix custom stream:'screenshare' name (previously
+  // shared by the screen-share VIDEO publish and the system-audio publish)
+  // is dropped now that system audio publishes as its own distinct
+  // TrackSource.screenShareAudio (see LiveKitCallService.
+  // startScreenShareSystemAudio). buildStreamId (utils.dart:647) gives
+  // screenShareVideo and screenShareAudio DIFFERENT fixed suffixes, so
+  // keeping a shared custom name would make the two literal stream ids
+  // diverge; PublishOptions.stream's own doc comment says the server pairs
+  // screen_share + screen_share_audio by DEFAULT when no custom stream name
+  // is given, so both sides now rely on that default instead.
   group('screen-share video + system-audio grouping (lip-sync)', () {
-    test('screenSharePublishOptionsFor sets a non-null stream name for every '
-        'tier', () {
+    test('screenSharePublishOptionsFor sets no custom stream name for any '
+        'tier (relies on the SDK/server default pairing)', () {
       for (final tier in ScreenShareFrameRate.values) {
         final opts = LiveKitCallService.screenSharePublishOptionsFor(tier);
-        expect(opts.stream, isNotNull, reason: 'tier=$tier');
+        expect(opts.stream, isNull, reason: 'tier=$tier');
       }
     });
 
-    test('the screen-share video publish stream matches the system-audio '
-        'publish stream, so the SDK groups them into one MediaStream', () {
-      final videoOpts = LiveKitCallService.screenSharePublishOptionsFor(
-        ScreenShareFrameRate.standard,
-      );
+    test('screenShareAudioPublishOptions also sets no custom stream name',
+        () {
       final audioOpts = LiveKitCallService.screenShareAudioPublishOptions();
-
-      expect(videoOpts.stream, audioOpts.stream);
-      expect(videoOpts.stream, 'screenshare');
+      expect(audioOpts.stream, isNull);
     });
 
-    test('adding the stream name does not disturb the M8 encoding tuning '
+    test('dropping the stream name does not disturb the M8 encoding tuning '
         '(maxBitrate/framerate/degradation, simulcast off)', () {
       final opts = LiveKitCallService.screenSharePublishOptionsFor(
         ScreenShareFrameRate.standard,

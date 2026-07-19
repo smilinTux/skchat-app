@@ -102,11 +102,16 @@ void main() {
     // _TypeError (null is not a Stream); see space_room_screen.dart's control
     // bar.
     when(() => svc.dataChannel).thenAnswer((_) => const Stream.empty());
-    // Mic-enabled changes driven internally by LiveKitCallService (e.g. the
-    // system-audio mutual exclusion silently disabling/re-enabling the real
-    // mic). Default to an empty stream; tests that exercise that desync
-    // override this with a controller they drive directly.
+    // Mic-enabled changes driven internally by LiveKitCallService. Default
+    // to an empty stream; tests that exercise a mic-state desync override
+    // this with a controller they drive directly.
     when(() => svc.micEnabledChanges).thenAnswer((_) => const Stream.empty());
+    // DECOUPLE: whether a content-audio (system audio) share is currently
+    // live, read directly by SpaceRoomNotifier.connect's participants
+    // listener on every emission to detect the false -> true transition that
+    // defaults the mic to muted. Default to not-sharing; the DECOUPLE test
+    // group below overrides this per case.
+    when(() => svc.isSharingSystemAudio).thenReturn(false);
     // Server-initiated mute signal (M1). Default to an empty stream; the M1
     // group below overrides this with a controller it drives directly.
     when(() => svc.externalMuteEvents)
@@ -510,9 +515,12 @@ void main() {
       expect(find.text("Mute"), findsOneWidget);
       expect(find.text("Unmute"), findsNothing);
 
-      // System audio starts and force-disables the real mic underneath
-      // (the mutual exclusion in LiveKitCallService.
-      // startScreenShareSystemAudio), WITHOUT going through toggleMic().
+      // DECOUPLE: content audio no longer force-disables the real mic (see
+      // LiveKitCallService.setMicEnabled), but the control bar must still
+      // catch up to ANY externally-driven mic-state emission (e.g. the
+      // DECOUPLE mic-default-on-content-share-start path, or a host force-
+      // mute) WITHOUT going through toggleMic() itself. Drive the same
+      // stream directly to keep this a pure reactivity test.
       micCtl.add(false);
       await tester.pump(const Duration(milliseconds: 50));
 
@@ -544,13 +552,155 @@ void main() {
       expect(find.text("Mute"), findsNothing);
 
       // The mic gets re-enabled by some path other than this notifier's own
-      // toggleMic() (e.g. setMicEnabled(true) tearing down system audio per
-      // the existing mutual exclusion); the label must still catch up.
+      // toggleMic() (e.g. a host force-unmute reconciliation, or any other
+      // future external re-enable); the label must still catch up.
       micCtl.add(true);
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(find.text("Mute"), findsOneWidget);
       expect(find.text("Unmute"), findsNothing);
+    });
+  });
+
+  // ── DECOUPLE: content audio + independent mic ─────────────────────────────
+  //
+  // Content audio (TrackSource.screenShareAudio) and the voice mic
+  // (TrackSource.microphone) are independent tracks now (see
+  // LiveKitCallService.setMicEnabled / startScreenShareSystemAudio): no
+  // mutual exclusion. The ONLY UI-level behavior change lives here: default
+  // the mic to muted the moment a content share with system audio starts
+  // (echo avoidance), show a one-line note while that holds, and never force
+  // the mic control itself.
+  group("DECOUPLE content-audio / independent-mic UX", () {
+    testWidgets(
+        "starting a content share with system audio defaults the mic to "
+        "muted and shows the echo note; the mic control stays available",
+        (tester) async {
+      final partCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(partCtl.close);
+      final roster = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isSpeaking: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => partCtl.stream);
+      when(() => svc.currentParticipants).thenReturn(roster);
+
+      await tester.pumpWidget(wrap()); // host join: mic starts live.
+      partCtl.add(roster);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Before any content share: mic live, no echo note.
+      expect(find.text("Mute"), findsOneWidget);
+      expect(find.textContaining("Mic muted to avoid echo"), findsNothing);
+
+      // Content share with system audio starts (whichever widget triggered
+      // LiveKitCallService.startScreenShareSystemAudio; this only observes
+      // the service-level isSharingSystemAudio flag flipping, so it covers
+      // ScreenSharePanel's direct service call just as much as a control-
+      // bar-driven path). Re-emit the same roster so the participants
+      // listener re-evaluates svc.isSharingSystemAudio.
+      when(() => svc.isSharingSystemAudio).thenReturn(true);
+      partCtl.add(roster);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Mic defaulted to muted exactly once, the control relabels, and the
+      // echo note appears.
+      verify(() => svc.setMicEnabled(false)).called(1);
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.text("Mute"), findsNothing);
+      expect(find.textContaining("Mic muted to avoid echo"), findsOneWidget);
+
+      // The mic control remains fully present and tappable (not hidden, not
+      // disabled): the note is informational only.
+      expect(find.text("Unmute"), findsOneWidget);
+    });
+
+    testWidgets(
+        "the mic stays independently unmutable while content audio keeps "
+        "playing, and the echo note clears once unmuted", (tester) async {
+      final partCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(partCtl.close);
+      final roster = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isSpeaking: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => partCtl.stream);
+      when(() => svc.currentParticipants).thenReturn(roster);
+      when(() => svc.isSharingSystemAudio).thenReturn(true);
+
+      await tester.pumpWidget(wrap());
+      partCtl.add(roster);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Content audio was already live at connect time: mic defaulted muted
+      // (via connect()'s own goLive setMicEnabled(true) immediately followed
+      // by the DECOUPLE default-mute setMicEnabled(false); both already
+      // happened by now, so clear the mock's recorded calls and only assert
+      // on what happens from the Unmute tap onward).
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.textContaining("Mic muted to avoid echo"), findsOneWidget);
+      clearInteractions(svc);
+
+      // Tap Unmute: the mic control is fully independent, so this must work
+      // even while content audio keeps sharing (isSharingSystemAudio stays
+      // true throughout; only the mic state changes).
+      await tester.tap(find.text("Unmute"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setMicEnabled(true)).called(1);
+      // stopScreenShareSystemAudio must never be called by unmuting: the
+      // old mutual exclusion (mic-on stops content audio) is gone.
+      verifyNever(() => svc.stopScreenShareSystemAudio());
+      expect(find.text("Mute"), findsOneWidget);
+      // The note is specifically "muted to avoid echo"; once unmuted it no
+      // longer applies.
+      expect(find.textContaining("Mic muted to avoid echo"), findsNothing);
+    });
+
+    testWidgets(
+        "content audio stopping does not auto-unmute the mic (X model: only "
+        "the explicit tap unmutes)", (tester) async {
+      final partCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(partCtl.close);
+      final roster = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isSpeaking: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => partCtl.stream);
+      when(() => svc.currentParticipants).thenReturn(roster);
+
+      await tester.pumpWidget(wrap());
+      partCtl.add(roster);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Content share starts: mic defaults muted.
+      when(() => svc.isSharingSystemAudio).thenReturn(true);
+      partCtl.add(roster);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text("Unmute"), findsOneWidget);
+      // Only assert on what happens from here (the stop transition): clear
+      // the calls made so far (connect()'s own goLive setMicEnabled(true)
+      // plus the default-mute setMicEnabled(false)).
+      clearInteractions(svc);
+
+      // Content share stops.
+      when(() => svc.isSharingSystemAudio).thenReturn(false);
+      partCtl.add(roster);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // X model: nothing auto-unmutes. The mic is still muted (only the
+      // explicit tap would change it), and the echo note is gone now that
+      // there is no content audio to echo.
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.textContaining("Mic muted to avoid echo"), findsNothing);
+      // The stop transition itself never touches the mic at all.
+      verifyNever(() => svc.setMicEnabled(any()));
     });
   });
 

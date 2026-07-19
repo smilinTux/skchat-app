@@ -46,6 +46,7 @@ class SpaceRoomState {
     this.externalMuteNonce = 0,
     this.invitePromptDismissed = false,
     this.cameraFacing = CameraPosition.front,
+    this.isSharingSystemAudio = false,
     this.error,
   });
 
@@ -53,6 +54,16 @@ class SpaceRoomState {
   final bool isConnected;
   final bool isMicEnabled;
   final bool handRaised;
+
+  /// DECOUPLE: whether the local participant currently has a live content-
+  /// audio (system audio) share, mirroring
+  /// [LiveKitCallService.isSharingSystemAudio]. Independent of
+  /// [isMicEnabled] now (the two tracks no longer collide); used to default
+  /// the mic to muted the moment a content share with system audio starts
+  /// (see [SpaceRoomNotifier.connect]'s participants listener) and to show
+  /// the "mic muted to avoid echo" note near the mic control while both
+  /// conditions hold.
+  final bool isSharingSystemAudio;
 
   /// Which way the local camera is currently facing (front/selfie, the
   /// default, or back). Local-only UI state: LiveKit does not surface camera
@@ -88,6 +99,7 @@ class SpaceRoomState {
     int? externalMuteNonce,
     bool? invitePromptDismissed,
     CameraPosition? cameraFacing,
+    bool? isSharingSystemAudio,
     String? error,
   }) {
     return SpaceRoomState(
@@ -99,6 +111,7 @@ class SpaceRoomState {
       invitePromptDismissed:
           invitePromptDismissed ?? this.invitePromptDismissed,
       cameraFacing: cameraFacing ?? this.cameraFacing,
+      isSharingSystemAudio: isSharingSystemAudio ?? this.isSharingSystemAudio,
       error: error,
     );
   }
@@ -150,14 +163,15 @@ bool _shouldOfferJoinStage(LiveKitParticipantSnapshot? local) {
 /// the sid from the live room graph, the same identity-keyed lookup
 /// resolveScreenShares uses for share tracks.
 ///
-/// NOTE (system audio): a speaker sharing system audio (see
-/// LiveKitCallService.startScreenShareSystemAudio) publishes that track at
-/// the WIRE level as TrackSource.microphone too, since this SDK version has
-/// no supported way to tag a device-captured track screenShareAudio, so this
-/// lookup resolves it the same as a voice mic. A host "Mute mic" on that
-/// speaker therefore mutes their shared content audio, not a voice mic. That
-/// is intended moderation behavior (the host can silence whatever comes out
-/// of that participant's microphone-source publication), not a bug.
+/// DECOUPLE: a speaker sharing system audio (see
+/// LiveKitCallService.startScreenShareSystemAudio) now publishes that track
+/// as its own distinct TrackSource.screenShareAudio, not
+/// TrackSource.microphone, so this lookup unambiguously resolves the VOICE
+/// mic only. A host "Mute mic" on that speaker mutes their real mic and
+/// leaves their content-audio share untouched (previously it muted whichever
+/// microphone-source publication happened to match first, which in practice
+/// was the content audio; that ambiguity is gone now that the two are
+/// distinct wire sources).
 String? _micTrackSidFor(Room? room, String identity) {
   final remote = room?.remoteParticipants[identity];
   return remote?.getTrackPublicationBySource(TrackSource.microphone)?.sid;
@@ -176,6 +190,17 @@ class SpaceRoomNotifier
   /// after an await checks this first (mirrors the call_device_picker
   /// mounted guards).
   bool _disposed = false;
+
+  /// DECOUPLE: tracks the previous
+  /// [LiveKitCallService.isSharingSystemAudio] value so the participants
+  /// listener in [connect] can detect the false -> true transition (a
+  /// content share with system audio just started) exactly once, regardless
+  /// of which widget triggered [LiveKitCallService.startScreenShareSystemAudio]
+  /// (the control bar's own [toggleScreenShare], or ScreenSharePanel calling
+  /// the service directly). Not part of [SpaceRoomState]: it is bookkeeping
+  /// for edge detection, not UI-observable state (state.isSharingSystemAudio
+  /// is the observable mirror).
+  bool _wasSharingSystemAudio = false;
 
   @override
   SpaceRoomState build(SpaceJoin arg) {
@@ -214,6 +239,27 @@ class SpaceRoomNotifier
         if (_disposed) return;
         state = state.copyWith(isMicEnabled: false);
       }
+      // DECOUPLE: content audio and the voice mic are independent tracks
+      // now (see LiveKitCallService.setMicEnabled / startScreenShareSystemAudio),
+      // so nothing stops the mic when a content share with system audio
+      // starts. To avoid the speaker's own mic picking up the acoustic echo
+      // of their content audio playing out of their speakers, default the
+      // mic to MUTED exactly once on the false -> true transition of
+      // isSharingSystemAudio, whichever widget started the share (the
+      // control bar's toggleScreenShare or ScreenSharePanel calling the
+      // service directly both flow through the same svc.participants
+      // re-emit). The mic control stays fully available immediately after:
+      // this only sets the initial state, it is not a lock.
+      final sharingSystemAudioNow = svc.isSharingSystemAudio;
+      if (!_wasSharingSystemAudio &&
+          sharingSystemAudioNow &&
+          state.isMicEnabled) {
+        await svc.setMicEnabled(false);
+        if (_disposed) return;
+        state = state.copyWith(isMicEnabled: false);
+      }
+      _wasSharingSystemAudio = sharingSystemAudioNow;
+      state = state.copyWith(isSharingSystemAudio: sharingSystemAudioNow);
       // SHARECTL-app: the host revoked THIS speaker's video sharing while
       // they were already live (camera or screen). The Stop control is the
       // SAME _RoundButton as Go live, gated on canPublishVideo (see
@@ -1715,6 +1761,23 @@ class _ControlBar extends ConsumerWidget {
               padding: EdgeInsets.only(bottom: 8),
               child: Text(
                 "The host turned off your sharing",
+                style: TextStyle(
+                  color: SovereignColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          // DECOUPLE: shown only right after a content share with system
+          // audio defaulted the mic to muted (see SpaceRoomNotifier.connect's
+          // participants listener). The mic control right below stays fully
+          // independent and usable the whole time; this is just the
+          // one-time echo-avoidance explainer, not a lock notice.
+          if (state.isSharingSystemAudio && !state.isMicEnabled)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                "Mic muted to avoid echo. Unmute to talk; headphones "
+                "recommended.",
                 style: TextStyle(
                   color: SovereignColors.textSecondary,
                   fontSize: 12,
