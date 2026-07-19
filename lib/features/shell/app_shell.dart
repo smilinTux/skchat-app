@@ -91,7 +91,16 @@ class AppShell extends ConsumerWidget {
     return PiPOverlay(
       child: Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
-      extendBody: true,
+      // extendBody must stay FALSE. When true, each child screen's body (and
+      // its FloatingActionButton) extends behind the frosted GlassNavBar; the
+      // nav bar's BackdropFilter then blurs a child FAB (Chats' round FAB,
+      // Spaces' wide extended FAB) into a diffuse purple glow that reads as a
+      // spurious selection highlight over the bar (NAVBUG: "Spaces lights up
+      // the whole menu background", "Chats lights up Me"). Keeping the body
+      // above the bar stops that bleed-through, so each tab highlights only
+      // its own item. Screens without a FAB (Activity, Ops, Me) were already
+      // unaffected.
+      extendBody: false,
       body: Column(
         children: [
           // Offline banner, shown when daemon is unreachable.
