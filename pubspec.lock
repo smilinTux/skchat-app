@@ -504,10 +504,11 @@ packages:
   flutter_webrtc:
     dependency: "direct main"
     description:
-      name: flutter_webrtc
-      sha256: "0f89dee7f4c35dab5611f351c3897a3bfe9f7057720cc7da209b52455af4316e"
-      url: "https://pub.dev"
-    source: hosted
+      path: "."
+      ref: a7db44d9fcdfc0b0321ad0224c45ab2116aa7d99
+      resolved-ref: a7db44d9fcdfc0b0321ad0224c45ab2116aa7d99
+      url: "https://github.com/smilinTux/flutter-webrtc.git"
+    source: git
     version: "1.5.2"
   freezed:
     dependency: "direct dev"
