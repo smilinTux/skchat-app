@@ -134,7 +134,7 @@ dependency_overrides:
   flutter_webrtc:
     git:
       url: https://github.com/smilinTux/flutter-webrtc.git
-      ref: bd9bc16eab2de17e64e70d448bb49b98c9c0bfee
+      ref: a7db44d9fcdfc0b0321ad0224c45ab2116aa7d99
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
