@@ -80,7 +80,7 @@ String daemonWsUrl(String httpUrl) {
 
 /// Reactive holder for the SKComms daemon base URL.
 ///
-/// All daemon-facing clients (SKCommsClient, CapAuthService, WebRTC signaling)
+/// All daemon-facing clients (SKCommsClient, OperatorSessionService, WebRTC signaling)
 /// read this so a single user setting repoints the entire app.  The value is
 /// persisted in Hive and survives app restarts / web reloads.
 class DaemonConfigNotifier extends Notifier<String> {

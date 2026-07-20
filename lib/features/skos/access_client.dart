@@ -322,8 +322,8 @@ class DaemonAccessClient implements AccessClient {
   ///
   /// Produces the **capauth SignedEnvelope** string that authorizes a single
   /// `/tool` call. The token comes from the app's own identity/daemon, the
-  /// PGP/capauth signer already in the app (`pgp_capauth_signer.dart` /
-  /// `capauth_service.dart`), NOT from any crypto invented here in Dart.
+  /// PGP/capauth signer already in the app (`pgp_capauth_signer.dart`),
+  /// NOT from any crypto invented here in Dart.
   ///
   /// TODO(P9-live): replace the `accessClientProvider` mock with a
   /// [DaemonAccessClient] and pass a real `tokenForCall` that asks the app's

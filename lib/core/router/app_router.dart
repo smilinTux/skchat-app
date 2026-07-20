@@ -96,7 +96,7 @@ class AppRoutes {
   /// Create new group: /groups/new
   static const createGroup = '/groups/new';
 
-  /// CapAuth QR login screen: /login/qr
+  /// QR pairing screen (show/scan peer QR to connect): /login/qr
   static const qrLogin = '/login/qr';
 
   /// Modules settings (enable/disable + placement): /modules
