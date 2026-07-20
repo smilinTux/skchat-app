@@ -223,8 +223,8 @@ class OperatorSessionService {
   ///    awaits that SAME future rather than starting a second one.
   ///  - Negative caching: if the most recent handshake failed within the
   ///    last [_kNegativeCacheWindow], this call rethrows that failure
-  ///    immediately without hitting the network again. A successful call, or
-  ///    [clearSession], resets the negative cache.
+  ///    immediately without hitting the network again. A successful call,
+  ///    [clearSession], or a successful [enroll], resets the negative cache.
   Future<String> ensureSession() async {
     final cached = _readToken();
     if (cached != null && cached.isNotEmpty && _isUnexpired(cached)) {
@@ -312,6 +312,17 @@ class OperatorSessionService {
   /// not forced to wait out a stale failure window.
   void clearSession() {
     _writeToken(null);
+    _resetNegativeCache();
+  }
+
+  /// Drop any armed negative cache, so the next [ensureSession] call runs a
+  /// fresh handshake instead of rethrowing a remembered failure. Shared by
+  /// [clearSession] and a successful [enroll]: a device that just enrolled
+  /// invalidates every "device not enrolled" failure the negative cache may
+  /// have recorded before enrollment (the day-to-day request path, which is
+  /// the reason the negative cache exists at all, is untouched by this,
+  /// only these two explicit call sites reach it).
+  void _resetNegativeCache() {
     _negativeCacheUntil = null;
     _negativeCacheError = null;
   }
@@ -347,6 +358,15 @@ class OperatorSessionService {
   /// to bind the key server-side. The server's returned `device_fp` is
   /// expected to equal [GuestIdentity]'s own `fingerprint` derivation (both
   /// sides fingerprint the same SPKI base64 string identically).
+  ///
+  /// A successful enroll invalidates any negative cache armed by earlier
+  /// pre-enrollment [ensureSession] failures (every gated request runs
+  /// [ensureSession] via the Dio interceptor, so an unenrolled device racks
+  /// up failed handshakes before the user ever links it). Without resetting
+  /// the cache here, the [ensureSession] call that follows enrollment in the
+  /// UI's link flow would rethrow that stale failure instead of running a
+  /// fresh handshake against the now-enrolled device, even though enrollment
+  /// itself just succeeded.
   Future<void> enroll(String windowNonce) async {
     final kp = await _identity.ensure();
     final signed = canonicalJson({
@@ -362,6 +382,7 @@ class OperatorSessionService {
         "sig": sig,
       },
     );
+    _resetNegativeCache();
   }
 
   /// Operator-side call that opens a time-boxed enrollment window: `POST

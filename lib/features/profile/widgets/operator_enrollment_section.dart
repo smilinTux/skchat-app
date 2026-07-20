@@ -150,6 +150,10 @@ class _OperatorEnrollmentSectionState
           "'window_nonce'",
         );
       }
+      // service.enroll() already resets the service's own negative cache on
+      // success; ensureSession() below relies on that so it retries the
+      // handshake fresh instead of rethrowing a failure recorded before this
+      // device was enrolled.
       await service.enroll(windowNonce);
       await service.ensureSession();
       final kp = await service.identity.ensure();

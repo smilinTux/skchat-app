@@ -511,6 +511,64 @@ void main() {
     });
   });
 
+  group("enroll resets the negative cache (amber-fix)", () {
+    test(
+      "pre-enrollment handshake failures arm the negative cache, then a "
+      "successful enroll() lets the very next ensureSession() retry instead "
+      "of rethrowing the stale failure",
+      () async {
+        final clock = _MutableClock();
+        final flow = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: id,
+          tokenReader: store.read,
+          tokenWriter: store.write,
+          now: clock.call,
+        );
+
+        // Before enrollment: every gated request's ensureSession() call
+        // fails (device not enrolled yet, the daemon 401s the handshake),
+        // arming the negative cache.
+        adapter.statusOverride["/api/v1/auth/challenge"] = 401;
+
+        await expectLater(flow.ensureSession(), throwsA(anything));
+        expect(adapter.requests, hasLength(1));
+
+        // A second call still within the window short-circuits: the
+        // negative cache is armed, proven by no NEW request reaching the
+        // wire.
+        await expectLater(flow.ensureSession(), throwsA(anything));
+        expect(adapter.requests, hasLength(1));
+
+        // The user pastes the operator token and taps "Link this device":
+        // enroll() now succeeds (the device is enrolled server-side).
+        adapter.statusOverride.remove("/api/v1/auth/challenge");
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        adapter.routes["/api/v1/auth/challenge"] = {
+          "nonce": "NONCE-AMBER",
+          "exp": future,
+        };
+        final mintedJwt = _fakeJwt(future);
+        adapter.routes["/api/v1/auth/session"] = {
+          "session_token": mintedJwt,
+          "expires_at": future,
+        };
+
+        await flow.enroll("WINDOW-NONCE-AMBER");
+
+        // Still well within the original negative-cache window (no clock
+        // advance), so without the fix this would rethrow the stale
+        // pre-enrollment failure instead of running a fresh handshake.
+        final token = await flow.ensureSession();
+        expect(token, mintedJwt);
+      },
+    );
+  });
+
   group("in-flight coalescing (Fix 2)", () {
     test("two concurrent calls share one in-flight handshake (one round-trip, "
         "both get the result)", () async {
