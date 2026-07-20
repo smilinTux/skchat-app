@@ -111,6 +111,41 @@ places:
   reach them. Verify and close any gap. This is what actually closes "everyone
   can browse my filesystem," and it must land before any binary is distributed.
 
+## 5b. Transport resilience (leverage skcomms) [design rule]
+
+The funnel HTTP path is ONE transport, not THE transport. Two layers, kept
+distinct:
+
+- **Peer-to-peer delivery (node -> node)** rides skcomms' multi-path routing
+  (federation S2S, Nostr, BLE mesh, tailnet direct - the "17 paths"). Losing the
+  funnel between two nodes fails over to another skcomms transport. User-to-user
+  comms is NEVER routed through the funnel HTTP API; that API is only the control
+  path to your own node.
+- **Client <-> its own daemon (`/api/v1`)** is the single-path gap today (HTTP
+  only). Architected to degrade `localhost -> tailnet-direct -> LAN -> funnel`,
+  with a **transport-agnostic session token** (validates the same over any of
+  them) so the auth gate never hardwires the funnel.
+
+**Design rule:** nothing in the auth/session or client layer may assume the
+funnel; peer delivery stays on skcomms. The exact skcomms transport set and
+fallback order are being grounded and will be cited here, not assumed.
+
+**Roadmap (own milestone):** a skcomms-native client path where the client speaks
+skcomms transports directly (web Nostr, mobile BLE) for peer delivery when its
+daemon is unreachable. The fully-resilient end state.
+
+**Transport TODOs (deferred, scope into a later phase):**
+- **BLE mesh routing when offline (no internet).** Extend the existing skcomms
+  BLE mesh (SMP BLE mesh, Tier2 dispatcher already live) so clients relay over
+  Bluetooth with zero internet. Highest priority of the three (builds on
+  existing work). Chef 2026-07-20.
+- **I2P transport for skcomms.** Not currently wired (confirm when grounding the
+  transport layer). Anonymous, censorship-resistant garlic routing; an I2P
+  hidden service could host the daemon endpoint so it is reachable with no
+  funnel at all. Strong strategic fit for the sovereign posture. Chef 2026-07-20.
+- Both are transport-layer work under the skcomms framework, independent of the
+  auth gate; they slot into the transport-resilience milestone above.
+
 ## 6. X design language (from the screenshots)
 
 Dark theme throughout. Adopt X's layout vocabulary, adapted to our two axes.
