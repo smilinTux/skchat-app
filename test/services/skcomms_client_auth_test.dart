@@ -139,6 +139,26 @@ void main() {
       );
       expect(session.ensureSessionCalls, 0);
     });
+
+    test(
+        "a path merely CONTAINING the /api/v1/auth/ marker (not as a "
+        "prefix) IS treated as a normal gated request, not a handshake path",
+        () async {
+      // Anchored check (Fix 3): `_isAuthHandshakePath` must use `startsWith`,
+      // not `contains`, so a path where the marker appears mid-string (e.g.
+      // proxied/nested) is NOT mistaken for the handshake itself, which would
+      // wrongly skip attaching the Bearer header.
+      adapter.routes["/proxy/api/v1/auth/inner"] = {"ok": true};
+
+      final resp = await dio.get("/proxy/api/v1/auth/inner");
+
+      expect(resp.statusCode, 200);
+      expect(
+        adapter.requests.single.headers["Authorization"],
+        "Bearer TOKEN-1",
+      );
+      expect(session.ensureSessionCalls, 1);
+    });
   });
 
   group("error interceptor: 401 triggers one re-auth + retry", () {

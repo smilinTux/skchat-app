@@ -1,11 +1,12 @@
 import "dart:convert";
 
 import "package:dio/dio.dart";
+import "package:flutter/foundation.dart" show visibleForTesting;
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "daemon_config.dart";
 import "guest_identity.dart";
-import "operator_token.dart" as op_token;
+import "operator_session_store.dart" as op_session_store;
 
 /// A safety margin (seconds) subtracted from a cached token's `exp` before
 /// treating it as still valid, so a token that is about to expire is refreshed
@@ -13,12 +14,31 @@ import "operator_token.dart" as op_token;
 /// daemon's own clock skew tolerance.
 const _kExpirySafetyMarginSeconds = 30;
 
+/// How long a FAILED handshake is remembered before [ensureSession] will try
+/// again. Every gated request runs [ensureSession] (via the Dio
+/// interceptor), so without this an unenrolled client (the current state for
+/// everyone, enrollment UI is a later task) would fire a challenge + session
+/// round-trip, the second of which 401s, before EVERY gated `/api/v1`
+/// request. A short negative-cache window turns that into one round-trip per
+/// window instead of one per request.
+const _kNegativeCacheWindow = Duration(seconds: 30);
+
 /// Serialize [value] the same way the server does: `json.dumps(obj,
 /// sort_keys=True, separators=(",", ":"))`. Map keys are sorted (recursively,
 /// for nested maps); list order is preserved. This does NOT rely on Dart's
 /// default `jsonEncode`, whose key order is insertion order, not sorted, so a
 /// map built in the "wrong" order would sign/verify a different byte string
 /// than the server expects.
+///
+/// Note: Python's `json.dumps` defaults to `ensure_ascii=True`, which escapes
+/// any non-ASCII character to a `\uXXXX` sequence. Dart's `jsonEncode` does
+/// NOT do this by default, it emits UTF-8 bytes as-is. Every field currently
+/// signed through this function (`device_fp`, `nonce`, `device_pubkey`) is
+/// ASCII-only (hex fingerprints, base64, server-issued nonces), so the two
+/// encodings agree today. If a future signed payload ever carries a
+/// non-ASCII value, this function would need to escape it the same way
+/// (`\uXXXX`, matching Python) or the client and server would sign/verify
+/// different byte strings for the same logical value.
 String canonicalJson(Object? value) {
   final buf = StringBuffer();
   _writeCanonical(value, buf);
@@ -82,9 +102,10 @@ int? _jwtExpClaim(String jwt) {
 ///    /api/v1/auth/challenge` for a nonce, sign the canonical
 ///    `{device_fp, nonce}` with the already-enrolled device key
 ///    ([GuestIdentity]), `POST /api/v1/auth/session` to redeem the signature
-///    for a session JWT. Caches the token (via the `operator_token`
-///    localStorage/secure-storage seam) so a page reload / app restart does
-///    not force a fresh handshake for every call.
+///    for a session JWT. Caches the token (via the dedicated
+///    `operator_session_store` localStorage/secure-storage seam, kept
+///    SEPARATE from the unrelated `operator_token.dart` seam) so a page
+///    reload / app restart does not force a fresh handshake for every call.
 ///  - [enroll]: the one-time device-key registration, done once per device
 ///    inside an operator-opened enrollment window (`openEnrollWindow`
 ///    fetches that window's nonce). A later UI task drives this; this
@@ -93,21 +114,32 @@ int? _jwtExpClaim(String jwt) {
 /// The cache-validity check decodes the cached JWT's own `exp` claim (rather
 /// than tracking a second expiry value alongside it), so the ONLY thing that
 /// needs to survive a reload is the token string itself, the same single
-/// value the `operator_token` seam already stores.
+/// value the dedicated `operator_session_store` seam already stores.
+///
+/// [ensureSession] also runs a short negative cache (a recent failed
+/// handshake is remembered for [_kNegativeCacheWindow] before retrying) and
+/// coalesces concurrent callers onto a single in-flight handshake future, see
+/// the method doc for details.
 class OperatorSessionService {
   /// [dio] may be injected (tests) to supply a canned [HttpClientAdapter];
   /// its [BaseOptions.baseUrl] is set from [baseUrl] when both are provided,
   /// matching [SKCommsClient]'s constructor contract. [identity] defaults to
   /// the real platform [GuestIdentity] (WebCrypto device key). [tokenReader]
-  /// / [tokenWriter] default to the `operator_token` module-level functions;
-  /// tests inject an in-memory fake so the cache path can be exercised
-  /// without depending on the web-only localStorage implementation.
+  /// / [tokenWriter] default to the dedicated `operator_session_store`
+  /// module-level functions (a storage key SEPARATE from `operator_token.dart`,
+  /// which holds the unrelated, manually-pasted SKCHAT_GUEST_OPERATOR_TOKEN
+  /// secret, never share the two); tests inject an in-memory fake so the
+  /// cache path can be exercised without depending on the web-only
+  /// localStorage implementation. [now] defaults to [DateTime.now] and is
+  /// only overridden by tests, to drive the negative-cache window
+  /// deterministically.
   OperatorSessionService({
     String? baseUrl,
     Dio? dio,
     GuestIdentity? identity,
     String? Function()? tokenReader,
     void Function(String?)? tokenWriter,
+    DateTime Function()? now,
   })  : _dio = dio ??
             Dio(
               BaseOptions(
@@ -118,8 +150,9 @@ class OperatorSessionService {
               ),
             ),
         _identity = identity ?? createGuestIdentity(),
-        _readToken = tokenReader ?? op_token.operatorToken,
-        _writeToken = tokenWriter ?? op_token.setOperatorToken {
+        _readToken = tokenReader ?? op_session_store.operatorSessionToken,
+        _writeToken = tokenWriter ?? op_session_store.setOperatorSessionToken,
+        _now = now ?? DateTime.now {
     if (dio != null && baseUrl != null) {
       _dio.options.baseUrl = baseUrl;
     }
@@ -129,21 +162,94 @@ class OperatorSessionService {
   final GuestIdentity _identity;
   final String? Function() _readToken;
   final void Function(String?) _writeToken;
+  final DateTime Function() _now;
+
+  /// Exposed for tests only: proves (via reference identity, so it works
+  /// regardless of the web/native storage stub in play under `flutter test`)
+  /// that this instance's default reader/writer are NOT the unrelated
+  /// `operator_token` seam's functions. Regression guard for Fix 1.
+  @visibleForTesting
+  String? Function() get debugTokenReader => _readToken;
+
+  @visibleForTesting
+  void Function(String?) get debugTokenWriter => _writeToken;
+
+  /// Set (only while a handshake is running) so concurrent [ensureSession]
+  /// calls await the SAME in-flight future instead of each starting their
+  /// own handshake.
+  Future<String>? _inFlightHandshake;
+
+  /// When non-null and still in the future, a recent handshake failed and
+  /// [ensureSession] short-circuits with [_negativeCacheError] instead of
+  /// re-running it.
+  DateTime? _negativeCacheUntil;
+  Object? _negativeCacheError;
 
   /// Return a cached, unexpired session JWT if one is stored; otherwise run
   /// the full challenge-response handshake, cache the result, and return it.
+  ///
+  /// Two perf guards sit in front of the handshake:
+  ///  - In-flight coalescing: if a handshake is already running, this call
+  ///    awaits that SAME future rather than starting a second one.
+  ///  - Negative caching: if the most recent handshake failed within the
+  ///    last [_kNegativeCacheWindow], this call rethrows that failure
+  ///    immediately without hitting the network again. A successful call, or
+  ///    [clearSession], resets the negative cache.
   Future<String> ensureSession() async {
     final cached = _readToken();
     if (cached != null && cached.isNotEmpty && _isUnexpired(cached)) {
       return cached;
     }
 
+    final inFlight = _inFlightHandshake;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final negativeCacheUntil = _negativeCacheUntil;
+    if (negativeCacheUntil != null && _now().isBefore(negativeCacheUntil)) {
+      throw _negativeCacheError ??
+          StateError(
+            "operator session handshake recently failed; still within the "
+            "negative-cache window",
+          );
+    }
+
+    final handshake = _runHandshake();
+    _inFlightHandshake = handshake;
+    try {
+      final token = await handshake;
+      _negativeCacheUntil = null;
+      _negativeCacheError = null;
+      return token;
+    } catch (e) {
+      _negativeCacheUntil = _now().add(_kNegativeCacheWindow);
+      _negativeCacheError = e;
+      rethrow;
+    } finally {
+      _inFlightHandshake = null;
+    }
+  }
+
+  /// The actual challenge-response wire exchange, factored out of
+  /// [ensureSession] so the negative-cache / in-flight bookkeeping there
+  /// stays focused on caching concerns, not the handshake mechanics.
+  Future<String> _runHandshake() async {
     final kp = await _identity.ensure();
     final deviceFp = kp.fingerprint;
 
     final challengeResp =
         await _dio.get<Map<String, dynamic>>("/api/v1/auth/challenge");
-    final nonce = (challengeResp.data?["nonce"] as String?) ?? "";
+    final nonce = challengeResp.data?["nonce"] as String?;
+    if (nonce == null || nonce.isEmpty) {
+      // THROW rather than fall back to "": an empty nonce would sign a
+      // bogus payload and, worse, let the interceptor's swallow-and-proceed
+      // path silently attach a garbage Bearer header instead of cleanly
+      // proceeding unauthenticated.
+      throw StateError(
+        "operator auth challenge response missing required field 'nonce'",
+      );
+    }
 
     final signed = canonicalJson({"device_fp": deviceFp, "nonce": nonce});
     final sig = await _identity.sign(signed);
@@ -152,7 +258,15 @@ class OperatorSessionService {
       "/api/v1/auth/session",
       data: {"device_fp": deviceFp, "nonce": nonce, "sig": sig},
     );
-    final token = (sessionResp.data?["session_token"] as String?) ?? "";
+    final token = sessionResp.data?["session_token"] as String?;
+    if (token == null || token.isEmpty) {
+      // Same reasoning: an empty token must not be cached or handed to the
+      // interceptor as a real Bearer value.
+      throw StateError(
+        "operator auth session response missing required field "
+        "'session_token'",
+      );
+    }
 
     _writeToken(token);
     return token;
@@ -161,9 +275,14 @@ class OperatorSessionService {
   /// Drop the cached session token, forcing the next [ensureSession] call to
   /// run a fresh challenge-response handshake. Used by the Dio interceptor
   /// (SKCommsClient) when a request comes back 401: the cached token is
-  /// presumably stale or revoked, so it is discarded before retrying.
+  /// presumably stale or revoked, so it is discarded before retrying. Also
+  /// resets the negative cache, so a caller that explicitly clears the
+  /// session (as opposed to one that just keeps calling [ensureSession]) is
+  /// not forced to wait out a stale failure window.
   void clearSession() {
     _writeToken(null);
+    _negativeCacheUntil = null;
+    _negativeCacheError = null;
   }
 
   /// True when [token] is a decodable JWT-shaped string whose `exp` claim is
@@ -173,7 +292,7 @@ class OperatorSessionService {
   bool _isUnexpired(String token) {
     final exp = _jwtExpClaim(token);
     if (exp == null) return false;
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final now = _now().millisecondsSinceEpoch ~/ 1000;
     return exp > now + _kExpirySafetyMarginSeconds;
   }
 

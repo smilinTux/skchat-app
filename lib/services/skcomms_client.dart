@@ -18,7 +18,7 @@ const _kAuthHandshakePathMarker = '/api/v1/auth/';
 const _kAuthRetriedExtraKey = 'skAuthRetried';
 
 bool _isAuthHandshakePath(String path) =>
-    path.contains(_kAuthHandshakePathMarker);
+    path.startsWith(_kAuthHandshakePathMarker);
 
 /// Low-level HTTP client wrapping the SKComms daemon REST API.
 ///

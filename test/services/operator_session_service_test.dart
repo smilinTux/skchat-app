@@ -4,6 +4,7 @@ import "package:dio/dio.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:skchat/services/guest_identity.dart";
 import "package:skchat/services/operator_session_service.dart";
+import "package:skchat/services/operator_token.dart" as op_token;
 
 /// Canned-response adapter keyed by path; records every request for
 /// assertions. Mirrors the project's existing service-test mocking style
@@ -13,6 +14,11 @@ class _CannedAdapter implements HttpClientAdapter {
 
   final Map<String, Object?> routes;
   final List<RequestOptions> requests = [];
+
+  /// Per-path forced HTTP status (Fix 2 tests): a non-2xx here makes Dio
+  /// throw a [DioException] for that path, simulating a failed handshake
+  /// leg (e.g. the daemon unreachable / rejecting the challenge).
+  final Map<String, int> statusOverride = {};
 
   @override
   void close({bool force = false}) {}
@@ -24,10 +30,12 @@ class _CannedAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
-    final body = routes[options.path] ?? routes[options.uri.path] ?? {};
+    final path = options.path;
+    final status = statusOverride[path] ?? statusOverride[options.uri.path] ?? 200;
+    final body = routes[path] ?? routes[options.uri.path] ?? {};
     return ResponseBody.fromString(
       jsonEncode(body),
-      200,
+      status,
       headers: {
         Headers.contentTypeHeader: [Headers.jsonContentType],
       },
@@ -75,6 +83,14 @@ class _FakeTokenStore {
   String? value;
   String? read() => value;
   void write(String? v) => value = v;
+}
+
+/// Mutable, test-controlled clock injected via [OperatorSessionService]'s
+/// `now` constructor param, so the negative-cache window (Fix 2) can be
+/// exercised deterministically (advance past 30s) without a real sleep.
+class _MutableClock {
+  DateTime current = DateTime.now();
+  DateTime call() => current;
 }
 
 /// Builds a JWT-shaped string (`header.payload.sig`) whose payload carries
@@ -247,6 +263,209 @@ void main() {
       final req = adapter.requests.single;
       expect(req.method, "POST");
       expect(req.uri.path, "/api/v1/auth/enroll/open");
+    });
+  });
+
+  group("storage isolation (Fix 1: dedicated session storage key)", () {
+    test("does not default to the shared operator_token seam", () {
+      // Constructed WITHOUT tokenReader/tokenWriter, so this exercises the
+      // real default wiring. The manual/pasted SKCHAT_GUEST_OPERATOR_TOKEN
+      // slot (operator_token.dart) is a DIFFERENT credential; the service
+      // must not be wired to it by default (that was the Fix 1 bug: a
+      // successful handshake would overwrite the pasted token, and
+      // clearSession() would wipe it on a 401).
+      final freshSvc = OperatorSessionService(
+        dio: dio,
+        baseUrl: "http://localhost:9384",
+        identity: id,
+      );
+
+      expect(freshSvc.debugTokenReader, isNot(same(op_token.operatorToken)));
+      expect(
+          freshSvc.debugTokenWriter, isNot(same(op_token.setOperatorToken)));
+    });
+
+    test(
+        "a successful handshake does not clobber a primed operator_token "
+        "value, and clearSession() leaves it untouched", () async {
+      // Prime the UNRELATED manual-token slot with a non-JWT raw secret, the
+      // shape of a pasted SKCHAT_GUEST_OPERATOR_TOKEN, NOT a minted session
+      // JWT. (Under `flutter test`'s VM target operator_token.dart's real
+      // storage is a no-op stub, so this value never actually persists here;
+      // the meaningful, environment-independent regression guard is the
+      // "does not default to the shared seam" test above. This test still
+      // documents + locks in the intended behavior end-to-end.)
+      op_token.setOperatorToken("RAW-PASTED-OPERATOR-SECRET");
+      final before = op_token.operatorToken();
+
+      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+      final mintedJwt = _fakeJwt(future);
+      adapter.routes["/api/v1/auth/challenge"] = {
+        "nonce": "NONCE-ISO",
+        "exp": future,
+      };
+      adapter.routes["/api/v1/auth/session"] = {
+        "session_token": mintedJwt,
+        "expires_at": future,
+      };
+
+      final token = await svc.ensureSession();
+
+      expect(token, mintedJwt);
+      // The service's OWN dedicated slot (the injected fake) got the minted
+      // token.
+      expect(store.value, mintedJwt);
+      // The unrelated operator_token slot is untouched.
+      expect(op_token.operatorToken(), before);
+
+      svc.clearSession();
+
+      expect(store.value, isNull);
+      // clearSession() must not touch the unrelated slot either.
+      expect(op_token.operatorToken(), before);
+    });
+  });
+
+  group("negative caching (Fix 2)", () {
+    test(
+        "two rapid failing calls trigger only ONE challenge round-trip "
+        "within the negative-cache window", () async {
+      final clock = _MutableClock();
+      final failSvc = OperatorSessionService(
+        dio: dio,
+        baseUrl: "http://localhost:9384",
+        identity: id,
+        tokenReader: store.read,
+        tokenWriter: store.write,
+        now: clock.call,
+      );
+      adapter.statusOverride["/api/v1/auth/challenge"] = 500;
+
+      await expectLater(failSvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(1));
+
+      // A second call still within the window must NOT re-hit the wire.
+      await expectLater(failSvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(1));
+
+      // Advance the clock past the negative-cache window: the next call
+      // retries the handshake.
+      clock.current = clock.current.add(const Duration(seconds: 31));
+      await expectLater(failSvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(2));
+    });
+
+    test("a successful call resets the negative cache", () async {
+      final clock = _MutableClock();
+      final flakySvc = OperatorSessionService(
+        dio: dio,
+        baseUrl: "http://localhost:9384",
+        identity: id,
+        tokenReader: store.read,
+        tokenWriter: store.write,
+        now: clock.call,
+      );
+      adapter.statusOverride["/api/v1/auth/challenge"] = 500;
+
+      await expectLater(flakySvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(1));
+
+      // Still within the window: no retry yet.
+      await expectLater(flakySvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(1));
+
+      // Fix the daemon and advance past the window: succeeds and clears the
+      // negative cache.
+      adapter.statusOverride.remove("/api/v1/auth/challenge");
+      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+      adapter.routes["/api/v1/auth/challenge"] = {
+        "nonce": "NONCE-RESET",
+        "exp": future,
+      };
+      adapter.routes["/api/v1/auth/session"] = {
+        "session_token": _fakeJwt(future),
+        "expires_at": future,
+      };
+      clock.current = clock.current.add(const Duration(seconds: 31));
+
+      final token = await flakySvc.ensureSession();
+      expect(token, _fakeJwt(future));
+      expect(adapter.requests, hasLength(3));
+
+      // A subsequent failure right away must hit the wire again (negative
+      // cache was reset by the success above, not still armed).
+      store.value = null;
+      adapter.statusOverride["/api/v1/auth/challenge"] = 500;
+      await expectLater(flakySvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(4));
+    });
+
+    test("clearSession() resets the negative cache", () async {
+      final clock = _MutableClock();
+      final failSvc = OperatorSessionService(
+        dio: dio,
+        baseUrl: "http://localhost:9384",
+        identity: id,
+        tokenReader: store.read,
+        tokenWriter: store.write,
+        now: clock.call,
+      );
+      adapter.statusOverride["/api/v1/auth/challenge"] = 500;
+
+      await expectLater(failSvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(1));
+
+      failSvc.clearSession();
+
+      // Immediately retries (no window wait needed) because clearSession()
+      // dropped the negative cache.
+      await expectLater(failSvc.ensureSession(), throwsA(anything));
+      expect(adapter.requests, hasLength(2));
+    });
+  });
+
+  group("in-flight coalescing (Fix 2)", () {
+    test(
+        "two concurrent calls share one in-flight handshake (one round-trip, "
+        "both get the result)", () async {
+      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+      final mintedJwt = _fakeJwt(future);
+      adapter.routes["/api/v1/auth/challenge"] = {
+        "nonce": "NONCE-CONC",
+        "exp": future,
+      };
+      adapter.routes["/api/v1/auth/session"] = {
+        "session_token": mintedJwt,
+        "expires_at": future,
+      };
+
+      final f1 = svc.ensureSession();
+      final f2 = svc.ensureSession();
+      final results = await Future.wait([f1, f2]);
+
+      expect(results[0], mintedJwt);
+      expect(results[1], mintedJwt);
+      // Exactly ONE challenge + ONE session request reached the wire, not
+      // two of each.
+      expect(adapter.requests, hasLength(2));
+    });
+  });
+
+  group("missing required field handling (Fix 4)", () {
+    test("throws when the challenge response is missing 'nonce'", () async {
+      adapter.routes["/api/v1/auth/challenge"] = {"exp": 12345};
+
+      await expectLater(svc.ensureSession(), throwsA(isA<StateError>()));
+      expect(store.value, isNull);
+    });
+
+    test("throws when the session response is missing 'session_token'",
+        () async {
+      adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N1"};
+      adapter.routes["/api/v1/auth/session"] = {"expires_at": 12345};
+
+      await expectLater(svc.ensureSession(), throwsA(isA<StateError>()));
+      expect(store.value, isNull);
     });
   });
 }
