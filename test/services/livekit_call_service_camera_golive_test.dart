@@ -32,6 +32,9 @@ void main() {
       final svc = LiveKitCallService();
       final lp = _FakeLocalParticipant();
       when(() => lp.isScreenShareEnabled()).thenReturn(false);
+      when(() => lp.isCameraEnabled()).thenReturn(true);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
       when(() => lp.setCameraEnabled(any(),
               cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
           .thenAnswer((_) async => null);
@@ -51,6 +54,9 @@ void main() {
       final svc = LiveKitCallService();
       final lp = _FakeLocalParticipant();
       when(() => lp.isScreenShareEnabled()).thenReturn(false);
+      when(() => lp.isCameraEnabled()).thenReturn(true);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
       when(() => lp.setCameraEnabled(any(),
               cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
           .thenAnswer((_) async => null);
@@ -70,9 +76,9 @@ void main() {
       final svc = LiveKitCallService();
       final lp = _FakeLocalParticipant();
       when(() => lp.isScreenShareEnabled()).thenReturn(true);
-      when(() => lp.setCameraEnabled(any(),
-              cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
-          .thenAnswer((_) async => null);
+      when(() => lp.isCameraEnabled()).thenReturn(false);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
       svc.debugLocalParticipant = lp;
 
       await svc.setCameraEnabled(false);
@@ -82,6 +88,67 @@ void main() {
           screenShareCaptureOptions:
               any(named: 'screenShareCaptureOptions')));
     });
+
+    test('setCameraEnabled(false) UNPUBLISHES the camera track (does not '
+        'call the SDK setCameraEnabled(false), which only mutes)', () async {
+      // Root cause of the frozen-video / next-share-blocked bug: the SDK's
+      // LocalParticipant.setCameraEnabled(false) mutes-not-unpublishes for
+      // TrackSource.camera, leaving a muted-but-still-published track that
+      // viewers keep rendering. The fix mirrors the screen-share stop path
+      // (which the SDK itself unpublishes) by calling removePublishedTrack
+      // directly.
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      final pub = _FakeLocalTrackPublication();
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(pub);
+      when(() => pub.sid).thenReturn('TR_camera_9');
+      when(() => lp.removePublishedTrack(any()))
+          .thenAnswer((_) async {});
+      when(() => lp.isCameraEnabled()).thenReturn(false);
+      svc.debugLocalParticipant = lp;
+
+      await svc.setCameraEnabled(false);
+
+      verify(() => lp.removePublishedTrack('TR_camera_9')).called(1);
+      verifyNever(() => lp.setCameraEnabled(false,
+          cameraCaptureOptions: any(named: 'cameraCaptureOptions')));
+    });
+
+    test('setCameraEnabled(false) with no camera publication is a safe '
+        'no-op', () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
+      when(() => lp.isCameraEnabled()).thenReturn(false);
+      svc.debugLocalParticipant = lp;
+
+      await svc.setCameraEnabled(false);
+
+      verifyNever(() => lp.removePublishedTrack(any()));
+    });
+
+    test('setCameraEnabled(true) still calls the SDK setCameraEnabled(true) '
+        '(enable path unchanged)', () async {
+      final svc = LiveKitCallService();
+      final lp = _FakeLocalParticipant();
+      when(() => lp.isScreenShareEnabled()).thenReturn(false);
+      when(() => lp.isCameraEnabled()).thenReturn(true);
+      when(() => lp.setCameraEnabled(any(),
+              cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
+          .thenAnswer((_) async => null);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
+      svc.debugLocalParticipant = lp;
+
+      await svc.setCameraEnabled(true);
+
+      verify(() => lp.setCameraEnabled(true,
+              cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
+          .called(1);
+      verifyNever(() => lp.removePublishedTrack(any()));
+    });
   });
 
   group('camera XOR screen: video mutual exclusion', () {
@@ -90,6 +157,9 @@ void main() {
       final svc = LiveKitCallService();
       final lp = _FakeLocalParticipant();
       when(() => lp.isScreenShareEnabled()).thenReturn(true);
+      when(() => lp.isCameraEnabled()).thenReturn(true);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
       when(() => lp.setScreenShareEnabled(false,
               captureScreenAudio: any(named: 'captureScreenAudio'),
               screenShareCaptureOptions:
@@ -117,6 +187,9 @@ void main() {
       final svc = LiveKitCallService();
       final lp = _FakeLocalParticipant();
       when(() => lp.isScreenShareEnabled()).thenReturn(false);
+      when(() => lp.isCameraEnabled()).thenReturn(true);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
       when(() => lp.setCameraEnabled(any(),
               cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
           .thenAnswer((_) async => null);
@@ -130,20 +203,24 @@ void main() {
               any(named: 'screenShareCaptureOptions')));
     });
 
-    test('stopCameraForScreenShare stops an active camera', () async {
+    test('stopCameraForScreenShare stops an active camera by unpublishing '
+        'it (not muting)', () async {
       final svc = LiveKitCallService();
       final lp = _FakeLocalParticipant();
+      final pub = _FakeLocalTrackPublication();
       when(() => lp.isCameraEnabled()).thenReturn(true);
-      when(() => lp.setCameraEnabled(any(),
-              cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
-          .thenAnswer((_) async => null);
+      when(() => lp.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(pub);
+      when(() => pub.sid).thenReturn('TR_camera_1');
+      when(() => lp.removePublishedTrack(any()))
+          .thenAnswer((_) async {});
       svc.debugLocalParticipant = lp;
 
       await svc.stopCameraForScreenShare();
 
-      verify(() => lp.setCameraEnabled(false,
-              cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
-          .called(1);
+      verify(() => lp.removePublishedTrack('TR_camera_1')).called(1);
+      verifyNever(() => lp.setCameraEnabled(false,
+          cameraCaptureOptions: any(named: 'cameraCaptureOptions')));
     });
 
     test('stopCameraForScreenShare is a safe no-op when no camera is live',
@@ -157,6 +234,7 @@ void main() {
 
       verifyNever(() => lp.setCameraEnabled(any(),
           cameraCaptureOptions: any(named: 'cameraCaptureOptions')));
+      verifyNever(() => lp.removePublishedTrack(any()));
     });
 
     test('stopScreenShareForCamera stops an active screen share', () async {
@@ -204,6 +282,7 @@ void main() {
       when(() => lp.getTrackPublicationBySource(TrackSource.camera))
           .thenReturn(null);
       when(() => lp.isScreenShareEnabled()).thenReturn(false);
+      when(() => lp.isCameraEnabled()).thenReturn(true);
       when(() => lp.setCameraEnabled(any(),
               cameraCaptureOptions: any(named: 'cameraCaptureOptions')))
           .thenAnswer((_) async => null);

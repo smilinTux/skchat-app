@@ -764,14 +764,33 @@ class LiveKitCallService {
   Future<void> setCameraEnabled(bool enabled,
       {CameraPosition cameraPosition = CameraPosition.front}) async {
     spvidLog('setCameraEnabled($enabled)');
-    if (enabled) await stopScreenShareForCamera();
-    await _localParticipant?.setCameraEnabled(
-      enabled,
-      cameraCaptureOptions: CameraCaptureOptions(cameraPosition: cameraPosition),
-    );
+    final lp = _localParticipant;
+    if (lp == null) return;
+    if (enabled) {
+      await stopScreenShareForCamera();
+      await lp.setCameraEnabled(
+        true,
+        cameraCaptureOptions: CameraCaptureOptions(cameraPosition: cameraPosition),
+      );
+    } else {
+      // Spaces "go live" stop means the video ENDS, not "mute the camera".
+      // The SDK's setCameraEnabled(false) (LocalParticipant.setSourceEnabled,
+      // TrackSource.camera branch) only MUTES the camera publication, leaving
+      // a frozen track on viewers and a stale publication that collides with
+      // the next share, whereas the very same method UNPUBLISHES a screen
+      // share (TrackSource.screenShareVideo branch, via
+      // removePublishedTrack). Mirror the screen-share path here: unpublish
+      // the camera track directly so viewers get a real
+      // TrackUnpublished/LocalTrackUnpublished event and the publication is
+      // fully gone, not just muted.
+      final pub = lp.getTrackPublicationBySource(TrackSource.camera);
+      if (pub != null) {
+        await lp.removePublishedTrack(pub.sid);
+      }
+    }
     spvidLog('after setCameraEnabled: localCameraPub '
-        'sid=${_localParticipant?.getTrackPublicationBySource(TrackSource.camera)?.sid} '
-        'enabled=${_localParticipant?.isCameraEnabled()}');
+        'sid=${lp.getTrackPublicationBySource(TrackSource.camera)?.sid} '
+        'enabled=${lp.isCameraEnabled()}');
     _emitParticipants();
   }
 
