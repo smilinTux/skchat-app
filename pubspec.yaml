@@ -2,7 +2,7 @@ name: skchat
 description: "SKChat — Sovereign Encrypted P2P Communication"
 publish_to: 'none'
 
-version: 1.1.5+5
+version: 1.2.0+6
 
 environment:
   sdk: ^3.11.0
@@ -120,6 +120,21 @@ dev_dependencies:
 dependency_overrides:
   sk_pqc:
     path: ../sk-pqc-dart
+
+  # --- Linux system-audio (loopback) capture -------------------------------
+  # Upstream flutter_webrtc ships an unimplemented Linux LoopbackCapturer stub
+  # (returns nullptr), so getDisplayMedia({audio:true}) gets no system audio on
+  # Linux. Our fork adds a PulseAudio/PipeWire monitor-capture backend
+  # (linux/pulse_loopback_capturer.*) and is proposed upstream in
+  # flutter-webrtc/flutter-webrtc#2115. Pinned to the fork commit so every
+  # checkout resolves without a local sibling clone. The Linux plugin build
+  # needs the libpulse dev package present; without it the plugin still builds
+  # and simply yields no system-audio track. Drop this override once the change
+  # lands in an upstream release.
+  flutter_webrtc:
+    git:
+      url: https://github.com/smilinTux/flutter-webrtc.git
+      ref: bd9bc16eab2de17e64e70d448bb49b98c9c0bfee
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
