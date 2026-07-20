@@ -31,7 +31,8 @@ class _CannedAdapter implements HttpClientAdapter {
   ) async {
     requests.add(options);
     final path = options.path;
-    final status = statusOverride[path] ?? statusOverride[options.uri.path] ?? 200;
+    final status =
+        statusOverride[path] ?? statusOverride[options.uri.path] ?? 200;
     final body = routes[path] ?? routes[options.uri.path] ?? {};
     return ResponseBody.fromString(
       jsonEncode(body),
@@ -132,12 +133,16 @@ void main() {
       expect(out, '{"device_fp":"fp1","nonce":"n1"}');
     });
 
-    test("does not rely on Dart's insertion order for a differently-ordered map",
-        () {
-      final out =
-          canonicalJson({"device_pubkey": "pub1", "nonce": "windownonce"});
-      expect(out, '{"device_pubkey":"pub1","nonce":"windownonce"}');
-    });
+    test(
+      "does not rely on Dart's insertion order for a differently-ordered map",
+      () {
+        final out = canonicalJson({
+          "device_pubkey": "pub1",
+          "nonce": "windownonce",
+        });
+        expect(out, '{"device_pubkey":"pub1","nonce":"windownonce"}');
+      },
+    );
 
     test("recursively sorts nested maps and preserves list order", () {
       final out = canonicalJson({
@@ -150,8 +155,7 @@ void main() {
   });
 
   group("ensureSession", () {
-    test("runs the challenge-response and returns the minted token",
-        () async {
+    test("runs the challenge-response and returns the minted token", () async {
       final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
       final mintedJwt = _fakeJwt(future);
       adapter.routes["/api/v1/auth/challenge"] = {
@@ -176,7 +180,10 @@ void main() {
 
       // The signed payload is the CANONICAL {device_fp, nonce}, sorted keys,
       // matching the server's json.dumps(sort_keys=True, separators=(",",":")).
-      expect(id.lastSigned, '{"device_fp":"deadbeefdeadbeef","nonce":"NONCE-1"}');
+      expect(
+        id.lastSigned,
+        '{"device_fp":"deadbeefdeadbeef","nonce":"NONCE-1"}',
+      );
 
       // The POST body carries device_fp, nonce, sig.
       final sentBody = adapter.requests[1].data;
@@ -191,21 +198,22 @@ void main() {
       expect(store.value, token);
     });
 
-    test("returns the cached token without an HTTP call when unexpired",
-        () async {
-      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
-      final primed = _fakeJwt(future);
-      store.value = primed;
+    test(
+      "returns the cached token without an HTTP call when unexpired",
+      () async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final primed = _fakeJwt(future);
+        store.value = primed;
 
-      final token = await svc.ensureSession();
+        final token = await svc.ensureSession();
 
-      expect(token, primed);
-      expect(adapter.requests, isEmpty);
-      expect(id.lastSigned, isNull);
-    });
+        expect(token, primed);
+        expect(adapter.requests, isEmpty);
+        expect(id.lastSigned, isNull);
+      },
+    );
 
-    test("ignores an expired cached token and re-runs the handshake",
-        () async {
+    test("ignores an expired cached token and re-runs the handshake", () async {
       final past = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 60;
       store.value = _fakeJwt(past);
 
@@ -226,27 +234,31 @@ void main() {
   });
 
   group("enroll", () {
-    test("signs the canonical {device_pubkey, nonce} payload and posts it",
-        () async {
-      adapter.routes["/api/v1/auth/enroll"] = {
-        "device_fp": "deadbeefdeadbeef",
-      };
+    test(
+      "signs the canonical {device_pubkey, nonce} payload and posts it",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
 
-      await svc.enroll("WINDOW-NONCE-1");
+        await svc.enroll("WINDOW-NONCE-1");
 
-      expect(id.lastSigned,
-          '{"device_pubkey":"PUB-KEY-B64","nonce":"WINDOW-NONCE-1"}');
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","nonce":"WINDOW-NONCE-1"}',
+        );
 
-      final req = adapter.requests.single;
-      expect(req.method, "POST");
-      expect(req.uri.path, "/api/v1/auth/enroll");
-      final body = req.data is String
-          ? jsonDecode(req.data as String) as Map
-          : (req.data as Map);
-      expect(body["device_pubkey"], "PUB-KEY-B64");
-      expect(body["window_nonce"], "WINDOW-NONCE-1");
-      expect(body["sig"], isNotEmpty);
-    });
+        final req = adapter.requests.single;
+        expect(req.method, "POST");
+        expect(req.uri.path, "/api/v1/auth/enroll");
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["device_pubkey"], "PUB-KEY-B64");
+        expect(body["window_nonce"], "WINDOW-NONCE-1");
+        expect(body["sig"], isNotEmpty);
+      },
+    );
   });
 
   group("openEnrollWindow", () {
@@ -266,6 +278,84 @@ void main() {
     });
   });
 
+  group(
+    "operator token header on enroll/open (Fix A: funnel-bypass close)",
+    () {
+      test("defaults the operator-token read seam to the shared "
+          "operator_token.dart module (the manually-pasted secret), NOT the "
+          "dedicated session-token store above", () {
+        final freshSvc = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: id,
+        );
+
+        expect(freshSvc.debugOperatorTokenReader, same(op_token.operatorToken));
+      });
+
+      test("sends X-Operator-Token when a token is stored", () async {
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WIN-TOK",
+          "exp": 999,
+        };
+        final tokenSvc = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: id,
+          tokenReader: store.read,
+          tokenWriter: store.write,
+          operatorTokenReader: () => "SHARED-OPERATOR-SECRET",
+        );
+
+        await tokenSvc.openEnrollWindow();
+
+        final req = adapter.requests.single;
+        expect(req.uri.path, "/api/v1/auth/enroll/open");
+        expect(req.headers["X-Operator-Token"], "SHARED-OPERATOR-SECRET");
+      });
+
+      test("omits X-Operator-Token when no token is stored", () async {
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WIN-NOTOK",
+          "exp": 999,
+        };
+        final tokenSvc = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: id,
+          tokenReader: store.read,
+          tokenWriter: store.write,
+          operatorTokenReader: () => null,
+        );
+
+        await tokenSvc.openEnrollWindow();
+
+        final req = adapter.requests.single;
+        expect(req.headers.containsKey("X-Operator-Token"), isFalse);
+      });
+
+      test("omits X-Operator-Token when the stored token is empty", () async {
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WIN-EMPTY",
+          "exp": 999,
+        };
+        final tokenSvc = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: id,
+          tokenReader: store.read,
+          tokenWriter: store.write,
+          operatorTokenReader: () => "",
+        );
+
+        await tokenSvc.openEnrollWindow();
+
+        final req = adapter.requests.single;
+        expect(req.headers.containsKey("X-Operator-Token"), isFalse);
+      });
+    },
+  );
+
   group("storage isolation (Fix 1: dedicated session storage key)", () {
     test("does not default to the shared operator_token seam", () {
       // Constructed WITHOUT tokenReader/tokenWriter, so this exercises the
@@ -281,12 +371,10 @@ void main() {
       );
 
       expect(freshSvc.debugTokenReader, isNot(same(op_token.operatorToken)));
-      expect(
-          freshSvc.debugTokenWriter, isNot(same(op_token.setOperatorToken)));
+      expect(freshSvc.debugTokenWriter, isNot(same(op_token.setOperatorToken)));
     });
 
-    test(
-        "a successful handshake does not clobber a primed operator_token "
+    test("a successful handshake does not clobber a primed operator_token "
         "value, and clearSession() leaves it untouched", () async {
       // Prime the UNRELATED manual-token slot with a non-JWT raw secret, the
       // shape of a pasted SKCHAT_GUEST_OPERATOR_TOKEN, NOT a minted session
@@ -327,8 +415,7 @@ void main() {
   });
 
   group("negative caching (Fix 2)", () {
-    test(
-        "two rapid failing calls trigger only ONE challenge round-trip "
+    test("two rapid failing calls trigger only ONE challenge round-trip "
         "within the negative-cache window", () async {
       final clock = _MutableClock();
       final failSvc = OperatorSessionService(
@@ -425,8 +512,7 @@ void main() {
   });
 
   group("in-flight coalescing (Fix 2)", () {
-    test(
-        "two concurrent calls share one in-flight handshake (one round-trip, "
+    test("two concurrent calls share one in-flight handshake (one round-trip, "
         "both get the result)", () async {
       final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
       final mintedJwt = _fakeJwt(future);
@@ -459,13 +545,15 @@ void main() {
       expect(store.value, isNull);
     });
 
-    test("throws when the session response is missing 'session_token'",
-        () async {
-      adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N1"};
-      adapter.routes["/api/v1/auth/session"] = {"expires_at": 12345};
+    test(
+      "throws when the session response is missing 'session_token'",
+      () async {
+        adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N1"};
+        adapter.routes["/api/v1/auth/session"] = {"expires_at": 12345};
 
-      await expectLater(svc.ensureSession(), throwsA(isA<StateError>()));
-      expect(store.value, isNull);
-    });
+        await expectLater(svc.ensureSession(), throwsA(isA<StateError>()));
+        expect(store.value, isNull);
+      },
+    );
   });
 }

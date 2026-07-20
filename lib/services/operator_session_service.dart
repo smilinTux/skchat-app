@@ -7,6 +7,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "daemon_config.dart";
 import "guest_identity.dart";
 import "operator_session_store.dart" as op_session_store;
+import "operator_token.dart" as op_token;
 
 /// A safety margin (seconds) subtracted from a cached token's `exp` before
 /// treating it as still valid, so a token that is about to expire is refreshed
@@ -79,7 +80,9 @@ int? _jwtExpClaim(String jwt) {
   final parts = jwt.split(".");
   if (parts.length < 2) return null;
   try {
-    final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+    final payload = utf8.decode(
+      base64Url.decode(base64Url.normalize(parts[1])),
+    );
     final decoded = jsonDecode(payload);
     if (decoded is Map) {
       final exp = decoded["exp"];
@@ -140,19 +143,22 @@ class OperatorSessionService {
     String? Function()? tokenReader,
     void Function(String?)? tokenWriter,
     DateTime Function()? now,
-  })  : _dio = dio ??
-            Dio(
-              BaseOptions(
-                baseUrl: baseUrl ?? kDefaultDaemonUrl,
-                connectTimeout: const Duration(seconds: 5),
-                receiveTimeout: const Duration(seconds: 10),
-                headers: {"Content-Type": "application/json"},
-              ),
-            ),
-        _identity = identity ?? createGuestIdentity(),
-        _readToken = tokenReader ?? op_session_store.operatorSessionToken,
-        _writeToken = tokenWriter ?? op_session_store.setOperatorSessionToken,
-        _now = now ?? DateTime.now {
+    String? Function()? operatorTokenReader,
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               baseUrl: baseUrl ?? kDefaultDaemonUrl,
+               connectTimeout: const Duration(seconds: 5),
+               receiveTimeout: const Duration(seconds: 10),
+               headers: {"Content-Type": "application/json"},
+             ),
+           ),
+       _identity = identity ?? createGuestIdentity(),
+       _readToken = tokenReader ?? op_session_store.operatorSessionToken,
+       _writeToken = tokenWriter ?? op_session_store.setOperatorSessionToken,
+       _now = now ?? DateTime.now,
+       _readOperatorToken = operatorTokenReader ?? op_token.operatorToken {
     if (dio != null && baseUrl != null) {
       _dio.options.baseUrl = baseUrl;
     }
@@ -163,6 +169,17 @@ class OperatorSessionService {
   final String? Function() _readToken;
   final void Function(String?) _writeToken;
   final DateTime Function() _now;
+
+  /// Read seam for the manually-pasted `SKCHAT_GUEST_OPERATOR_TOKEN` secret
+  /// (the UNRELATED credential from the minted session JWT above, see the
+  /// class doc and `operator_token.dart`'s own header comment). Defaults to
+  /// the real `operator_token.dart` module; tests inject a fake so this can
+  /// be exercised without depending on the web-only localStorage
+  /// implementation. Consumed by [openEnrollWindow] to authenticate the
+  /// server's operator-gated `enroll/open` route, the same header
+  /// `mode_c_service.dart` / `guest_group_service.dart` already send for
+  /// their own operator-gated routes.
+  final String? Function() _readOperatorToken;
 
   /// This service's [GuestIdentity], exposed read-only so a caller (e.g. the
   /// device-enrollment UI) can read the device's fingerprint/public key via
@@ -179,6 +196,13 @@ class OperatorSessionService {
 
   @visibleForTesting
   void Function(String?) get debugTokenWriter => _writeToken;
+
+  /// Exposed for tests only: the operator-token read seam (see
+  /// [_readOperatorToken]'s doc), so a regression test can pin its DEFAULT
+  /// to the real `operator_token.dart` module (the opposite requirement
+  /// from [debugTokenReader] above, which must NOT default there).
+  @visibleForTesting
+  String? Function() get debugOperatorTokenReader => _readOperatorToken;
 
   /// Set (only while a handshake is running) so concurrent [ensureSession]
   /// calls await the SAME in-flight future instead of each starting their
@@ -244,8 +268,9 @@ class OperatorSessionService {
     final kp = await _identity.ensure();
     final deviceFp = kp.fingerprint;
 
-    final challengeResp =
-        await _dio.get<Map<String, dynamic>>("/api/v1/auth/challenge");
+    final challengeResp = await _dio.get<Map<String, dynamic>>(
+      "/api/v1/auth/challenge",
+    );
     final nonce = challengeResp.data?["nonce"] as String?;
     if (nonce == null || nonce.isEmpty) {
       // THROW rather than fall back to "": an empty nonce would sign a
@@ -339,13 +364,31 @@ class OperatorSessionService {
     );
   }
 
-  /// Operator-side call (a later UI task) that opens a time-boxed enrollment
-  /// window: `POST /api/v1/auth/enroll/open` (no body) -> `{window_nonce,
-  /// exp}`. The returned `window_nonce` is what a NEW device signs via
-  /// [enroll] to complete registration before the window's `exp`.
+  /// Operator-side call that opens a time-boxed enrollment window: `POST
+  /// /api/v1/auth/enroll/open` (no body) -> `{window_nonce, exp}`. The
+  /// returned `window_nonce` is what a NEW device signs via [enroll] to
+  /// complete registration before the window's `exp`.
+  ///
+  /// The server guards this route with `_require_operator`: when
+  /// `SKCHAT_GUEST_OPERATOR_TOKEN` is set, a caller must present it as the
+  /// `X-Operator-Token` header (or over the tailnet/loopback, which the
+  /// server trusts without a token). Without this header, anyone reaching
+  /// the public Funnel could open an enrollment window and self-enroll a
+  /// device, so this attaches the stored operator token (read via
+  /// [_readOperatorToken]) whenever one is set. When none is stored, the
+  /// request goes out with no header, and the server's own 401/403 is
+  /// surfaced to the caller as-is (the enrollment UI already turns that into
+  /// a friendly "set your operator token" message).
   Future<Map<String, dynamic>> openEnrollWindow() async {
-    final resp =
-        await _dio.post<Map<String, dynamic>>("/api/v1/auth/enroll/open");
+    final tok = _readOperatorToken();
+    final headers = <String, dynamic>{};
+    if (tok != null && tok.isNotEmpty) {
+      headers["X-Operator-Token"] = tok;
+    }
+    final resp = await _dio.post<Map<String, dynamic>>(
+      "/api/v1/auth/enroll/open",
+      options: headers.isEmpty ? null : Options(headers: headers),
+    );
     return resp.data ?? const {};
   }
 }
@@ -357,8 +400,7 @@ class OperatorSessionService {
 /// [ConsentService], ...) uses. Watching [daemonUrlProvider] means changing
 /// the daemon URL in settings rebuilds this client so the handshake hits the
 /// new host.
-final operatorSessionServiceProvider =
-    Provider<OperatorSessionService>((ref) {
+final operatorSessionServiceProvider = Provider<OperatorSessionService>((ref) {
   final baseUrl = ref.watch(daemonUrlProvider);
   return OperatorSessionService(baseUrl: baseUrl);
 });

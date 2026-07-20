@@ -5,6 +5,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../core/theme/theme.dart";
 import "../../../services/operator_session_service.dart";
+import "../../../services/operator_token.dart" as op_token;
 
 /// Shown when `enroll/open` (or any step of the enrollment flow) is rejected
 /// because the caller is not yet a trusted operator context (HTTP 401/403).
@@ -27,7 +28,12 @@ enum _LinkStatus { idle, linking, linked, error }
 /// Drives [OperatorSessionService]'s existing enrollment flow end to end,
 /// reusing its wire calls and signing, none of that is reimplemented here:
 ///  1. [OperatorSessionService.openEnrollWindow] (`POST
-///     /api/v1/auth/enroll/open`), operator-gated on the server.
+///     /api/v1/auth/enroll/open`), operator-gated on the server: when
+///     `SKCHAT_GUEST_OPERATOR_TOKEN` is set, this route requires the
+///     manually-pasted operator token as the `X-Operator-Token` header
+///     (read internally by the service via `operator_token.dart`). This
+///     section renders the paste field for that token, above the Link
+///     button, so the flow reads top-to-bottom: paste the token, then link.
 ///  2. [OperatorSessionService.enroll] with the returned window nonce
 ///     (`POST /api/v1/auth/enroll`).
 ///  3. [OperatorSessionService.ensureSession] to confirm a session can
@@ -47,10 +53,27 @@ enum _LinkStatus { idle, linking, linked, error }
 /// via [kIsWeb], overridable through [isWeb] so this can be widget-tested
 /// under `flutter test`'s VM target (where [kIsWeb] is always false).
 class OperatorEnrollmentSection extends ConsumerStatefulWidget {
-  const OperatorEnrollmentSection({super.key, this.isWeb});
+  const OperatorEnrollmentSection({
+    super.key,
+    this.isWeb,
+    this.tokenReader,
+    this.tokenWriter,
+  });
 
   /// Test-only override of the platform's real [kIsWeb] value.
   final bool? isWeb;
+
+  /// Test-only override of the operator-token read seam (defaults to the
+  /// real [op_token.operatorToken] when null). Mirrors [isWeb]'s pattern:
+  /// production code never passes this, tests inject a fake so the token
+  /// field's initial value can be exercised deterministically without
+  /// depending on the web-only localStorage implementation (a no-op under
+  /// `flutter test`'s VM target, see `operator_token_stub.dart`).
+  final String? Function()? tokenReader;
+
+  /// Test-only override of the operator-token write seam (defaults to the
+  /// real [op_token.setOperatorToken] when null).
+  final void Function(String?)? tokenWriter;
 
   @override
   ConsumerState<OperatorEnrollmentSection> createState() =>
@@ -62,15 +85,29 @@ class _OperatorEnrollmentSectionState
   _LinkStatus _status = _LinkStatus.idle;
   String? _fingerprint;
   String? _errorMessage;
+  late final TextEditingController _tokenController;
 
   bool get _isWeb => widget.isWeb ?? kIsWeb;
+
+  String? Function() get _readToken =>
+      widget.tokenReader ?? op_token.operatorToken;
+
+  void Function(String?) get _writeToken =>
+      widget.tokenWriter ?? op_token.setOperatorToken;
 
   @override
   void initState() {
     super.initState();
+    _tokenController = TextEditingController(text: _readToken() ?? "");
     if (_isWeb) {
       _checkExistingSession();
     }
+  }
+
+  @override
+  void dispose() {
+    _tokenController.dispose();
+    super.dispose();
   }
 
   /// Best-effort, side-effect-free check for an already-live session (e.g.
@@ -83,16 +120,19 @@ class _OperatorEnrollmentSectionState
   void _checkExistingSession() {
     final service = ref.read(operatorSessionServiceProvider);
     if (!service.hasLiveSession()) return;
-    service.identity.ensure().then((kp) {
-      if (!mounted) return;
-      setState(() {
-        _status = _LinkStatus.linked;
-        _fingerprint = kp.fingerprint;
-      });
-    }).catchError((_) {
-      // Local identity read failed unexpectedly: stay in the idle state
-      // rather than claim "linked" without a fingerprint to back it up.
-    });
+    service.identity
+        .ensure()
+        .then((kp) {
+          if (!mounted) return;
+          setState(() {
+            _status = _LinkStatus.linked;
+            _fingerprint = kp.fingerprint;
+          });
+        })
+        .catchError((_) {
+          // Local identity read failed unexpectedly: stay in the idle state
+          // rather than claim "linked" without a fingerprint to back it up.
+        });
   }
 
   Future<void> _link() async {
@@ -199,6 +239,23 @@ class _OperatorEnrollmentSectionState
           color: Colors.transparent,
           child: Column(
             children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: TextField(
+                  key: const Key("operator-token-field"),
+                  controller: _tokenController,
+                  obscureText: true,
+                  onChanged: (value) => _writeToken(value.trim()),
+                  decoration: const InputDecoration(
+                    labelText: "Operator token",
+                    helperText:
+                        "Paste your server's operator token "
+                        "(SKCHAT_GUEST_OPERATOR_TOKEN) to authorize linking "
+                        "this device.",
+                    helperMaxLines: 2,
+                  ),
+                ),
+              ),
               ListTile(
                 leading: Icon(
                   Icons.link_rounded,
@@ -251,9 +308,7 @@ class _OperatorEnrollmentSectionState
       case _LinkStatus.error:
         return Text(
           _errorMessage ?? _kGenericLinkFailureMessage,
-          style: tt.labelSmall?.copyWith(
-            color: SovereignColors.accentWarning,
-          ),
+          style: tt.labelSmall?.copyWith(color: SovereignColors.accentWarning),
         );
       case _LinkStatus.linking:
         return const Text("Linking...");

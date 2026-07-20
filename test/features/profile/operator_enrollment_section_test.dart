@@ -85,15 +85,22 @@ String _fakeJwt(int expUnixSeconds) {
   return "$header.$payload.SIGNATURE";
 }
 
-Widget _wrap(OperatorSessionService service, {bool isWeb = true}) {
+Widget _wrap(
+  OperatorSessionService service, {
+  bool isWeb = true,
+  String? Function()? tokenReader,
+  void Function(String?)? tokenWriter,
+}) {
   return ProviderScope(
-    overrides: [
-      operatorSessionServiceProvider.overrideWithValue(service),
-    ],
+    overrides: [operatorSessionServiceProvider.overrideWithValue(service)],
     child: MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
-          child: OperatorEnrollmentSection(isWeb: isWeb),
+          child: OperatorEnrollmentSection(
+            isWeb: isWeb,
+            tokenReader: tokenReader,
+            tokenWriter: tokenWriter,
+          ),
         ),
       ),
     ),
@@ -102,8 +109,9 @@ Widget _wrap(OperatorSessionService service, {bool isWeb = true}) {
 
 void main() {
   group("non-web platform", () {
-    testWidgets("shows a web-only note instead of the control, no crash",
-        (tester) async {
+    testWidgets("shows a web-only note instead of the control, no crash", (
+      tester,
+    ) async {
       final adapter = _CannedAdapter({});
       final dio = Dio()..httpClientAdapter = adapter;
       final service = OperatorSessionService(
@@ -126,53 +134,55 @@ void main() {
 
   group("happy path", () {
     testWidgets(
-        "open -> enroll -> session succeeds and shows the device fingerprint",
-        (tester) async {
-      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
-      final adapter = _CannedAdapter({
-        "/api/v1/auth/enroll/open": {"window_nonce": "WIN-1", "exp": future},
-        "/api/v1/auth/enroll": {"device_fp": "deadbeefdeadbeef"},
-        "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
-        "/api/v1/auth/session": {
-          "session_token": _fakeJwt(future),
-          "expires_at": future,
-        },
-      });
-      final dio = Dio()..httpClientAdapter = adapter;
-      final service = OperatorSessionService(
-        dio: dio,
-        baseUrl: "http://localhost:9384",
-        identity: _FakeIdentity(),
-      );
+      "open -> enroll -> session succeeds and shows the device fingerprint",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final adapter = _CannedAdapter({
+          "/api/v1/auth/enroll/open": {"window_nonce": "WIN-1", "exp": future},
+          "/api/v1/auth/enroll": {"device_fp": "deadbeefdeadbeef"},
+          "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
+          "/api/v1/auth/session": {
+            "session_token": _fakeJwt(future),
+            "expires_at": future,
+          },
+        });
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+        );
 
-      await tester.pumpWidget(_wrap(service));
-      await tester.pump();
+        await tester.pumpWidget(_wrap(service));
+        await tester.pump();
 
-      // No cached session yet: starts in the "Link this device" state, and
-      // the mount-time check must NOT have hit the wire (zero requests).
-      expect(find.text("Link this device"), findsOneWidget);
-      expect(adapter.requests, isEmpty);
+        // No cached session yet: starts in the "Link this device" state, and
+        // the mount-time check must NOT have hit the wire (zero requests).
+        expect(find.text("Link this device"), findsOneWidget);
+        expect(adapter.requests, isEmpty);
 
-      await tester.tap(find.byKey(const Key("operator-enroll-action")));
-      await tester.pump(); // enters the "linking" state
-      await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key("operator-enroll-action")));
+        await tester.pump(); // enters the "linking" state
+        await tester.pumpAndSettle();
 
-      expect(find.text("This device is linked"), findsOneWidget);
-      expect(find.textContaining("DEAD BEEF DEAD BEEF"), findsOneWidget);
+        expect(find.text("This device is linked"), findsOneWidget);
+        expect(find.textContaining("DEAD BEEF DEAD BEEF"), findsOneWidget);
 
-      // The three wire calls happened in order: open, enroll, then the
-      // challenge-response pair inside ensureSession().
-      expect(adapter.requests.map((r) => r.uri.path), [
-        "/api/v1/auth/enroll/open",
-        "/api/v1/auth/enroll",
-        "/api/v1/auth/challenge",
-        "/api/v1/auth/session",
-      ]);
-      expect(tester.takeException(), isNull);
-    });
+        // The three wire calls happened in order: open, enroll, then the
+        // challenge-response pair inside ensureSession().
+        expect(adapter.requests.map((r) => r.uri.path), [
+          "/api/v1/auth/enroll/open",
+          "/api/v1/auth/enroll",
+          "/api/v1/auth/challenge",
+          "/api/v1/auth/session",
+        ]);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets("an already-live session on mount shows linked immediately",
-        (tester) async {
+    testWidgets("an already-live session on mount shows linked immediately", (
+      tester,
+    ) async {
       final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
       final store = _FakeTokenStore()..value = _fakeJwt(future);
       final adapter = _CannedAdapter({});
@@ -198,32 +208,35 @@ void main() {
 
   group("not-a-trusted-operator error path", () {
     testWidgets(
-        "a 403 from enroll/open shows the friendly message, never a raw "
-        "exception, and never crashes", (tester) async {
-      final adapter = _CannedAdapter({});
-      adapter.statusOverride["/api/v1/auth/enroll/open"] = 403;
-      final dio = Dio()..httpClientAdapter = adapter;
-      final service = OperatorSessionService(
-        dio: dio,
-        baseUrl: "http://localhost:9384",
-        identity: _FakeIdentity(),
-      );
+      "a 403 from enroll/open shows the friendly message, never a raw "
+      "exception, and never crashes",
+      (tester) async {
+        final adapter = _CannedAdapter({});
+        adapter.statusOverride["/api/v1/auth/enroll/open"] = 403;
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+        );
 
-      await tester.pumpWidget(_wrap(service));
-      await tester.pump();
+        await tester.pumpWidget(_wrap(service));
+        await tester.pump();
 
-      await tester.tap(find.byKey(const Key("operator-enroll-action")));
-      await tester.pump();
-      await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key("operator-enroll-action")));
+        await tester.pump();
+        await tester.pumpAndSettle();
 
-      expect(find.text(kNotTrustedOperatorMessage), findsOneWidget);
-      expect(find.textContaining("DioException"), findsNothing);
-      expect(find.textContaining("Exception"), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
+        expect(find.text(kNotTrustedOperatorMessage), findsOneWidget);
+        expect(find.textContaining("DioException"), findsNothing);
+        expect(find.textContaining("Exception"), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets("a 401 from enroll/open also shows the friendly message",
-        (tester) async {
+    testWidgets("a 401 from enroll/open also shows the friendly message", (
+      tester,
+    ) async {
       final adapter = _CannedAdapter({});
       adapter.statusOverride["/api/v1/auth/enroll/open"] = 401;
       final dio = Dio()..httpClientAdapter = adapter;
@@ -244,8 +257,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets("a generic network failure shows a friendly fallback message",
-        (tester) async {
+    testWidgets("a generic network failure shows a friendly fallback message", (
+      tester,
+    ) async {
       final adapter = _CannedAdapter({});
       adapter.statusOverride["/api/v1/auth/enroll/open"] = 500;
       final dio = Dio()..httpClientAdapter = adapter;
@@ -263,13 +277,96 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text(kNotTrustedOperatorMessage), findsNothing);
-      expect(
-        find.textContaining(
-          "Could not link this device",
-        ),
-        findsOneWidget,
-      );
+      expect(find.textContaining("Could not link this device"), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+  });
+
+  group("operator token field (Fix B: paste the token, then link)", () {
+    testWidgets("with no token entered, a 403 from enroll/open still shows the "
+        "friendly message", (tester) async {
+      final adapter = _CannedAdapter({});
+      adapter.statusOverride["/api/v1/auth/enroll/open"] = 403;
+      final dio = Dio()..httpClientAdapter = adapter;
+      final service = OperatorSessionService(
+        dio: dio,
+        baseUrl: "http://localhost:9384",
+        identity: _FakeIdentity(),
+      );
+
+      await tester.pumpWidget(_wrap(service));
+      await tester.pump();
+
+      expect(find.byKey(const Key("operator-token-field")), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key("operator-enroll-action")));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text(kNotTrustedOperatorMessage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      "entering a token and tapping Link sends it as X-Operator-Token on "
+      "enroll/open, and enrollment succeeds",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final adapter = _CannedAdapter({
+          "/api/v1/auth/enroll/open": {
+            "window_nonce": "WIN-TOK",
+            "exp": future,
+          },
+          "/api/v1/auth/enroll": {"device_fp": "deadbeefdeadbeef"},
+          "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
+          "/api/v1/auth/session": {
+            "session_token": _fakeJwt(future),
+            "expires_at": future,
+          },
+        });
+        final dio = Dio()..httpClientAdapter = adapter;
+        // Shared, in-memory store standing in for the (web-only, no-op under
+        // `flutter test`'s VM target) real operator_token.dart localStorage: the
+        // widget's field writes into it, and the service's operatorTokenReader
+        // reads from it, exactly mirroring how the real seam connects them in
+        // production.
+        final tokenStore = _FakeTokenStore();
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+          operatorTokenReader: tokenStore.read,
+        );
+
+        await tester.pumpWidget(
+          _wrap(
+            service,
+            tokenReader: tokenStore.read,
+            tokenWriter: tokenStore.write,
+          ),
+        );
+        await tester.pump();
+
+        await tester.enterText(
+          find.byKey(const Key("operator-token-field")),
+          "SHARED-OPERATOR-SECRET",
+        );
+        await tester.pump();
+
+        expect(tokenStore.value, "SHARED-OPERATOR-SECRET");
+
+        await tester.tap(find.byKey(const Key("operator-enroll-action")));
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+
+        final openReq = adapter.requests.firstWhere(
+          (r) => r.uri.path == "/api/v1/auth/enroll/open",
+        );
+        expect(openReq.headers["X-Operator-Token"], "SHARED-OPERATOR-SECRET");
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }
