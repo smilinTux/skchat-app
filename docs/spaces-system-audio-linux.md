@@ -1,5 +1,28 @@
 # Spaces "Share system audio" on Linux/PipeWire (root cause of the streaming-audio echo)
 
+## Resolution (SHIPPED, skchat-app v1.2.0, 2026-07-19)
+**Option 1 below was implemented and is live.** A PulseAudio/PipeWire monitor
+capturer now records the default sink's `.monitor` and publishes it as a
+distinct `TrackSource.screenShareAudio` track, decoupled from the microphone
+(muting the mic leaves the content playing). It is implemented in the Linux
+side of a vendored `flutter_webrtc` fork
+(`linux/pulse_loopback_capturer.{h,cc}`, wired through
+`CreateLoopbackCapturer` + `getDisplayMedia({audio:true})`), pinned in
+`pubspec.yaml` `dependency_overrides`, and proposed upstream as
+**flutter-webrtc/flutter-webrtc#2115**. Requires the `libpulse` runtime at
+build time; without it the plugin still builds and simply yields no
+system-audio track.
+
+Live-verified on `.41`: a screen share produced a PulseAudio source-output
+`application.name="flutter_webrtc"`, `media.name="System audio loopback"` bound
+to `alsa_output.pci-...analog-stereo.monitor` (the monitor, NOT the mic).
+
+This capturer is **desktop-native only**. Browser (web app) screen-share audio
+is handled entirely by the browser's own `getDisplayMedia` and varies by
+engine/OS; see the platform/browser support matrix in the server repo
+`docs/SPACES.md` §2.16. The analysis below is retained as the historical root
+cause.
+
 ## Symptom
 On Linux desktop the screen-share panel shows **"No system-audio source found on
 this device"**, even though PipeWire clearly exposes output monitors
@@ -61,7 +84,10 @@ ADM stays on its default device (the mic).
 recreate the exact echo. That path is a dead end and must not be taken.
 
 ## Options (real fixes, ranked)
-1. **Out-of-band capture + custom track (correct, medium/large).** Capture the
+> **Chosen + shipped: option 1** (see Resolution at top). Options 2 and 3 are
+> retained for context and were not needed.
+
+1. **Out-of-band capture + custom track (correct, medium/large). [IMPLEMENTED]** Capture the
    chosen monitor directly from PipeWire/PulseAudio (`pw-record` / `parec`, or
    `libpipewire`) and push the PCM into a WebRTC audio source published as a
    distinct `TrackSource.screenShareAudio`. `flutter_webrtc` on Linux does not
