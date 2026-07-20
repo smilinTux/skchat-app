@@ -2,6 +2,23 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'daemon_config.dart';
+import 'operator_session_service.dart';
+
+/// Any request whose path falls under this prefix is the operator-auth
+/// handshake itself (`GET .../challenge`, `POST .../session`, run by
+/// [OperatorSessionService] on its OWN Dio instance, not this client's).
+/// The interceptor below exempts these paths so it never asks
+/// [OperatorSessionService.ensureSession] to authenticate the very requests
+/// that constitute the handshake, which would recurse.
+const _kAuthHandshakePathMarker = '/api/v1/auth/';
+
+/// Extra-map key the retry guard uses to mark a request that has already been
+/// retried once after a 401, so a daemon that keeps returning 401 (e.g. a
+/// re-auth that itself gets rejected) fails once instead of looping forever.
+const _kAuthRetriedExtraKey = 'skAuthRetried';
+
+bool _isAuthHandshakePath(String path) =>
+    path.contains(_kAuthHandshakePathMarker);
 
 /// Low-level HTTP client wrapping the SKComms daemon REST API.
 ///
@@ -18,7 +35,13 @@ import 'daemon_config.dart';
 class SKCommsClient {
   /// [dio] may be injected (tests) to supply a canned [HttpClientAdapter];
   /// its [BaseOptions.baseUrl] is set from [baseUrl] when provided.
-  SKCommsClient({String? baseUrl, Dio? dio})
+  ///
+  /// [sessionService] is the operator-auth handshake (Task 6). It is
+  /// nullable: when not supplied (e.g. an older call site, or a test that
+  /// does not care about auth), the client behaves exactly as it did before
+  /// this Bearer-attaching interceptor existed, no header is attached and no
+  /// 401 retry is attempted.
+  SKCommsClient({String? baseUrl, Dio? dio, OperatorSessionService? sessionService})
     : _dio = dio ??
           Dio(
             BaseOptions(
@@ -27,13 +50,78 @@ class SKCommsClient {
               receiveTimeout: const Duration(seconds: 10),
               headers: {'Content-Type': 'application/json'},
             ),
-          ) {
+          ),
+      _sessionService = sessionService {
     if (dio != null && baseUrl != null) {
       _dio.options.baseUrl = baseUrl;
     }
+    _dio.interceptors.add(_buildAuthInterceptor());
   }
 
   final Dio _dio;
+  final OperatorSessionService? _sessionService;
+
+  /// Attaches `Authorization: Bearer <session>` to every request (best
+  /// effort) and retries once on a 401 after clearing the cached session and
+  /// re-running the handshake.
+  ///
+  /// Ship-dark contract: the skchat server gate that checks this header is
+  /// OFF by default, so this interceptor must NEVER block or fail a request
+  /// just because a session could not be minted (e.g. a fresh, unenrolled
+  /// device). Any [OperatorSessionService.ensureSession] failure is swallowed
+  /// and the request proceeds without the header.
+  InterceptorsWrapper _buildAuthInterceptor() {
+    return InterceptorsWrapper(
+      onRequest: (options, handler) async {
+        final session = _sessionService;
+        if (session == null || _isAuthHandshakePath(options.path)) {
+          return handler.next(options);
+        }
+        try {
+          final token = await session.ensureSession();
+          options.headers['Authorization'] = 'Bearer $token';
+        } catch (_) {
+          // No session available yet (not enrolled, daemon unreachable,
+          // etc). Proceed unauthenticated, the server gate is off by
+          // default, so this must not block the request.
+        }
+        return handler.next(options);
+      },
+      onError: (err, handler) async {
+        final session = _sessionService;
+        final options = err.requestOptions;
+        final alreadyRetried = options.extra[_kAuthRetriedExtraKey] == true;
+        final isAuthPath = _isAuthHandshakePath(options.path);
+        if (session == null ||
+            err.response?.statusCode != 401 ||
+            alreadyRetried ||
+            isAuthPath) {
+          return handler.next(err);
+        }
+
+        session.clearSession();
+        try {
+          final freshToken = await session.ensureSession();
+          final retryOptions = options.copyWith(
+            headers: {
+              ...options.headers,
+              'Authorization': 'Bearer $freshToken',
+            },
+            extra: {
+              ...options.extra,
+              _kAuthRetriedExtraKey: true,
+            },
+          );
+          final retryResponse = await _dio.fetch(retryOptions);
+          return handler.resolve(retryResponse);
+        } catch (_) {
+          // Re-auth itself failed (or the retried request failed again);
+          // surface the ORIGINAL error rather than a re-auth exception.
+          return handler.next(err);
+        }
+      },
+    );
+  }
 
   // ── Health ────────────────────────────────────────────────────────────────
 
@@ -657,7 +745,8 @@ class IdentityInfo {
 /// screen rebuilds this client so all subsequent calls hit the new host.
 final skcommsClientProvider = Provider<SKCommsClient>((ref) {
   final baseUrl = ref.watch(daemonUrlProvider);
-  return SKCommsClient(baseUrl: baseUrl);
+  final sessionService = ref.watch(operatorSessionServiceProvider);
+  return SKCommsClient(baseUrl: baseUrl, sessionService: sessionService);
 });
 
 

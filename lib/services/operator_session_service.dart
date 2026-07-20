@@ -158,6 +158,14 @@ class OperatorSessionService {
     return token;
   }
 
+  /// Drop the cached session token, forcing the next [ensureSession] call to
+  /// run a fresh challenge-response handshake. Used by the Dio interceptor
+  /// (SKCommsClient) when a request comes back 401: the cached token is
+  /// presumably stale or revoked, so it is discarded before retrying.
+  void clearSession() {
+    _writeToken(null);
+  }
+
   /// True when [token] is a decodable JWT-shaped string whose `exp` claim is
   /// still comfortably in the future. A token with no readable `exp` (not a
   /// JWT, or malformed) is treated as expired, the safe default, it forces a
