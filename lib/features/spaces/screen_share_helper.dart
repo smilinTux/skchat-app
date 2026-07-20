@@ -1,5 +1,5 @@
 import "package:flutter/foundation.dart"
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, debugPrint, defaultTargetPlatform, kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart"
     show DesktopCapturerSource, SourceType, ThumbnailSize, desktopCapturer;
@@ -172,8 +172,15 @@ List<ScreenShare> _resolveTracksBySource(
     final track = pub?.track;
     if (track is VideoTrack) {
       out.add((identity: p.identity, track: track as VideoTrack, isLocal: false));
+    } else if (pub != null) {
+      debugPrint('[SPVID] resolve SKIP id=${p.identity} source=$source '
+          'pub=true track=${pub.track == null} '
+          'subscribed=${pub.subscribed}');
     }
   }
+  debugPrint('[SPVID] resolve source=$source -> '
+      '[${out.map((s) => '${s.identity}:sid=${s.track.sid}:local=${s.isLocal}').join(', ')}] '
+      '(n=${out.length})');
   return out;
 }
 
