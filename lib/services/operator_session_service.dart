@@ -164,6 +164,12 @@ class OperatorSessionService {
   final void Function(String?) _writeToken;
   final DateTime Function() _now;
 
+  /// This service's [GuestIdentity], exposed read-only so a caller (e.g. the
+  /// device-enrollment UI) can read the device's fingerprint/public key via
+  /// [GuestIdentity.ensure] without re-deriving or duplicating any signing
+  /// logic. Mirrors the existing `identity` getter on [GuestGroupService].
+  GuestIdentity get identity => _identity;
+
   /// Exposed for tests only: proves (via reference identity, so it works
   /// regardless of the web/native storage stub in play under `flutter test`)
   /// that this instance's default reader/writer are NOT the unrelated
@@ -283,6 +289,21 @@ class OperatorSessionService {
     _writeToken(null);
     _negativeCacheUntil = null;
     _negativeCacheError = null;
+  }
+
+  /// True if a cached, unexpired session token exists RIGHT NOW. A pure
+  /// cache read: no network call, no handshake, and no interaction with the
+  /// negative cache. Safe to call opportunistically (e.g. when a screen
+  /// mounts) to decide whether to show a "linked" state without risking a
+  /// failed-handshake negative-cache window blocking a real enrollment flow
+  /// that follows shortly after (an unconditional [ensureSession] call would
+  /// not be safe there: if no token is cached it falls through to a full
+  /// handshake attempt, which fails for a not-yet-enrolled device and arms
+  /// the negative cache for [_kNegativeCacheWindow], which would then also
+  /// block the FOLLOW-UP [ensureSession] call inside the enrollment flow).
+  bool hasLiveSession() {
+    final cached = _readToken();
+    return cached != null && cached.isNotEmpty && _isUnexpired(cached);
   }
 
   /// True when [token] is a decodable JWT-shaped string whose `exp` claim is

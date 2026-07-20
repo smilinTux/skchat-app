@@ -10,6 +10,7 @@ import '../../services/daemon_config.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/skcomms_sync.dart';
 import 'widgets/capabilities_section.dart';
+import 'widgets/operator_enrollment_section.dart';
 
 // ── Local identity provider ────────────────────────────────────────────────
 // Identity is fetched from the SKComms daemon at /api/v1/identity.
@@ -174,6 +175,14 @@ class ProfileScreen extends ConsumerWidget {
           // ── Encryption ──────────────────────────────────────────────
           _SectionLabel(label: 'Encryption'),
           _EncryptionCard(identity: identity),
+          const SizedBox(height: 20),
+
+          // ── Operator session ─────────────────────────────────────────
+          // Enrolls THIS device's key so the app can obtain an operator
+          // session for operator-gated daemon routes. Web-first (the
+          // device key is only a real WebCrypto key on the web build).
+          _SectionLabel(label: 'Operator'),
+          const OperatorEnrollmentSection(),
           const SizedBox(height: 20),
 
           // ── Appearance ──────────────────────────────────────────────
