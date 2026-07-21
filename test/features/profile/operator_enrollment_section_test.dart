@@ -4,9 +4,13 @@ import "package:dio/dio.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:skchat/features/profile/profile_screen.dart";
 import "package:skchat/features/profile/widgets/operator_enrollment_section.dart";
 import "package:skchat/services/guest_identity.dart";
 import "package:skchat/services/operator_session_service.dart";
+import "package:skchat/services/self_identity.dart";
+import "package:skchat/services/self_identity_provider.dart";
+import "package:skchat/services/spaces_identity_service.dart";
 
 /// Canned-response adapter keyed by path; mirrors the mocking style already
 /// established in operator_session_service_test.dart (same project, same
@@ -75,6 +79,30 @@ class _FakeTokenStore {
   String? value;
   String? read() => value;
   void write(String? v) => value = v;
+}
+
+/// A [LocalIdentityNotifier] that returns a fixed [LocalIdentity] on build
+/// and never schedules `_fetchFromDaemon`, keeping the invalidation test
+/// below network-free for the daemon-identity side.
+class _FakeLocal extends LocalIdentityNotifier {
+  _FakeLocal(this._value);
+
+  final LocalIdentity _value;
+
+  @override
+  LocalIdentity build() => _value;
+}
+
+/// A [SpacesIdentityNotifier] that returns a fixed [SpacesIdentity] on build
+/// instead of reading/generating one from storage, so the pre-enroll (guest)
+/// side of [selfIdentityProvider] resolves deterministically too.
+class _FakeSpaces extends SpacesIdentityNotifier {
+  _FakeSpaces(this._value);
+
+  final SpacesIdentity _value;
+
+  @override
+  Future<SpacesIdentity> build() async => _value;
 }
 
 String _fakeJwt(int expUnixSeconds) {
@@ -365,6 +393,175 @@ void main() {
           (r) => r.uri.path == "/api/v1/auth/enroll/open",
         );
         expect(openReq.headers["X-Operator-Token"], "SHARED-OPERATOR-SECRET");
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
+  group("selfIdentityProvider refresh on enroll (Finding I-1)", () {
+    testWidgets(
+      "a successful link invalidates selfIdentityProvider, so the trust "
+      "tier recomputes to green immediately instead of staying red until "
+      "some unrelated rebuild happens to notice hasLiveSession() flipped",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final adapter = _CannedAdapter({
+          "/api/v1/auth/enroll/open": {"window_nonce": "WIN-1", "exp": future},
+          "/api/v1/auth/enroll": {"device_fp": "deadbeefdeadbeef"},
+          "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
+          "/api/v1/auth/session": {
+            "session_token": _fakeJwt(future),
+            "expires_at": future,
+          },
+        });
+        final dio = Dio()..httpClientAdapter = adapter;
+        // In-memory token store (NOT the default, real, web-only localStorage
+        // seam, a no-op under flutter test's VM target): without a working
+        // store, enroll()'s write and hasLiveSession()'s read would not
+        // round-trip and this test could not tell a real fix from a no-op.
+        final tokenStore = _FakeTokenStore();
+        // The REAL OperatorSessionService, not a hasLiveSession()-only fake:
+        // selfIdentityProvider reads hasLiveSession(), which is a pure cache
+        // read backed by this service's own token store. A successful
+        // enroll here genuinely flips it false -> true, the exact condition
+        // Finding I-1 is about (Riverpod has no reactive way to observe a
+        // plain method call on its own, so without an explicit invalidate,
+        // selfIdentityProvider would never notice).
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+          tokenReader: tokenStore.read,
+          tokenWriter: tokenStore.write,
+        );
+
+        final container = ProviderContainer(
+          overrides: [
+            operatorSessionServiceProvider.overrideWithValue(service),
+            localIdentityProvider.overrideWith(
+              () => _FakeLocal(
+                const LocalIdentity(
+                  displayName: "Operator",
+                  fingerprint: "deadbeefdeadbeef",
+                  pgpKeySize: 4096,
+                ),
+              ),
+            ),
+            spacesIdentityProvider.overrideWith(
+              () => _FakeSpaces(
+                const SpacesIdentity(id: "guestid", displayName: "Guest-X"),
+              ),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        // Pre-enroll: no live session yet, so selfIdentityProvider resolves
+        // red (guest).
+        final before = await container.read(selfIdentityProvider.future);
+        expect(before.tier, SelfTrustTier.red);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MaterialApp(
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: OperatorEnrollmentSection(isWeb: true),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key("operator-enroll-action")));
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+
+        final after = await container.read(selfIdentityProvider.future);
+        expect(after.tier, SelfTrustTier.green);
+        expect(after.isOperator, isTrue);
+        expect(after.fingerprint, "deadbeefdeadbeef");
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "refreshing an already-linked session also invalidates "
+      "selfIdentityProvider",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final store = _FakeTokenStore()..value = _fakeJwt(future);
+        final adapter = _CannedAdapter({
+          "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
+          "/api/v1/auth/session": {
+            "session_token": _fakeJwt(future),
+            "expires_at": future,
+          },
+        });
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+          tokenReader: store.read,
+          tokenWriter: store.write,
+        );
+
+        final container = ProviderContainer(
+          overrides: [
+            operatorSessionServiceProvider.overrideWithValue(service),
+            localIdentityProvider.overrideWith(
+              () => _FakeLocal(
+                const LocalIdentity(
+                  displayName: "Operator",
+                  fingerprint: "deadbeefdeadbeef",
+                  pgpKeySize: 4096,
+                ),
+              ),
+            ),
+            spacesIdentityProvider.overrideWith(
+              () => _FakeSpaces(
+                const SpacesIdentity(id: "guestid", displayName: "Guest-X"),
+              ),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        // Already linked (a live cached token), so this starts green.
+        final before = await container.read(selfIdentityProvider.future);
+        expect(before.tier, SelfTrustTier.green);
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MaterialApp(
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: OperatorEnrollmentSection(isWeb: true),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key("operator-enroll-refresh")));
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        // Still green (unchanged, no regression), and the refresh path's
+        // invalidate did not crash or leave a stale/broken provider state.
+        final after = await container.read(selfIdentityProvider.future);
+        expect(after.tier, SelfTrustTier.green);
+        expect(after.fingerprint, "deadbeefdeadbeef");
         expect(tester.takeException(), isNull);
       },
     );

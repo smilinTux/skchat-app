@@ -7,7 +7,6 @@ import '../../core/theme/theme.dart';
 import '../../services/consent_service.dart';
 import '../../services/self_identity_provider.dart';
 import '../conf/conf_screen.dart' show ConfArgs;
-import '../profile/profile_screen.dart' show localIdentityProvider;
 
 /// HubScreen, the operator "Ops" surface.
 ///
@@ -24,16 +23,16 @@ class HubScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // The shared daemon identity, used ONLY as a fallback while the resolved
-    // self identity (below) has not finished loading yet.
-    final identity = ref.watch(localIdentityProvider);
     // The unified self identity: the daemon's identity for an operator
     // (unchanged), or this device's own per-device identity for a guest, so
     // a guest-hosted conference never derives its room from the operator's
-    // fingerprint.
-    final self = ref.watch(selfIdentityProvider).valueOrNull;
-    final selfFingerprint = self?.fingerprint ?? identity.fingerprint;
-    final selfDisplayName = self?.displayName ?? identity.displayName;
+    // fingerprint. Watch it (ignoring the value) purely so this widget
+    // rebuilds once it resolves; the actual value selection goes through the
+    // operator-aware synchronous helper below, which never falls back to the
+    // operator's identity for a guest, even pre-resolution.
+    ref.watch(selfIdentityProvider);
+    final selfFingerprint = selfFingerprintNowFromWidget(ref);
+    final selfDisplayName = selfDisplayNameNowFromWidget(ref);
     final pendingRequests = ref.watch(consentPendingCountProvider);
 
     final tiles = <_OpsTile>[
@@ -77,8 +76,10 @@ class HubScreen extends ConsumerWidget {
         description: 'Sovereign video rooms',
         icon: Icons.video_camera_front_outlined,
         accent: SovereignColors.accentEncrypt,
-        // /conf needs a ConfArgs(identity) via `extra`. Start a fresh
-        // sovereign-hosted room using the local node's fingerprint.
+        // /conf needs a ConfArgs(identity) via `extra`. Start a fresh room
+        // using the resolved self identity: the operator's daemon
+        // fingerprint (unchanged) when this device is enrolled, or this
+        // device's own per-device guest id otherwise.
         onTap: () => context.push(
           AppRoutes.conf,
           extra: ConfArgs(

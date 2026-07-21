@@ -16,7 +16,6 @@ import "../call_shared/reactions.dart";
 import "../call_shared/screen_share_source.dart";
 import "../calls/call_device_picker.dart";
 import "../calls/cast_sheet.dart";
-import "../profile/profile_screen.dart" show localIdentityProvider;
 
 // ── Route args ────────────────────────────────────────────────────────────────
 
@@ -199,15 +198,17 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   /// SELF identity (operator's daemon identity, unchanged, or a guest's own
   /// per-device identity, never the operator's), fingerprint else display
   /// name. If the self identity has not resolved yet, fall back further to
-  /// the shared daemon identity, guarding against a null on first tap so the
-  /// call path never regresses.
+  /// [selfFingerprintNow]/[selfDisplayNameNow], the SAME operator-aware gate
+  /// (operator's daemon identity, unchanged; guest's own per-device identity,
+  /// NEVER the operator's), guarding against a null on first tap so the call
+  /// path never regresses and never leaks the operator's identity to a guest.
   ///
   /// Only a value derived from [ConfArgs.identity] or a RESOLVED
-  /// selfIdentityProvider is cached. The pre-resolution fallback (shared
-  /// daemon identity) is returned for that call only and never stored, so a
-  /// later access, once selfIdentityProvider has resolved, recomputes and
-  /// picks up the real per-device fingerprint instead of pinning the
-  /// fallback for the whole conf session.
+  /// selfIdentityProvider is cached. The pre-resolution fallback is returned
+  /// for that call only and never stored, so a later access, once
+  /// selfIdentityProvider has resolved, recomputes and picks up the real
+  /// per-device fingerprint instead of pinning the fallback for the whole
+  /// conf session.
   String get _identity {
     final cached = _identityCache;
     if (cached != null) return cached;
@@ -216,17 +217,15 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
       _identityCache = fromArg;
       return fromArg;
     }
-    final self = ref.read(selfIdentityProvider).valueOrNull;
-    if (self != null) {
-      final resolved =
-          self.fingerprint.isNotEmpty ? self.fingerprint : self.displayName;
+    final isResolved = ref.read(selfIdentityProvider).valueOrNull != null;
+    final fp = selfFingerprintNow(ref);
+    final resolved = fp.isNotEmpty ? fp : selfDisplayNameNow(ref);
+    if (isResolved) {
+      // Only a RESOLVED value is cached (see doc above); the pre-resolution
+      // fallback is deliberately not cached.
       _identityCache = resolved;
-      return resolved;
     }
-    // selfIdentityProvider has not resolved yet; use the shared daemon
-    // identity for this call only. Deliberately not cached (see doc above).
-    final me = ref.read(localIdentityProvider);
-    return me.fingerprint.isNotEmpty ? me.fingerprint : me.displayName;
+    return resolved;
   }
 
   /// Create (if needed), mint a token, and join the LiveKit media room.

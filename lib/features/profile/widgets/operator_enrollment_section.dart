@@ -6,6 +6,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/theme/theme.dart";
 import "../../../services/operator_session_service.dart";
 import "../../../services/operator_token.dart" as op_token;
+import "../../../services/self_identity_provider.dart";
 
 /// Shown when `enroll/open` (or any step of the enrollment flow) is rejected
 /// because the caller is not yet a trusted operator context (HTTP 401/403).
@@ -157,6 +158,14 @@ class _OperatorEnrollmentSectionState
       await service.enroll(windowNonce);
       await service.ensureSession();
       final kp = await service.identity.ensure();
+      // This device just went from unenrolled to a live operator session:
+      // [selfIdentityProvider]'s tier is derived from
+      // [OperatorSessionService.hasLiveSession], a plain method call it has
+      // no reactive way to observe on its own, so invalidate it here to
+      // force every surface reading it (profile, QR, conf, calls) to
+      // recompute to green now instead of staying red until some unrelated
+      // rebuild happens to pick it up.
+      ref.invalidate(selfIdentityProvider);
       if (!mounted) return;
       setState(() {
         _status = _LinkStatus.linked;
@@ -177,6 +186,10 @@ class _OperatorEnrollmentSectionState
     try {
       await service.ensureSession();
       final kp = await service.identity.ensure();
+      // Same reasoning as in [_link]: force [selfIdentityProvider] to
+      // recompute now that a live session is confirmed, rather than relying
+      // on an unrelated rebuild to notice.
+      ref.invalidate(selfIdentityProvider);
       if (!mounted) return;
       setState(() {
         _status = _LinkStatus.linked;

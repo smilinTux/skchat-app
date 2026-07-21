@@ -6,8 +6,24 @@ import "package:skchat/features/conf/conf_screen.dart" show ConfArgs;
 import "package:skchat/features/hub/hub_screen.dart";
 import "package:skchat/features/profile/profile_screen.dart";
 import "package:skchat/services/consent_service.dart";
+import "package:skchat/services/operator_session_service.dart";
 import "package:skchat/services/self_identity.dart";
 import "package:skchat/services/self_identity_provider.dart";
+
+/// Stands in for [OperatorSessionService] so `hub_screen.dart`'s
+/// operator-aware synchronous fallback (`selfFingerprintNowFromWidget`,
+/// exercised during the microsecond before the overridden
+/// [selfIdentityProvider] below has resolved) never reaches the REAL
+/// service, whose default construction watches the Hive-backed
+/// `daemonUrlProvider` (not initialized in this test).
+class _FakeOp extends OperatorSessionService {
+  _FakeOp({required this.hasSession});
+
+  final bool hasSession;
+
+  @override
+  bool hasLiveSession() => hasSession;
+}
 
 /// Wrap the HubScreen in a minimal router that registers the operator
 /// destinations, so tapping a tile can be verified to navigate.
@@ -19,12 +35,18 @@ import "package:skchat/services/self_identity_provider.dart";
 /// tests that only care about navigation keep working unchanged while Task 7
 /// tests can pin a guest identity to prove the Conferences tile resolves its
 /// OWN self identity rather than the shared daemon identity.
+/// [operatorSessionServiceProvider] is overridden to match [self]'s tier
+/// (see [_FakeOp]'s doc) since the pre-resolution fallback path reads it.
 Widget _wrap(GoRouter router, {SelfIdentity? self}) {
+  final effectiveSelf = self ?? _defaultSelfIdentity;
   return ProviderScope(
     overrides: [
       localIdentityProvider.overrideWith(_StubIdentityNotifier.new),
       selfIdentityProvider.overrideWith(
-        (ref) async => self ?? _defaultSelfIdentity,
+        (ref) async => effectiveSelf,
+      ),
+      operatorSessionServiceProvider.overrideWithValue(
+        _FakeOp(hasSession: effectiveSelf.isOperator),
       ),
       // The Contact Requests tile reads the consent badge count, which would
       // otherwise reach the daemon (via the Hive-backed daemonUrlProvider) —

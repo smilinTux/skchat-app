@@ -64,15 +64,21 @@ class _QrLoginScreenState extends ConsumerState<QrLoginScreen>
 
   @override
   Widget build(BuildContext context) {
-    // The shared daemon identity, used ONLY as a fallback while the resolved
-    // self identity (below) has not finished loading yet.
+    // The shared daemon identity, used ONLY to build the placeholder
+    // [LocalIdentity] the QR tab widget expects; the actual displayed values
+    // below always come from the resolved (or operator-aware, pre-resolution)
+    // self identity, never straight from this.
     final identity = ref.watch(localIdentityProvider);
     // The unified self identity: the daemon's identity for an operator
     // (unchanged), or this device's own per-device identity for a guest, so
-    // a guest's QR never leaks/derives from the operator's fingerprint.
-    final self = ref.watch(selfIdentityProvider).valueOrNull;
-    final selfFingerprint = self?.fingerprint ?? identity.fingerprint;
-    final selfDisplayName = self?.displayName ?? identity.displayName;
+    // a guest's QR never leaks/derives from the operator's fingerprint. Watch
+    // it (ignoring the value) purely so this widget rebuilds once it
+    // resolves; the actual value selection goes through the operator-aware
+    // synchronous helper below, which never falls back to the operator's
+    // identity for a guest, even pre-resolution.
+    ref.watch(selfIdentityProvider);
+    final selfFingerprint = selfFingerprintNowFromWidget(ref);
+    final selfDisplayName = selfDisplayNameNowFromWidget(ref);
     final soulColor = SovereignColors.fromFingerprint(selfFingerprint);
     final tt = Theme.of(context).textTheme;
 

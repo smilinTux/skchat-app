@@ -14,24 +14,38 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/conf/conf_screen.dart";
-import "package:skchat/features/profile/profile_screen.dart"
-    show LocalIdentity, LocalIdentityNotifier, localIdentityProvider;
 import "package:skchat/services/conf_service.dart";
+import "package:skchat/services/operator_session_service.dart";
 import "package:skchat/services/self_identity.dart";
 import "package:skchat/services/self_identity_provider.dart";
+import "package:skchat/services/spaces_identity_service.dart";
 
 class MockConfService extends Mock implements ConfService {}
 
-// A deterministic stand-in for the shared daemon identity, replacing
-// LocalIdentityNotifier's real build() (which kicks off a network fetch via
-// skcommsClientProvider, unrelated infra this test has no need to exercise)
-// with a fixed value so the pre-resolution fallback path is deterministic.
-class _StubLocalIdentityNotifier extends LocalIdentityNotifier {
+/// Stands in for [OperatorSessionService] so the pre-resolution fallback
+/// (`selfFingerprintNow`, hit while [selfIdentityProvider] is still loading)
+/// reads a deterministic `hasLiveSession()` instead of the real, Hive-backed
+/// service.
+class _FakeOp extends OperatorSessionService {
+  _FakeOp({required this.hasSession});
+
+  final bool hasSession;
+
   @override
-  LocalIdentity build() => const LocalIdentity(
-        displayName: "Daemon-Fallback",
-        fingerprint: "D0D0D0D0D0D0D0D0",
-      );
+  bool hasLiveSession() => hasSession;
+}
+
+/// A deterministic stand-in for the guest's own per-device identity source,
+/// used to prove the pre-resolution fallback path resolves to THIS, not the
+/// shared daemon identity (Finding I-2: falling back to the daemon identity
+/// for a guest, even transiently, leaks the operator's fingerprint).
+class _StubSpaces extends SpacesIdentityNotifier {
+  _StubSpaces(this._value);
+
+  final SpacesIdentity _value;
+
+  @override
+  Future<SpacesIdentity> build() async => _value;
 }
 
 const _operatorIdentity = SelfIdentity(
@@ -107,24 +121,37 @@ void main() {
     expect(identity, isNot(_operatorIdentity.fingerprint));
   });
 
-  // Regression for the review finding: _identity must not permanently pin
-  // the pre-resolution fallback. If _identity is first read while
-  // selfIdentityProvider is still loading (AsyncLoading, .valueOrNull ==
-  // null), it must return the shared-daemon fallback for THAT call only and
-  // must not cache it; once selfIdentityProvider resolves, a later access
-  // must recompute and pick up the guest's own per-device fingerprint G,
-  // never staying pinned to the fallback for the whole conf session.
+  // Regression for Finding I-2: _identity must not permanently pin the
+  // pre-resolution fallback, AND that fallback must be operator-aware (never
+  // the shared daemon identity for a GUEST, even for one call). If _identity
+  // is first read while selfIdentityProvider is still loading (AsyncLoading,
+  // .valueOrNull == null), a guest device must fall back to ITS OWN
+  // per-device identity (via selfFingerprintNow -> spacesIdentityProvider)
+  // for that call only, and must not cache it; once selfIdentityProvider
+  // resolves, a later access must recompute and pick up the guest's real
+  // resolved fingerprint G, never staying pinned to the fallback for the
+  // whole conf session.
   test(
-      "does not permanently cache the pre-resolution fallback: a later "
-      "access after selfIdentityProvider resolves returns the resolved "
-      "guest fingerprint G, not the pinned fallback", () async {
+      "does not permanently cache the pre-resolution fallback, and that "
+      "fallback is the guest's own identity, never the operator's", () async {
     final selfCompleter = Completer<SelfIdentity>();
+    const preResolutionFallback = SpacesIdentity(
+      id: "S3S3S3S3S3S3S3S3",
+      displayName: "Spaces-Fallback",
+    );
     final container = ProviderContainer(overrides: [
       confServiceProvider.overrideWithValue(conf),
       // Stays unresolved (AsyncLoading, valueOrNull == null) until we
       // complete it below, reproducing the race from the finding.
       selfIdentityProvider.overrideWith((ref) => selfCompleter.future),
-      localIdentityProvider.overrideWith(_StubLocalIdentityNotifier.new),
+      // No live operator session: the pre-resolution fallback must resolve
+      // through the guest's own spacesIdentityProvider, NOT localIdentityProvider.
+      operatorSessionServiceProvider.overrideWithValue(
+        _FakeOp(hasSession: false),
+      ),
+      spacesIdentityProvider.overrideWith(
+        () => _StubSpaces(preResolutionFallback),
+      ),
     ]);
     addTearDown(container.dispose);
 
@@ -135,9 +162,16 @@ void main() {
     addTearDown(sub.close);
     final notifier = container.read(confProvider(bareArgs).notifier);
 
+    // Let the guest's OWN identity source resolve (but NOT selfIdentityProvider
+    // itself, which stays pending on selfCompleter), so the very first
+    // _identity access below exercises a deterministic pre-resolution
+    // fallback instead of racing spacesIdentityProvider's own first microtask.
+    await container.read(spacesIdentityProvider.future);
+
     // First access: selfIdentityProvider has not resolved yet, so _identity
-    // must fall back to the shared daemon identity for this call only, and
-    // must not crash or return null (still a plain, non-empty String).
+    // must fall back to the GUEST's own per-device identity for this call
+    // only (never the operator/daemon identity), and must not crash or
+    // return null (still a plain, non-empty String).
     await notifier.connect();
 
     // Now let selfIdentityProvider resolve to the guest's own identity.
@@ -158,7 +192,10 @@ void main() {
     final secondAccess = captured[1] as String;
 
     expect(firstAccess, isNotEmpty);
-    expect(firstAccess, "D0D0D0D0D0D0D0D0"); // the shared daemon fallback
+    // The pre-resolution fallback: the guest's OWN per-device id, never the
+    // operator's identity and never a hardcoded/shared daemon value.
+    expect(firstAccess, preResolutionFallback.id);
+    expect(firstAccess, isNot(_operatorIdentity.fingerprint));
     expect(firstAccess, isNot(_guestIdentity.fingerprint));
     expect(secondAccess, _guestIdentity.fingerprint);
     expect(secondAccess, isNot(firstAccess));
