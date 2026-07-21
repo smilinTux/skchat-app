@@ -7,8 +7,11 @@ import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
 import '../../services/backend_config.dart';
 import '../../services/daemon_config.dart';
+import '../../services/self_identity.dart';
+import '../../services/self_identity_provider.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/skcomms_sync.dart';
+import '../identity/widgets/trust_badge.dart';
 import 'widgets/capabilities_section.dart';
 import 'widgets/operator_enrollment_section.dart';
 
@@ -131,13 +134,20 @@ class ProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final identity = ref.watch(localIdentityProvider);
+    // THIS device's own identity + trust, never the operator's to a guest
+    // (see SelfIdentity / selfIdentityProvider docs). Async: an operator
+    // check + (for guests) a per-device identity load happen before this
+    // resolves, so the header/trust tile render a compact placeholder until
+    // it does.
+    final selfAsync = ref.watch(selfIdentityProvider);
     final daemon = ref.watch(skcommsSyncProvider);
     final daemonUrl = ref.watch(daemonUrlProvider);
     final backendCfg = ref.watch(backendConfigProvider);
     final transports = ref.watch(transportHealthProvider);
     final themeMode = ref.watch(themeProvider);
-    final soulColor = SovereignColors.fromFingerprint(identity.fingerprint);
+    final soulColor = SovereignColors.fromFingerprint(
+      selfAsync.valueOrNull?.fingerprint ?? '',
+    );
     final tt = Theme.of(context).textTheme;
 
     return Scaffold(
@@ -158,7 +168,11 @@ class ProfileScreen extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: 120),
         children: [
           // ── Identity card ────────────────────────────────────────────
-          _IdentityHeader(identity: identity, soulColor: soulColor),
+          selfAsync.when(
+            data: (me) => _IdentityHeader(me: me, soulColor: soulColor),
+            loading: () => const _IdentityHeaderPlaceholder(),
+            error: (_, _) => const _IdentityHeaderPlaceholder(),
+          ),
           const SizedBox(height: 20),
 
           // ── Daemon & network health ──────────────────────────────────
@@ -174,7 +188,10 @@ class ProfileScreen extends ConsumerWidget {
 
           // ── Encryption ──────────────────────────────────────────────
           _SectionLabel(label: 'Encryption'),
-          _EncryptionCard(identity: identity),
+          selfAsync.maybeWhen(
+            data: (me) => _EncryptionCard(me: me),
+            orElse: () => const SizedBox.shrink(),
+          ),
           const SizedBox(height: 20),
 
           // ── Operator session ─────────────────────────────────────────
@@ -616,10 +633,38 @@ class ProfileScreen extends ConsumerWidget {
 
 // ── Identity header ────────────────────────────────────────────────────────
 
-class _IdentityHeader extends StatelessWidget {
-  const _IdentityHeader({required this.identity, required this.soulColor});
+/// Compact placeholder shown while [selfIdentityProvider] resolves (an
+/// operator-session check, and for guests a per-device identity load).
+class _IdentityHeaderPlaceholder extends StatelessWidget {
+  const _IdentityHeaderPlaceholder();
 
-  final LocalIdentity identity;
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GlassCard(
+        child: SizedBox(
+          height: 64,
+          child: Center(
+            child: Text(
+              'Loading identity...',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IdentityHeader extends StatelessWidget {
+  const _IdentityHeader({required this.me, required this.soulColor});
+
+  /// THIS device's own identity + trust tier (never the operator's, unless
+  /// this device IS the enrolled operator).
+  final SelfIdentity me;
   final Color soulColor;
 
   @override
@@ -649,8 +694,8 @@ class _IdentityHeader extends StatelessWidget {
               children: [
                 SoulAvatar(
                   soulColor: soulColor,
-                  initials: identity.displayName.isNotEmpty
-                      ? identity.displayName[0].toUpperCase()
+                  initials: me.displayName.isNotEmpty
+                      ? me.displayName[0].toUpperCase()
                       : 'S',
                   isOnline: true,
                   size: 64,
@@ -662,7 +707,7 @@ class _IdentityHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        identity.displayName,
+                        me.displayName,
                         style: tt.titleLarge?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -670,12 +715,19 @@ class _IdentityHeader extends StatelessWidget {
                       const SizedBox(height: 4),
                       Row(
                         children: [
+                          // Encryption is orthogonal to trust tier, this
+                          // stays regardless of whether `me` is the
+                          // operator or a red guest.
                           const EncryptBadge(size: 12),
                           const SizedBox(width: 4),
                           Text(
-                            'CapAuth Identity',
+                            me.isOperator
+                                ? 'CapAuth Identity'
+                                : 'Self-Asserted Identity',
                             style: tt.labelSmall?.copyWith(
-                              color: SovereignColors.accentEncrypt,
+                              color: me.isOperator
+                                  ? SovereignColors.accentEncrypt
+                                  : SovereignColors.accentWarning,
                             ),
                           ),
                         ],
@@ -685,7 +737,7 @@ class _IdentityHeader extends StatelessWidget {
                 ),
               ],
             ),
-            if (identity.fingerprint.isNotEmpty) ...[
+            if (me.fingerprint.isNotEmpty) ...[
               const SizedBox(height: 16),
               const Divider(
                 height: 1,
@@ -710,7 +762,7 @@ class _IdentityHeader extends StatelessWidget {
                   GestureDetector(
                     onTap: () {
                       Clipboard.setData(
-                        ClipboardData(text: identity.fingerprint),
+                        ClipboardData(text: me.fingerprint),
                       );
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -729,13 +781,36 @@ class _IdentityHeader extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                _formatFingerprint(identity.fingerprint),
+                _formatFingerprint(me.fingerprint),
                 style: tt.labelSmall?.copyWith(
                   fontFamily: 'JetBrainsMono',
                   color: soulColor.withValues(alpha: 0.9),
                   fontSize: 11,
                   letterSpacing: 1.0,
                 ),
+              ),
+            ],
+            if (me.degraded) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    size: 14,
+                    color: SovereignColors.accentWarning,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'This identity is temporary and will not survive a '
+                      'reload (storage is blocked in this browser).',
+                      style: tt.labelSmall?.copyWith(
+                        color: SovereignColors.accentWarning,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ],
@@ -906,13 +981,21 @@ class _TransportChip extends StatelessWidget {
 // ── Encryption card ────────────────────────────────────────────────────────
 
 class _EncryptionCard extends StatelessWidget {
-  const _EncryptionCard({required this.identity});
+  const _EncryptionCard({required this.me});
 
-  final LocalIdentity identity;
+  /// THIS device's own identity + trust tier. The PGP Key tile only makes
+  /// sense for the operator (green), a red guest has no operator key and
+  /// must never be shown one, so it (and key rotation, which acts on that
+  /// same key) is gated behind [SelfIdentity.isOperator].
+  final SelfIdentity me;
 
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
+    final trustSubtitle = me.isOperator
+        ? 'Full trust, self-sovereign'
+        : 'Self-asserted identity, not sovereign-verified';
+    final trustLabel = me.isOperator ? 'Sovereign' : 'Untrusted';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -920,59 +1003,63 @@ class _EncryptionCard extends StatelessWidget {
         padding: EdgeInsets.zero,
         child: Column(
           children: [
-            ListTile(
-              leading: const Icon(
-                Icons.key_rounded,
-                color: SovereignColors.accentEncrypt,
-              ),
-              title: const Text('PGP Key'),
-              subtitle: Text(
-                'RSA ${identity.pgpKeySize}-bit · ID: ${identity.pgpKeyId}',
-                style: tt.labelSmall?.copyWith(
-                  fontFamily: 'JetBrainsMono',
-                  color: SovereignColors.textTertiary,
-                  fontSize: 11,
+            if (me.isOperator) ...[
+              ListTile(
+                leading: const Icon(
+                  Icons.key_rounded,
+                  color: SovereignColors.accentEncrypt,
                 ),
-              ),
-              trailing: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color:
-                      SovereignColors.accentEncrypt.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Active',
+                title: const Text('PGP Key'),
+                subtitle: Text(
+                  'RSA ${me.pgpKeySize}-bit · ID: ${me.pgpKeyId}',
                   style: tt.labelSmall?.copyWith(
-                    color: SovereignColors.accentEncrypt,
-                    fontWeight: FontWeight.w600,
+                    fontFamily: 'JetBrainsMono',
+                    color: SovereignColors.textTertiary,
+                    fontSize: 11,
+                  ),
+                ),
+                trailing: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color:
+                        SovereignColors.accentEncrypt.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Active',
+                    style: tt.labelSmall?.copyWith(
+                      color: SovereignColors.accentEncrypt,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
-            ),
-            const Divider(height: 1, indent: 56),
+              const Divider(height: 1, indent: 56),
+            ],
             ListTile(
               leading: const Icon(Icons.verified_user_outlined),
               title: const Text('Trust Level'),
-              subtitle: const Text('Full trust · Self-sovereign'),
-              trailing: const Icon(Icons.chevron_right_rounded),
+              subtitle: Text(trustSubtitle),
+              trailing: TrustBadge(tier: me.tier, label: trustLabel),
               onTap: () {},
             ),
-            const Divider(height: 1, indent: 56),
-            ListTile(
-              leading: const Icon(Icons.rotate_right_rounded),
-              title: const Text('Rotate Keys'),
-              subtitle: const Text('Generate new PGP keypair'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Key rotation, coming soon'),
-                  ),
-                );
-              },
-            ),
+            if (me.isOperator) ...[
+              const Divider(height: 1, indent: 56),
+              ListTile(
+                leading: const Icon(Icons.rotate_right_rounded),
+                title: const Text('Rotate Keys'),
+                subtitle: const Text('Generate new PGP keypair'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Key rotation, coming soon'),
+                    ),
+                  );
+                },
+              ),
+            ],
           ],
         ),
       ),

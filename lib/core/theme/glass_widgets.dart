@@ -53,7 +53,16 @@ class GlassCard extends StatelessWidget {
                 ),
               ),
               padding: padding,
-              child: child,
+              // A ListTile/InkWell descendant paints its background + ink
+              // splashes on the nearest Material ancestor; without this the
+              // Container's own background color above sits in between and
+              // Flutter flags it (debug-mode "ink splashes may be
+              // invisible" warning). `transparency` adds nothing visually,
+              // it only gives ink effects somewhere correct to paint.
+              child: Material(
+                type: MaterialType.transparency,
+                child: child,
+              ),
             ),
           ),
         ),
