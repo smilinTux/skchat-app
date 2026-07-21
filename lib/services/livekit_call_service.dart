@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import 'backend_config.dart';
-import 'spvid_log.dart';
 import 'system_audio_sources.dart';
 
 /// Compile-time default for the skchat web-UI LiveKit token-mint endpoint.
@@ -763,7 +762,6 @@ class LiveKitCallService {
   /// exclusive at all.
   Future<void> setCameraEnabled(bool enabled,
       {CameraPosition cameraPosition = CameraPosition.front}) async {
-    spvidLog('setCameraEnabled($enabled)');
     final lp = _localParticipant;
     if (lp == null) return;
     if (enabled) {
@@ -788,9 +786,6 @@ class LiveKitCallService {
         await lp.removePublishedTrack(pub.sid);
       }
     }
-    spvidLog('after setCameraEnabled: localCameraPub '
-        'sid=${lp.getTrackPublicationBySource(TrackSource.camera)?.sid} '
-        'enabled=${lp.isCameraEnabled()}');
     _emitParticipants();
   }
 
@@ -1012,7 +1007,6 @@ class LiveKitCallService {
       String? systemAudioDeviceId,
       String? sourceId,
       ScreenShareFrameRate frameRate = ScreenShareFrameRate.standard}) async {
-    spvidLog('setScreenShareEnabled($enabled)');
     final lp = _localParticipant;
     if (lp == null) return;
 
@@ -1023,9 +1017,6 @@ class LiveKitCallService {
       // The SDK helper removes BOTH the screen-share video and its paired
       // screen-share audio publication by source.
       await lp.setScreenShareEnabled(false);
-      spvidLog('after setScreenShareEnabled: localScreenPub '
-          'sid=${lp.getTrackPublicationBySource(TrackSource.screenShareVideo)?.sid} '
-          'enabled=${lp.isScreenShareEnabled()}');
       _emitParticipants();
       return;
     }
@@ -1134,9 +1125,6 @@ class LiveKitCallService {
         // Swallow: the video share stays live even if system audio fails.
       }
     }
-    spvidLog('after setScreenShareEnabled: localScreenPub '
-        'sid=${lp.getTrackPublicationBySource(TrackSource.screenShareVideo)?.sid} '
-        'enabled=${lp.isScreenShareEnabled()}');
     _emitParticipants();
   }
 
@@ -1233,36 +1221,20 @@ class LiveKitCallService {
       // surfaces a remote screen-share on the stage; TrackPublished covers the
       // pre-subscribe beat so the roster reflects the new publication promptly.
       ..on<TrackPublishedEvent>((event) {
-        spvidLog('TrackPublished id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=false');
         _emitParticipants();
       })
       ..on<TrackUnpublishedEvent>((event) {
-        spvidLog('TrackUnpublished id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=false');
         _emitParticipants();
       })
       ..on<TrackSubscribedEvent>((event) {
-        spvidLog('TrackSubscribed id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=false');
         _emitParticipants();
       })
       ..on<TrackUnsubscribedEvent>((event) {
-        spvidLog('TrackUnsubscribed id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=false');
         _emitParticipants();
       })
       // Local tracks: our own screen-share start / stop must re-snapshot so the
       // local stage tile appears / clears without waiting on a remote round-trip.
       ..on<LocalTrackPublishedEvent>((event) {
-        spvidLog('LocalTrackPublished '
-            'id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=true');
         _emitParticipants();
       })
       // Route through handleLocalTrackUnpublished so a screen-share video that
@@ -1270,26 +1242,16 @@ class LiveKitCallService {
       // on native desktop, or the captured source window closing) also tears
       // down the paired system-audio monitor track, which the SDK does not own.
       ..on<LocalTrackUnpublishedEvent>((event) {
-        spvidLog('LocalTrackUnpublished '
-            'id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=true');
         handleLocalTrackUnpublished(event.publication.source);
       })
       // Mute state: keep the muted / speaking dot on every tile current, and
       // reconcile a server-initiated mute of our OWN mic (host force-mute)
       // into micEnabledChanges / externalMuteEvents so the target sees it.
       ..on<TrackMutedEvent>((event) {
-        spvidLog('TrackMuted id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=${event.participant is LocalParticipant}');
         _emitParticipants();
         _reconcileExternalMicMute(event);
       })
       ..on<TrackUnmutedEvent>((event) {
-        spvidLog('TrackUnmuted id=${event.participant.identity} '
-            'source=${event.publication.source} sid=${event.publication.sid} '
-            'isLocal=${event.participant is LocalParticipant}');
         _emitParticipants();
       })
       // Metadata: hand-raise / stage-invite changes written by the Space
@@ -1354,9 +1316,6 @@ class LiveKitCallService {
 
   void _emitParticipants() {
     final snapshot = currentParticipants;
-    spvidLog('emit: [${snapshot.map((p) => 'id=${p.identity} '
-        'local=${p.isLocal} cam=${p.isCameraEnabled} '
-        'screen=${p.isScreenSharing}').join(', ')}]');
     if (!_participantsCtl.isClosed) {
       _participantsCtl.add(snapshot);
     }

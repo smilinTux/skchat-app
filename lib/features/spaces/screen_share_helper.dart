@@ -7,7 +7,6 @@ import "package:livekit_client/livekit_client.dart";
 
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
-import "../../services/spvid_log.dart";
 
 /// True on native desktop (Linux / macOS / Windows), where flutter_webrtc
 /// requires an explicit capture `sourceId` from `desktopCapturer.getSources()`
@@ -173,15 +172,8 @@ List<ScreenShare> _resolveTracksBySource(
     final track = pub?.track;
     if (track is VideoTrack) {
       out.add((identity: p.identity, track: track as VideoTrack, isLocal: false));
-    } else if (pub != null) {
-      spvidLog('resolve SKIP id=${p.identity} source=$source '
-          'pub=true track=${pub.track == null} '
-          'subscribed=${pub.subscribed}');
     }
   }
-  spvidLog('resolve source=$source -> '
-      '[${out.map((s) => '${s.identity}:sid=${s.track.sid}:local=${s.isLocal}').join(', ')}] '
-      '(n=${out.length})');
   return out;
 }
 
