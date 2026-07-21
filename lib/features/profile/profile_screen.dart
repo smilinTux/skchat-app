@@ -190,7 +190,7 @@ class ProfileScreen extends ConsumerWidget {
           _SectionLabel(label: 'Encryption'),
           selfAsync.maybeWhen(
             data: (me) => _EncryptionCard(me: me),
-            orElse: () => const SizedBox.shrink(),
+            orElse: () => const _EncryptionCardPlaceholder(),
           ),
           const SizedBox(height: 20),
 
@@ -979,6 +979,34 @@ class _TransportChip extends StatelessWidget {
 }
 
 // ── Encryption card ────────────────────────────────────────────────────────
+
+/// Compact placeholder shown while [selfIdentityProvider] resolves (or
+/// errors), matching [_IdentityHeaderPlaceholder]. The Trust Level tile
+/// depends on `me.isOperator`, so it has nothing to render until that
+/// resolves.
+class _EncryptionCardPlaceholder extends StatelessWidget {
+  const _EncryptionCardPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GlassCard(
+        child: SizedBox(
+          height: 64,
+          child: Center(
+            child: Text(
+              'Loading trust status...',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _EncryptionCard extends StatelessWidget {
   const _EncryptionCard({required this.me});

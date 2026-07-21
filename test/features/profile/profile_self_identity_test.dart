@@ -97,6 +97,8 @@ void main() {
     expect(find.text(_operatorFingerprintFormatted), findsNothing);
     expect(find.text("PGP Key"), findsNothing);
     expect(find.text("Sovereign"), findsNothing);
+    expect(find.text("Self-Asserted Identity"), findsOneWidget);
+    expect(find.text("CapAuth Identity"), findsNothing);
   });
 
   testWidgets("green operator: Sovereign shown, real fingerprint + PGP Key",
@@ -110,6 +112,7 @@ void main() {
     expect(find.text(_operatorFingerprintFormatted), findsOneWidget);
     expect(find.text("PGP Key"), findsOneWidget);
     expect(find.text("Untrusted"), findsNothing);
+    expect(find.text("CapAuth Identity"), findsOneWidget);
   });
 
   testWidgets("red + degraded: shows the will-not-survive-reload warning",
