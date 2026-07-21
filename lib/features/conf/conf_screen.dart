@@ -201,24 +201,32 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   /// name. If the self identity has not resolved yet, fall back further to
   /// the shared daemon identity, guarding against a null on first tap so the
   /// call path never regresses.
+  ///
+  /// Only a value derived from [ConfArgs.identity] or a RESOLVED
+  /// selfIdentityProvider is cached. The pre-resolution fallback (shared
+  /// daemon identity) is returned for that call only and never stored, so a
+  /// later access, once selfIdentityProvider has resolved, recomputes and
+  /// picks up the real per-device fingerprint instead of pinning the
+  /// fallback for the whole conf session.
   String get _identity {
     final cached = _identityCache;
     if (cached != null) return cached;
     final fromArg = arg.identity.trim();
-    final resolved = fromArg.isNotEmpty
-        ? fromArg
-        : () {
-            final self = ref.read(selfIdentityProvider).valueOrNull;
-            if (self != null) {
-              return self.fingerprint.isNotEmpty
-                  ? self.fingerprint
-                  : self.displayName;
-            }
-            final me = ref.read(localIdentityProvider);
-            return me.fingerprint.isNotEmpty ? me.fingerprint : me.displayName;
-          }();
-    _identityCache = resolved;
-    return resolved;
+    if (fromArg.isNotEmpty) {
+      _identityCache = fromArg;
+      return fromArg;
+    }
+    final self = ref.read(selfIdentityProvider).valueOrNull;
+    if (self != null) {
+      final resolved =
+          self.fingerprint.isNotEmpty ? self.fingerprint : self.displayName;
+      _identityCache = resolved;
+      return resolved;
+    }
+    // selfIdentityProvider has not resolved yet; use the shared daemon
+    // identity for this call only. Deliberately not cached (see doc above).
+    final me = ref.read(localIdentityProvider);
+    return me.fingerprint.isNotEmpty ? me.fingerprint : me.displayName;
   }
 
   /// Create (if needed), mint a token, and join the LiveKit media room.
