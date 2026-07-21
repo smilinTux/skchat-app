@@ -119,4 +119,28 @@ void main() {
       expect(after.displayName, equals(before.displayName));
     });
   });
+
+  group("ensure() storage failure", () {
+    test("returns a unique in-memory identity marked degraded, never throws",
+        () async {
+      final svc = SpacesIdentityService(_ThrowingStorage());
+      final a = await svc.ensure();
+      final b = await SpacesIdentityService(_ThrowingStorage()).ensure();
+      expect(a.id, isNotEmpty);
+      expect(a.id.length, 32);
+      expect(a.degraded, isTrue);
+      expect(a.displayName, startsWith("Guest-"));
+      expect(a.id, isNot(equals(b.id))); // still unique across devices
+    });
+  });
+}
+
+/// A storage whose reads and writes always throw, simulating a privacy
+/// browser that blocks localStorage / WebCrypto.
+class _ThrowingStorage implements SpacesIdentityStorage {
+  @override
+  Future<String?> read(String key) async => throw StateError("blocked");
+  @override
+  Future<void> write(String key, String value) async =>
+      throw StateError("blocked");
 }

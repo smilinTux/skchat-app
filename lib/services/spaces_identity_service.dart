@@ -32,7 +32,11 @@ const _kDisplayNameKey = "spaces_display_name";
 /// A stable, unique-per-device Spaces identity.
 @immutable
 class SpacesIdentity {
-  const SpacesIdentity({required this.id, required this.displayName});
+  const SpacesIdentity({
+    required this.id,
+    required this.displayName,
+    this.degraded = false,
+  });
 
   /// Locally generated, persisted-per-device unique id (32 hex chars, 16
   /// random bytes). Used directly as the LiveKit participant identity and as
@@ -47,9 +51,17 @@ class SpacesIdentity {
   /// showing as "Sovereign Node"; editable and persisted per device.
   final String displayName;
 
-  SpacesIdentity copyWith({String? id, String? displayName}) => SpacesIdentity(
+  /// True when this identity could not be read from or written to
+  /// persistent storage (for example a privacy browser blocking
+  /// localStorage/WebCrypto) and is instead a unique in-memory fallback that
+  /// will NOT survive a reload. The UI can use this to warn the user.
+  final bool degraded;
+
+  SpacesIdentity copyWith({String? id, String? displayName, bool? degraded}) =>
+      SpacesIdentity(
         id: id ?? this.id,
         displayName: displayName ?? this.displayName,
+        degraded: degraded ?? this.degraded,
       );
 }
 
@@ -106,19 +118,30 @@ class SpacesIdentityService {
   /// Idempotent: repeated calls against the same backing storage return the
   /// SAME id and display name (no regeneration once persisted).
   Future<SpacesIdentity> ensure() async {
-    var id = await _storage.read(_kDeviceIdKey);
-    if (id == null || id.isEmpty) {
-      id = _generateDeviceId();
-      await _storage.write(_kDeviceIdKey, id);
-    }
+    try {
+      var id = await _storage.read(_kDeviceIdKey);
+      if (id == null || id.isEmpty) {
+        id = _generateDeviceId();
+        await _storage.write(_kDeviceIdKey, id);
+      }
 
-    var name = await _storage.read(_kDisplayNameKey);
-    if (name == null || name.isEmpty) {
-      name = _generateGuestAlias();
-      await _storage.write(_kDisplayNameKey, name);
-    }
+      var name = await _storage.read(_kDisplayNameKey);
+      if (name == null || name.isEmpty) {
+        name = _generateGuestAlias();
+        await _storage.write(_kDisplayNameKey, name);
+      }
 
-    return SpacesIdentity(id: id, displayName: name);
+      return SpacesIdentity(id: id, displayName: name);
+    } catch (_) {
+      // Privacy browser blocked storage. Fall back to a unique in-memory
+      // identity so the user still gets a distinct id (no collision) and can
+      // join, flagged degraded so the UI can warn it will not persist.
+      return SpacesIdentity(
+        id: _generateDeviceId(),
+        displayName: _generateGuestAlias(),
+        degraded: true,
+      );
+    }
   }
 
   /// Persists an explicit user-chosen display name for this device. Future
