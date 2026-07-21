@@ -12,7 +12,11 @@ import 'guest_identity_stub.dart'
 
 /// A guest's locally-held identity material.
 class GuestKeypair {
-  const GuestKeypair({required this.publicKeyB64, required this.fingerprint});
+  const GuestKeypair({
+    required this.publicKeyB64,
+    required this.fingerprint,
+    this.degraded = false,
+  });
 
   /// Base64 SPKI export of the public key, sent to the server at join time.
   /// The server fingerprints this to derive the stable `guest:<name>#<fp>` id.
@@ -21,6 +25,12 @@ class GuestKeypair {
   /// Local convenience fingerprint (first 16 hex of SHA-256 over the SPKI).
   /// Mirrors the server's derivation so the UI can show the same short id.
   final String fingerprint;
+
+  /// True when this keypair could not be read from or written to persistent
+  /// storage (for example a privacy browser blocking localStorage/WebCrypto)
+  /// and is instead a unique in-memory fallback that will NOT survive a
+  /// reload. The UI can use this to warn the user.
+  final bool degraded;
 }
 
 /// Generates / persists the guest keypair and signs messages with it.

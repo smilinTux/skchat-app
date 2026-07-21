@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:web/web.dart' as web;
@@ -54,28 +55,43 @@ class _WebGuestIdentity implements GuestIdentity {
   Future<GuestKeypair> ensure() async {
     if (_cached != null) return _cached!;
 
-    if (await hasCached()) {
-      final pubJwk = _jsonToJs(web.window.localStorage.getItem(_kPubKey)!);
-      final pubB64 = await _exportSpkiFromJwk(pubJwk);
+    try {
+      if (await hasCached()) {
+        final pubJwk = _jsonToJs(web.window.localStorage.getItem(_kPubKey)!);
+        final pubB64 = await _exportSpkiFromJwk(pubJwk);
+        final fp = await _fingerprint(pubB64);
+        return _cached = GuestKeypair(publicKeyB64: pubB64, fingerprint: fp);
+      }
+
+      final algo = _obj({'name': 'ECDSA'.toJS, 'namedCurve': 'P-256'.toJS});
+      final pair = _CryptoKeyPair._(
+        await _subtle
+            .generateKey(algo, true, ['sign'.toJS, 'verify'.toJS].toJS)
+            .toDart,
+      );
+
+      final privJwk = await _subtle.exportKey('jwk', pair.privateKey).toDart;
+      final pubJwk = await _subtle.exportKey('jwk', pair.publicKey).toDart;
+      web.window.localStorage.setItem(_kPrivKey, _jsToJson(privJwk));
+      web.window.localStorage.setItem(_kPubKey, _jsToJson(pubJwk));
+
+      final pubB64 = await _exportSpki(pair.publicKey);
       final fp = await _fingerprint(pubB64);
       return _cached = GuestKeypair(publicKeyB64: pubB64, fingerprint: fp);
+    } catch (_) {
+      // Privacy browser blocked localStorage and/or crypto.subtle. Fall back
+      // to a unique in-memory keypair surrogate so the user still gets a
+      // distinct id (no collision) and can join, flagged degraded so the UI
+      // can warn it will not persist across a reload. Deliberately does NOT
+      // touch localStorage or crypto.subtle again here.
+      final rnd = math.Random.secure();
+      final rawPub = List<int>.generate(32, (_) => rnd.nextInt(256));
+      final pubB64 = base64Encode(rawPub);
+      final rawFp = List<int>.generate(8, (_) => rnd.nextInt(256));
+      final fp = rawFp.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      return _cached =
+          GuestKeypair(publicKeyB64: pubB64, fingerprint: fp, degraded: true);
     }
-
-    final algo = _obj({'name': 'ECDSA'.toJS, 'namedCurve': 'P-256'.toJS});
-    final pair = _CryptoKeyPair._(
-      await _subtle
-          .generateKey(algo, true, ['sign'.toJS, 'verify'.toJS].toJS)
-          .toDart,
-    );
-
-    final privJwk = await _subtle.exportKey('jwk', pair.privateKey).toDart;
-    final pubJwk = await _subtle.exportKey('jwk', pair.publicKey).toDart;
-    web.window.localStorage.setItem(_kPrivKey, _jsToJson(privJwk));
-    web.window.localStorage.setItem(_kPubKey, _jsToJson(pubJwk));
-
-    final pubB64 = await _exportSpki(pair.publicKey);
-    final fp = await _fingerprint(pubB64);
-    return _cached = GuestKeypair(publicKeyB64: pubB64, fingerprint: fp);
   }
 
   @override

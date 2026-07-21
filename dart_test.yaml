@@ -1,0 +1,7 @@
+tags:
+  browser:
+    # Tests that require a real browser runtime (dart:html / js_interop) and
+    # must be run with `flutter test --platform chrome`. Excluded from a
+    # plain VM-only `flutter test` run via `--exclude-tags=browser` if
+    # needed; the normal VM run simply skips files that only load under
+    # "browser" via @TestOn, and this tag lets CI filter explicitly too.
