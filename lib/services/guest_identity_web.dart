@@ -72,11 +72,16 @@ class _WebGuestIdentity implements GuestIdentity {
 
       final privJwk = await _subtle.exportKey('jwk', pair.privateKey).toDart;
       final pubJwk = await _subtle.exportKey('jwk', pair.publicKey).toDart;
-      web.window.localStorage.setItem(_kPrivKey, _jsToJson(privJwk));
-      web.window.localStorage.setItem(_kPubKey, _jsToJson(pubJwk));
 
       final pubB64 = await _exportSpki(pair.publicKey);
       final fp = await _fingerprint(pubB64);
+
+      // Persist only after the SPKI export and fingerprint succeed, so a
+      // WebCrypto failure past this point never leaves a real keypair in
+      // localStorage while the caller receives a different degraded one.
+      web.window.localStorage.setItem(_kPrivKey, _jsToJson(privJwk));
+      web.window.localStorage.setItem(_kPubKey, _jsToJson(pubJwk));
+
       return _cached = GuestKeypair(publicKeyB64: pubB64, fingerprint: fp);
     } catch (_) {
       // Privacy browser blocked localStorage and/or crypto.subtle. Fall back
