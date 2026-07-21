@@ -8,6 +8,7 @@ import "package:livekit_client/livekit_client.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
+import "../../services/self_identity_provider.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
@@ -194,8 +195,12 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
   }
 
   /// Effective caller identity. Uses [ConfArgs.identity] when supplied; a bare
-  /// deep-link (/conf?room=...) carries none, so fall back to the signed-in
-  /// local identity (fingerprint, else display name).
+  /// deep-link (/conf?room=...) carries none, so fall back to the resolved
+  /// SELF identity (operator's daemon identity, unchanged, or a guest's own
+  /// per-device identity, never the operator's), fingerprint else display
+  /// name. If the self identity has not resolved yet, fall back further to
+  /// the shared daemon identity, guarding against a null on first tap so the
+  /// call path never regresses.
   String get _identity {
     final cached = _identityCache;
     if (cached != null) return cached;
@@ -203,6 +208,12 @@ class ConfNotifier extends AutoDisposeFamilyNotifier<ConfState, ConfArgs> {
     final resolved = fromArg.isNotEmpty
         ? fromArg
         : () {
+            final self = ref.read(selfIdentityProvider).valueOrNull;
+            if (self != null) {
+              return self.fingerprint.isNotEmpty
+                  ? self.fingerprint
+                  : self.displayName;
+            }
             final me = ref.read(localIdentityProvider);
             return me.fingerprint.isNotEmpty ? me.fingerprint : me.displayName;
           }();

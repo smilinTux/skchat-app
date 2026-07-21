@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../services/consent_service.dart';
+import '../../services/self_identity_provider.dart';
 import '../conf/conf_screen.dart' show ConfArgs;
 import '../profile/profile_screen.dart' show localIdentityProvider;
 
@@ -23,7 +24,16 @@ class HubScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // The shared daemon identity, used ONLY as a fallback while the resolved
+    // self identity (below) has not finished loading yet.
     final identity = ref.watch(localIdentityProvider);
+    // The unified self identity: the daemon's identity for an operator
+    // (unchanged), or this device's own per-device identity for a guest, so
+    // a guest-hosted conference never derives its room from the operator's
+    // fingerprint.
+    final self = ref.watch(selfIdentityProvider).valueOrNull;
+    final selfFingerprint = self?.fingerprint ?? identity.fingerprint;
+    final selfDisplayName = self?.displayName ?? identity.displayName;
     final pendingRequests = ref.watch(consentPendingCountProvider);
 
     final tiles = <_OpsTile>[
@@ -72,10 +82,10 @@ class HubScreen extends ConsumerWidget {
         onTap: () => context.push(
           AppRoutes.conf,
           extra: ConfArgs(
-            identity: identity.fingerprint.isNotEmpty
-                ? identity.fingerprint
-                : identity.displayName,
-            name: identity.displayName,
+            identity: selfFingerprint.isNotEmpty
+                ? selfFingerprint
+                : selfDisplayName,
+            name: selfDisplayName,
             role: 'host',
             createTitle: 'Conference',
           ),

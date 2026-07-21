@@ -2,19 +2,30 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:go_router/go_router.dart";
+import "package:skchat/features/conf/conf_screen.dart" show ConfArgs;
 import "package:skchat/features/hub/hub_screen.dart";
 import "package:skchat/features/profile/profile_screen.dart";
 import "package:skchat/services/consent_service.dart";
+import "package:skchat/services/self_identity.dart";
+import "package:skchat/services/self_identity_provider.dart";
 
 /// Wrap the HubScreen in a minimal router that registers the operator
 /// destinations, so tapping a tile can be verified to navigate.
 ///
 /// [localIdentityProvider] is overridden with a fixed identity so the screen
 /// doesn't reach for the (test-unavailable) Hive box / SKComms daemon.
-Widget _wrap(GoRouter router) {
+/// [selfIdentityProvider] defaults to that same fixed identity (as an
+/// operator-tier [SelfIdentity]) unless [self] overrides it, so existing
+/// tests that only care about navigation keep working unchanged while Task 7
+/// tests can pin a guest identity to prove the Conferences tile resolves its
+/// OWN self identity rather than the shared daemon identity.
+Widget _wrap(GoRouter router, {SelfIdentity? self}) {
   return ProviderScope(
     overrides: [
       localIdentityProvider.overrideWith(_StubIdentityNotifier.new),
+      selfIdentityProvider.overrideWith(
+        (ref) async => self ?? _defaultSelfIdentity,
+      ),
       // The Contact Requests tile reads the consent badge count, which would
       // otherwise reach the daemon (via the Hive-backed daemonUrlProvider) —
       // pin it to 0 so the Hub renders without a live daemon / Hive box.
@@ -32,6 +43,29 @@ class _StubIdentityNotifier extends LocalIdentityNotifier {
       );
 }
 
+/// Mirrors [_StubIdentityNotifier]'s values as the operator-tier
+/// [SelfIdentity] shape, the default when a test doesn't care about the
+/// self-identity split.
+const _defaultSelfIdentity = SelfIdentity(
+  displayName: "Test Node",
+  id: "ABCDEF0123456789",
+  fingerprint: "ABCDEF0123456789",
+  tier: SelfTrustTier.green,
+  isOperator: true,
+);
+
+/// The per-device guest fingerprint, deliberately different from
+/// [_StubIdentityNotifier]'s daemon fingerprint so "the Conferences tile
+/// used MY per-device identity, not the operator's" can be asserted by
+/// equality (and inequality against the daemon value).
+const _guestSelfIdentity = SelfIdentity(
+  displayName: "Guest-Otter42",
+  id: "GUEST0000111122223333",
+  fingerprint: "GUEST0000111122223333",
+  tier: SelfTrustTier.red,
+  isOperator: false,
+);
+
 GoRouter _router() {
   Widget stub(String label) => Scaffold(body: Center(child: Text(label)));
   Widget Function(BuildContext, GoRouterState) build(Widget child) =>
@@ -44,9 +78,23 @@ GoRouter _router() {
       GoRoute(path: "/coord", builder: build(stub("COORD"))),
       GoRoute(path: "/recordings", builder: build(stub("RECORDINGS"))),
       GoRoute(path: "/groups", builder: build(stub("GROUPS"))),
+      // Captures the ConfArgs the Conferences tile builds (via `extra`) so
+      // Task 7's identity-split assertions can inspect it directly, rather
+      // than trying to reconstruct it from rendered text.
+      GoRoute(
+        path: "/conf",
+        builder: (context, state) {
+          _lastConfArgs = state.extra as ConfArgs?;
+          return const Scaffold(body: Center(child: Text("CONF")));
+        },
+      ),
     ],
   );
 }
+
+/// Set by the `/conf` route builder above; read by the Conferences-tile
+/// identity tests below. Reset at the top of each such test.
+ConfArgs? _lastConfArgs;
 
 void main() {
   testWidgets("renders all operator tiles", (tester) async {
@@ -98,5 +146,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text("RECORDINGS"), findsOneWidget);
+  });
+
+  // Task 7: the Conferences tile builds ConfArgs.identity from the resolved
+  // SELF identity (selfIdentityProvider), not the shared daemon identity
+  // (localIdentityProvider). An operator device must still resolve to the
+  // daemon fingerprint (unchanged); a guest device must resolve to its own
+  // per-device fingerprint, never the operator's.
+  group("Conferences tile identity (Task 7)", () {
+    setUp(() => _lastConfArgs = null);
+
+    testWidgets("operator: ConfArgs.identity equals the daemon fingerprint",
+        (tester) async {
+      await tester.pumpWidget(_wrap(_router(), self: _defaultSelfIdentity));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+
+      await tester.tap(find.text("Conferences"));
+      await tester.pumpAndSettle();
+
+      expect(_lastConfArgs, isNotNull);
+      expect(_lastConfArgs!.identity, _defaultSelfIdentity.fingerprint);
+      expect(_lastConfArgs!.name, _defaultSelfIdentity.displayName);
+    });
+
+    testWidgets(
+        "guest: ConfArgs.identity equals the per-device fingerprint, not "
+        "the operator's", (tester) async {
+      await tester.pumpWidget(_wrap(_router(), self: _guestSelfIdentity));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+
+      await tester.tap(find.text("Conferences"));
+      await tester.pumpAndSettle();
+
+      expect(_lastConfArgs, isNotNull);
+      expect(_lastConfArgs!.identity, _guestSelfIdentity.fingerprint);
+      expect(_lastConfArgs!.name, _guestSelfIdentity.displayName);
+      expect(_lastConfArgs!.identity, isNot(_defaultSelfIdentity.fingerprint));
+    });
   });
 }

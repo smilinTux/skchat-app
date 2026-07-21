@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/theme/theme.dart';
+import '../../services/self_identity_provider.dart';
 import 'profile_screen.dart';
 
 // ── QR login screen ────────────────────────────────────────────────────────
@@ -63,13 +64,21 @@ class _QrLoginScreenState extends ConsumerState<QrLoginScreen>
 
   @override
   Widget build(BuildContext context) {
+    // The shared daemon identity, used ONLY as a fallback while the resolved
+    // self identity (below) has not finished loading yet.
     final identity = ref.watch(localIdentityProvider);
-    final soulColor = SovereignColors.fromFingerprint(identity.fingerprint);
+    // The unified self identity: the daemon's identity for an operator
+    // (unchanged), or this device's own per-device identity for a guest, so
+    // a guest's QR never leaks/derives from the operator's fingerprint.
+    final self = ref.watch(selfIdentityProvider).valueOrNull;
+    final selfFingerprint = self?.fingerprint ?? identity.fingerprint;
+    final selfDisplayName = self?.displayName ?? identity.displayName;
+    final soulColor = SovereignColors.fromFingerprint(selfFingerprint);
     final tt = Theme.of(context).textTheme;
 
     // Build this node's peer URI to embed in the QR code.
-    final peerUri = 'skchat://peer/${identity.displayName.toLowerCase()}/'
-        '${identity.fingerprint}';
+    final peerUri = 'skchat://peer/${selfDisplayName.toLowerCase()}/'
+        '$selfFingerprint';
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
@@ -93,7 +102,10 @@ class _QrLoginScreenState extends ConsumerState<QrLoginScreen>
         children: [
           _MyQrTab(
             peerUri: peerUri,
-            identity: identity,
+            identity: identity.copyWith(
+              displayName: selfDisplayName,
+              fingerprint: selfFingerprint,
+            ),
             soulColor: soulColor,
           ),
           _ScanTab(

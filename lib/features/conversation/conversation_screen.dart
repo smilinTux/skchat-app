@@ -9,6 +9,7 @@ import '../../models/chat_message.dart';
 import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/group_call_service.dart';
+import '../../services/self_identity_provider.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
@@ -442,9 +443,16 @@ class ConversationScreen extends ConsumerWidget {
     String displayName, {
     required bool withVideo,
   }) {
+    // The resolved SELF identity (operator's daemon identity, unchanged, or
+    // a guest's own per-device identity, never the operator's) drives the
+    // deterministic room name below, so a guest's 1:1 call room is derived
+    // from THEIR fingerprint. If it has not resolved yet, fall back to the
+    // shared daemon identity, guarding against a null on first tap.
+    final self = ref.read(selfIdentityProvider).valueOrNull;
     final me = ref.read(localIdentityProvider);
-    final selfId =
-        me.fingerprint.isNotEmpty ? me.fingerprint : 'local';
+    final selfId = self != null && self.fingerprint.isNotEmpty
+        ? self.fingerprint
+        : (me.fingerprint.isNotEmpty ? me.fingerprint : 'local');
     final ids = [peerId, selfId]..sort();
     final roomName = 'sk-room-${ids.join("-")}';
     context.push(
