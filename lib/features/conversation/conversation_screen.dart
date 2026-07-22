@@ -7,13 +7,17 @@ import '../../core/theme/theme.dart';
 import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
 import '../../services/daemon_service.dart';
+import '../../services/peer_trust_store.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/group_call_service.dart';
 import '../../services/self_identity_provider.dart';
+import '../calls/call_gate.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
 import '../identity/identity_card_screen.dart';
+import '../identity/verify_peer_sheet.dart';
+import '../identity/widgets/trust_badge.dart';
 import '../../services/skcomms_sync.dart';
 import '../../services/pq_conversation_service.dart';
 import '../../core/chat_text.dart';
@@ -52,6 +56,19 @@ class ConversationScreen extends ConsumerWidget {
     final replyTarget = ref.watch(replyStateProvider(peerId));
     final soul = conversation.resolvedSoulColor;
     final me = _myIdentity(ref);
+
+    // A 1:1 conversation with a known soul fingerprint has trust standing
+    // worth recording (see ConversationTile for the same pattern). Post-frame
+    // so it never runs mid-build; recordSight is a no-op when the
+    // fingerprint is unchanged, so a repeat call on rebuild is harmless.
+    if (conversation.isGroup != true &&
+        (conversation.soulFingerprint?.isNotEmpty ?? false)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref
+            .read(peerTrustControllerProvider)
+            .recordSight(peerId, conversation.soulFingerprint);
+      });
+    }
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
@@ -464,6 +481,47 @@ class ConversationScreen extends ConsumerWidget {
     );
   }
 
+  /// Gate a 1:1 call behind the peer's trust tier (Chef's rule: a red/
+  /// unverified peer must be verified before a voice/video call). A group
+  /// call is never gated here, callers must check `isGroup` first and skip
+  /// this entirely.
+  ///
+  /// Reads [ScaffoldMessenger] before the `await` (the messenger handle
+  /// stays valid even if the widget is disposed mid-lookup), then guards
+  /// `context.mounted` before pushing the call screen or opening the verify
+  /// sheet from the snackbar action, since both happen after an await.
+  Future<void> _startDirectCallGated(
+    BuildContext context,
+    WidgetRef ref,
+    dynamic conv, {
+    required bool withVideo,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final fp = conv.soulFingerprint as String?;
+    final tier = await ref.read(peerTrustResolverProvider).tierFor(peerId, fp);
+    if (!canCall(tier)) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Verify ${conv.displayName} before calling'),
+        action: SnackBarAction(
+          label: 'Verify',
+          onPressed: () {
+            if (!context.mounted) return;
+            showVerifyPeerSheet(
+              context,
+              ref,
+              peerId: peerId,
+              peerName: conv.displayName,
+              peerFingerprint: fp,
+            );
+          },
+        ),
+      ));
+      return;
+    }
+    if (!context.mounted) return;
+    _startDirectCall(context, ref, conv.displayName, withVideo: withVideo);
+  }
+
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final chats = ref.read(chatsProvider);
@@ -627,10 +685,33 @@ class ConversationScreen extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    conversation.displayName,
-                    style: tt.titleMedium,
-                    overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          conversation.displayName,
+                          style: tt.titleMedium,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (conversation.isGroup != true &&
+                          (conversation.soulFingerprint?.isNotEmpty ??
+                              false)) ...[
+                        const SizedBox(width: 6),
+                        TrustBadge(
+                          tier: selfTierForPeer(
+                            ref
+                                    .watch(peerTrustTierProvider((
+                                      peerId: peerId,
+                                      fingerprint: conversation.soulFingerprint,
+                                    )))
+                                    .valueOrNull ??
+                                PeerTrustTier.red,
+                          ),
+                          compact: true,
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
                     _presenceText(conversation),
@@ -671,48 +752,80 @@ class ConversationScreen extends ConsumerWidget {
           ),
         if (conversation.isAgent == true) ModelPickerButton(peerId: peerId),
         Consumer(
-          builder: (context, ref, _) => IconButton(
-            icon: const Icon(Icons.call_outlined),
-            tooltip: conversation.isGroup == true
-                ? 'Group voice call'
-                : 'Voice call',
-            onPressed: () {
-              final conversations = ref.read(chatsProvider);
-              final conv = conversations.firstWhere(
-                (c) => c.peerId == peerId,
-                orElse: () => conversations.first,
-              );
-              if (conversation.isGroup == true) {
-                _startGroupCall(context, ref, conv.displayName,
-                    withVideo: false);
-                return;
-              }
-              _startDirectCall(context, ref, conv.displayName,
-                  withVideo: false);
-            },
-          ),
+          builder: (context, ref, _) {
+            final isDirect = conversation.isGroup != true;
+            final peerTier = isDirect
+                ? ref
+                        .watch(peerTrustTierProvider((
+                          peerId: peerId,
+                          fingerprint: conversation.soulFingerprint,
+                        )))
+                        .valueOrNull ??
+                    PeerTrustTier.red
+                : null;
+            final dimmed = isDirect && peerTier == PeerTrustTier.red;
+            return Opacity(
+              opacity: dimmed ? 0.5 : 1.0,
+              child: IconButton(
+                icon: const Icon(Icons.call_outlined),
+                tooltip: conversation.isGroup == true
+                    ? 'Group voice call'
+                    : 'Voice call',
+                onPressed: () async {
+                  final conversations = ref.read(chatsProvider);
+                  final conv = conversations.firstWhere(
+                    (c) => c.peerId == peerId,
+                    orElse: () => conversations.first,
+                  );
+                  if (conversation.isGroup == true) {
+                    _startGroupCall(context, ref, conv.displayName,
+                        withVideo: false);
+                    return;
+                  }
+                  await _startDirectCallGated(context, ref, conv,
+                      withVideo: false);
+                },
+              ),
+            );
+          },
         ),
         Consumer(
-          builder: (context, ref, _) => IconButton(
-            icon: const Icon(Icons.videocam_outlined),
-            tooltip: conversation.isGroup == true
-                ? 'Group video call'
-                : 'Video call',
-            onPressed: () {
-              final conversations = ref.read(chatsProvider);
-              final conv = conversations.firstWhere(
-                (c) => c.peerId == peerId,
-                orElse: () => conversations.first,
-              );
-              if (conversation.isGroup == true) {
-                _startGroupCall(context, ref, conv.displayName,
-                    withVideo: true);
-                return;
-              }
-              _startDirectCall(context, ref, conv.displayName,
-                  withVideo: true);
-            },
-          ),
+          builder: (context, ref, _) {
+            final isDirect = conversation.isGroup != true;
+            final peerTier = isDirect
+                ? ref
+                        .watch(peerTrustTierProvider((
+                          peerId: peerId,
+                          fingerprint: conversation.soulFingerprint,
+                        )))
+                        .valueOrNull ??
+                    PeerTrustTier.red
+                : null;
+            final dimmed = isDirect && peerTier == PeerTrustTier.red;
+            return Opacity(
+              opacity: dimmed ? 0.5 : 1.0,
+              child: IconButton(
+                icon: const Icon(Icons.videocam_outlined),
+                tooltip: conversation.isGroup == true
+                    ? 'Group video call'
+                    : 'Video call',
+                onPressed: () async {
+                  final conversations = ref.read(chatsProvider);
+                  final conv = conversations.firstWhere(
+                    (c) => c.peerId == peerId,
+                    orElse: () => conversations.first,
+                  );
+                  if (conversation.isGroup == true) {
+                    _startGroupCall(context, ref, conv.displayName,
+                        withVideo: true);
+                    return;
+                  }
+                  await _startDirectCallGated(context, ref, conv,
+                      withVideo: true);
+                },
+              ),
+            );
+          },
         ),
         IconButton(
           icon: const Icon(Icons.meeting_room_outlined),
