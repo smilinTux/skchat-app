@@ -637,6 +637,17 @@ class PeerInfo {
   final DateTime? lastSeen;
   final List<String> transports;
 
+  /// Parses either shape the daemon layer serves under `/api/v1/peers`:
+  /// the raw SKComms transport daemon's peer record (`name`, `fingerprint`),
+  /// or the skchat webui's conversation-shaped contact record (`display_name`,
+  /// `soul_fingerprint`, from `daemon_proxy.py`'s `_other_peers()`). Without
+  /// this fallback, every peer discovered only through this endpoint (no
+  /// conversation thread yet) silently lost its real capauth fingerprint when
+  /// served by the webui, since `name`/`fingerprint` were simply absent, and
+  /// the caller (`chats_provider`'s peers fallback) then substituted the
+  /// peerId itself, which downstream trust-tier logic treats as "no real key"
+  /// (see `PeerTrustResolver._isRealKey`), rendering every such peer
+  /// permanently "unverifiable" instead of their true keyed/red tier.
   factory PeerInfo.fromJson(Map<String, dynamic> json) {
     final transports = <String>[];
     if (json['transports'] is List) {
@@ -645,8 +656,11 @@ class PeerInfo {
       }
     }
     return PeerInfo(
-      name: json['name'] as String? ?? '',
-      fingerprint: json['fingerprint'] as String?,
+      name: (json['name'] as String?) ??
+          (json['display_name'] as String?) ??
+          '',
+      fingerprint: (json['fingerprint'] as String?) ??
+          (json['soul_fingerprint'] as String?),
       lastSeen: json['last_seen'] != null
           ? DateTime.tryParse(json['last_seen'] as String)
           : null,
