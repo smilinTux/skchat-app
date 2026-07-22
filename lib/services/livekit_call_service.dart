@@ -748,11 +748,12 @@ class LiveKitCallService {
 
   /// Enable / disable the local camera, optionally choosing the facing
   /// ([CameraPosition.front], the default selfie facing, or
-  /// [CameraPosition.back]). Additive: every existing bare
+  /// [CameraPosition.back]) and/or an explicit capture [deviceId] (see
+  /// [resolveCameraDeviceId]). Additive: every existing bare
   /// `setCameraEnabled(true)` caller (conf_screen.dart, livekit_call_screen.dart)
-  /// keeps its old behavior unchanged, since front is exactly what the SDK's
-  /// own `CameraCaptureOptions()` default already resolved to before this
-  /// parameter existed.
+  /// keeps its old behavior unchanged, since front / a null deviceId is
+  /// exactly what the SDK's own `CameraCaptureOptions()` default already
+  /// resolved to before these parameters existed.
   ///
   /// Camera and screen share are mutually exclusive live video sources
   /// (Spaces "Go live": camera XOR screen). Going live on camera stops an
@@ -761,14 +762,16 @@ class LiveKitCallService {
   /// relationship, which (per DECOUPLE, see [setMicEnabled]) is NOT
   /// exclusive at all.
   Future<void> setCameraEnabled(bool enabled,
-      {CameraPosition cameraPosition = CameraPosition.front}) async {
+      {CameraPosition cameraPosition = CameraPosition.front,
+      String? deviceId}) async {
     final lp = _localParticipant;
     if (lp == null) return;
     if (enabled) {
       await stopScreenShareForCamera();
       await lp.setCameraEnabled(
         true,
-        cameraCaptureOptions: CameraCaptureOptions(cameraPosition: cameraPosition),
+        cameraCaptureOptions: CameraCaptureOptions(
+            cameraPosition: cameraPosition, deviceId: deviceId),
       );
     } else {
       // Spaces "go live" stop means the video ENDS, not "mute the camera".
@@ -1462,6 +1465,21 @@ class LiveKitCallService {
       if (!isVirtualDeviceLabel(d.label)) return d.deviceId;
     }
     return devices.first.deviceId;
+  }
+
+  /// The camera device id to publish on: the persisted [saved] choice when it
+  /// is still present in [devices], otherwise the smart default (first
+  /// non-virtual device, skipping droidcam/obs/v4l2loopback). Null for an empty
+  /// enumeration (the caller then falls back to the SDK default device).
+  static String? resolveCameraDeviceId(
+      List<MediaDevice> devices, String? saved) {
+    if (devices.isEmpty) return null;
+    if (saved != null &&
+        saved.isNotEmpty &&
+        devices.any((d) => d.deviceId == saved)) {
+      return saved;
+    }
+    return pickDefaultDeviceId(devices);
   }
 
   /// Enumerate available microphone (audio input) devices.
