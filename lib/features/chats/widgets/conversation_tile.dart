@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/theme.dart';
 import '../../../models/conversation.dart';
 import '../../../core/chat_text.dart';
+import '../../identity/widgets/trust_badge.dart';
+import '../../../services/peer_trust_store.dart';
 
 /// Glass card tile representing a single conversation in the chat list.
 /// Shows soul-color avatar, name, last message, timestamp, encryption badge,
 /// delivery status, and unread count.
-class ConversationTile extends StatelessWidget {
+class ConversationTile extends ConsumerWidget {
   const ConversationTile({
     super.key,
     required this.conversation,
@@ -17,10 +20,36 @@ class ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final VoidCallback onTap;
 
+  /// A 1:1 row (never a group) with a known soul fingerprint has trust
+  /// standing worth showing/recording. Group rows and fingerprint-less rows
+  /// stay silent.
+  bool get _hasTrustStanding =>
+      conversation.isGroup != true &&
+      (conversation.soulFingerprint?.isNotEmpty ?? false);
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tt = Theme.of(context).textTheme;
     final soul = conversation.resolvedSoulColor;
+
+    // Only 1:1 rows with a known fingerprint have trust standing. Recording
+    // the sight here (post-frame, so it never runs mid-build) keeps the TOFU
+    // store fresh; recordSight is a no-op when the fingerprint is unchanged,
+    // so an occasional extra call on rebuild is harmless.
+    PeerTrustTier? tier;
+    if (_hasTrustStanding) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref
+            .read(peerTrustControllerProvider)
+            .recordSight(conversation.peerId, conversation.soulFingerprint);
+      });
+      tier = ref
+          .watch(peerTrustTierProvider(
+              (peerId: conversation.peerId,
+                  fingerprint: conversation.soulFingerprint)))
+          .valueOrNull ??
+          PeerTrustTier.red;
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -60,6 +89,10 @@ class ConversationTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (tier != null) ...[
+                        const SizedBox(width: 6),
+                        TrustBadge(tier: selfTierForPeer(tier), compact: true),
+                      ],
                       const SizedBox(width: 8),
                       Text(
                         _formatTime(conversation.lastMessageTime),
