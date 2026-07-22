@@ -65,6 +65,44 @@ void main() {
 
       expect(peer.transports, isEmpty);
     });
+
+    // Regression: the skchat webui's `/api/v1/peers` (daemon_proxy.py) serves
+    // the conversation-shaped contact record (`display_name`/
+    // `soul_fingerprint`), not the raw SKComms transport daemon's peer record
+    // (`name`/`fingerprint`). Before this fallback, every such peer parsed to
+    // an empty name and a null fingerprint, so `chats_provider`'s peers-only
+    // fallback substituted the peerId itself for the fingerprint, and the
+    // peer-trust tier resolver treats a fingerprint equal to the peerId as
+    // "no real key", permanently rendering the peer unverifiable even though
+    // the server holds their real capauth fingerprint.
+    test('fromJson falls back to display_name/soul_fingerprint (webui shape)',
+        () {
+      final json = {
+        'peer_id': 'jarvis@skworld.io',
+        'display_name': 'Jarvis',
+        'soul_fingerprint': 'BCF7ED87AC8117B448B7677F45BF78F335767EF8',
+      };
+
+      final peer = PeerInfo.fromJson(json);
+
+      expect(peer.name, 'Jarvis');
+      expect(peer.fingerprint, 'BCF7ED87AC8117B448B7677F45BF78F335767EF8');
+    });
+
+    test('fromJson prefers name/fingerprint when both shapes are present',
+        () {
+      final json = {
+        'name': 'Jarvis',
+        'fingerprint': 'BCF7ED87AC8117B448B7677F45BF78F335767EF8',
+        'display_name': 'stale display name',
+        'soul_fingerprint': 'stale-fingerprint',
+      };
+
+      final peer = PeerInfo.fromJson(json);
+
+      expect(peer.name, 'Jarvis');
+      expect(peer.fingerprint, 'BCF7ED87AC8117B448B7677F45BF78F335767EF8');
+    });
   });
 
   group('InboxMessage', () {

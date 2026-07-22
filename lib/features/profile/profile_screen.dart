@@ -310,6 +310,21 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                   const Divider(height: 1, indent: 56),
                   ListTile(
+                    leading: const Icon(Icons.dns_rounded),
+                    title: const Text('Server URL'),
+                    subtitle: Text(
+                      daemonUrl,
+                      style: tt.labelSmall?.copyWith(
+                        color: SovereignColors.textTertiary,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () =>
+                        _showServerUrlSetting(context, ref, daemonUrl),
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
                     leading: const Icon(Icons.storage_outlined),
                     title: const Text('SKComms Daemon'),
                     subtitle: Text(
@@ -341,6 +356,104 @@ class ProfileScreen extends ConsumerWidget {
                 onTap: () {},
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Prominent, discoverable "Server URL" setting. This is a second, more
+  /// visible entry point to the exact same apply the buried instance-picker
+  /// "Custom host" field already performs (see [_showInstancePicker]): it
+  /// repoints the SKComms daemon URL *and* the Spaces/LiveKit/skcapstone
+  /// backends, then re-fetches identity from the new host. It does not
+  /// replace the instance picker or the standalone daemon-only setting.
+  void _showServerUrlSetting(
+    BuildContext context,
+    WidgetRef ref,
+    String currentUrl,
+  ) {
+    final controller = TextEditingController(text: currentUrl);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SovereignColors.surfaceRaised,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text('Server URL'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The server this app connects to (chat, calls, spaces). '
+              'No app rebuild needed.',
+              style: TextStyle(
+                fontSize: 12,
+                color: SovereignColors.textTertiary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('server-url-field'),
+              controller: controller,
+              autofocus: true,
+              style: const TextStyle(
+                fontFamily: 'JetBrainsMono',
+                fontSize: 14,
+                color: SovereignColors.textPrimary,
+              ),
+              decoration: InputDecoration(
+                hintText: 'https://host.tailnet.ts.net',
+                hintStyle:
+                    const TextStyle(color: SovereignColors.textTertiary),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: SovereignColors.surfaceGlassBorder,
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: SovereignColors.soulLumina,
+                  ),
+                ),
+                filled: true,
+                fillColor: SovereignColors.surfaceGlass,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: SovereignColors.textTertiary),
+            ),
+          ),
+          FilledButton(
+            onPressed: () {
+              final host = controller.text.trim();
+              if (host.isNotEmpty) {
+                // Same apply as the instance-picker's custom-host field:
+                // repoint the daemon, derive the rest, re-fetch identity.
+                ref.read(daemonUrlProvider.notifier).setUrl(host);
+                ref.read(backendConfigProvider.notifier).setCustomHost(host);
+                ref.read(localIdentityProvider.notifier).refresh();
+              }
+              Navigator.of(ctx).pop();
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: SovereignColors.soulLumina,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Save'),
           ),
         ],
       ),
