@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'pq_backend.dart';
 import 'pq_dm_codec.dart';
 import 'pq_prekey_service.dart';
 
@@ -300,6 +301,10 @@ final pqConversationServiceProvider = Provider<PqConversationService>((ref) {
   return PqConversationService(
     prekeys: ref.watch(pqPrekeyServiceProvider),
     localShort: ref.watch(pqLocalShortProvider),
+    // Guarded KEM so building the codec (and thus reading this provider) can
+    // never throw on a device without a PQ backend; seal/open then degrade to
+    // the classical path instead of crashing the conversation screen.
+    codec: PqDmCodec(kem: ref.watch(hybridKemProvider)),
   );
 });
 

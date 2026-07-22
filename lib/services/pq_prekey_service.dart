@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sk_pqc/sk_pqc.dart';
 
 import 'daemon_config.dart';
+import 'pq_backend.dart';
 import 'pq_dm_codec.dart';
 
 /// A peer's published hybrid-KEM prekey (PQXDH-style). Mirrors
@@ -251,6 +252,10 @@ final pqPrekeyServiceProvider = Provider<PqPrekeyService>((ref) {
     storage: ref.watch(_pqSecureStorageProvider),
     baseUrl: baseUrl,
     deviceId: seed,
+    // Guarded KEM: an unavailable PQ backend (no liboqs / no noble) yields a
+    // stand-in that fails KEM ops cleanly instead of throwing at construction,
+    // so ensureKeyPair() degrades to classical rather than crashing.
+    kem: ref.watch(hybridKemProvider),
   );
 });
 
