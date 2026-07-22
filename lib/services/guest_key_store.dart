@@ -87,6 +87,15 @@ class FileGuestKeyStore implements GuestKeyStore {
 /// Tries [primary] first; on ANY throw, delegates to [secondary]. Only
 /// rethrows when BOTH backends throw, which the caller treats as "storage
 /// unavailable -> degraded, in-memory identity".
+///
+/// [read] additionally falls back when the primary is reachable but simply
+/// has no value for the key: a key written to the secondary while the
+/// primary was down must still be found once the primary comes back empty,
+/// so a caller never regenerates and orphans the persisted identity.
+///
+/// [delete] is best-effort on BOTH backends independently, so "forget me"
+/// truly clears the key wherever it lives instead of leaving a copy that
+/// gets resurrected on the next read.
 class FallbackGuestKeyStore implements GuestKeyStore {
   const FallbackGuestKeyStore(this._primary, this._secondary);
   final GuestKeyStore _primary;
@@ -102,10 +111,44 @@ class FallbackGuestKeyStore implements GuestKeyStore {
   }
 
   @override
-  Future<String?> read(String key) => _either((s) => s.read(key));
+  Future<String?> read(String key) async {
+    String? primaryValue;
+    try {
+      primaryValue = await _primary.read(key);
+    } catch (_) {
+      // Primary is down: the secondary is the only source of truth.
+      return await _secondary.read(key);
+    }
+    if (primaryValue != null) return primaryValue;
+    // Primary is reachable but empty: check the secondary before giving
+    // up, in case the key was persisted there during a primary outage.
+    try {
+      return await _secondary.read(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Future<void> write(String key, String value) =>
       _either((s) => s.write(key, value));
+
   @override
-  Future<void> delete(String key) => _either((s) => s.delete(key));
+  Future<void> delete(String key) async {
+    Object? primaryError;
+    Object? secondaryError;
+    try {
+      await _primary.delete(key);
+    } catch (e) {
+      primaryError = e;
+    }
+    try {
+      await _secondary.delete(key);
+    } catch (e) {
+      secondaryError = e;
+    }
+    if (primaryError != null && secondaryError != null) {
+      throw primaryError;
+    }
+  }
 }

@@ -11,6 +11,20 @@ class _ThrowingStore implements GuestKeyStore {
   Future<void> write(String key, String value) => throw StateError('no');
 }
 
+/// In-memory fake backed by a plain map, so tests can seed/inspect state
+/// directly without touching the filesystem.
+class _MapStore implements GuestKeyStore {
+  _MapStore([Map<String, String>? seed]) : data = seed ?? {};
+  final Map<String, String> data;
+
+  @override
+  Future<String?> read(String key) async => data[key];
+  @override
+  Future<void> write(String key, String value) async => data[key] = value;
+  @override
+  Future<void> delete(String key) async => data.remove(key);
+}
+
 void main() {
   test('FileGuestKeyStore persists across instances (atomic, 0600)', () async {
     final dir = await Directory.systemTemp.createTemp('gks');
@@ -41,5 +55,37 @@ void main() {
   test('FallbackGuestKeyStore rethrows only when BOTH throw', () async {
     final store = FallbackGuestKeyStore(_ThrowingStore(), _ThrowingStore());
     expect(() => store.write('k', 'v'), throwsA(isA<Object>()));
+  });
+
+  test('read falls back to secondary when primary is reachable but empty',
+      () async {
+    // Primary (keyring) is up but has no value for this key; secondary
+    // (file) still holds it from a session where the primary was down.
+    final primary = _MapStore();
+    final secondary = _MapStore({'k': 'from-secondary'});
+    final store = FallbackGuestKeyStore(primary, secondary);
+    expect(await store.read('k'), 'from-secondary');
+  });
+
+  test('read prefers primary value over secondary when both have it',
+      () async {
+    final primary = _MapStore({'k': 'from-primary'});
+    final secondary = _MapStore({'k': 'from-secondary'});
+    final store = FallbackGuestKeyStore(primary, secondary);
+    expect(await store.read('k'), 'from-primary');
+  });
+
+  test('delete removes the key from BOTH backends', () async {
+    final primary = _MapStore({'k': 'v'});
+    final secondary = _MapStore({'k': 'v'});
+    final store = FallbackGuestKeyStore(primary, secondary);
+    await store.delete('k');
+    expect(primary.data.containsKey('k'), isFalse);
+    expect(secondary.data.containsKey('k'), isFalse);
+  });
+
+  test('delete rethrows only when BOTH throw', () async {
+    final store = FallbackGuestKeyStore(_ThrowingStore(), _ThrowingStore());
+    expect(() => store.delete('k'), throwsA(isA<Object>()));
   });
 }
