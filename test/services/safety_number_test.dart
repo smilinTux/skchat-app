@@ -24,4 +24,13 @@ void main() {
     expect(RegExp(r'^[0-9A-F]{8}$').hasMatch(safetyCompareCode('aaa', 'bbb')),
         isTrue);
   });
+
+  test('the last four groups are not a copy of the first four (no wrap dup)',
+      () {
+    final groups = safetyNumber('aaa', 'bbb').split(' ');
+    expect(groups.length, 12);
+    // Old sha256+wrap made groups[8..11] == groups[0..3]; the fix must
+    // break that.
+    expect(groups.sublist(8, 12), isNot(groups.sublist(0, 4)));
+  });
 }
