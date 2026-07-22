@@ -6,6 +6,7 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
+import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
 import '../../services/peer_trust_store.dart';
 import '../../services/skcomms_client.dart';
@@ -57,19 +58,6 @@ class ConversationScreen extends ConsumerWidget {
     final soul = conversation.resolvedSoulColor;
     final me = _myIdentity(ref);
 
-    // A 1:1 conversation with a known soul fingerprint has trust standing
-    // worth recording (see ConversationTile for the same pattern). Post-frame
-    // so it never runs mid-build; recordSight is a no-op when the
-    // fingerprint is unchanged, so a repeat call on rebuild is harmless.
-    if (conversation.isGroup != true &&
-        (conversation.soulFingerprint?.isNotEmpty ?? false)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref
-            .read(peerTrustControllerProvider)
-            .recordSight(peerId, conversation.soulFingerprint);
-      });
-    }
-
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       // Explicitly resize the body to the soft-keyboard inset. On mobile web
@@ -81,6 +69,17 @@ class ConversationScreen extends ConsumerWidget {
       appBar: _buildAppBar(context, ref, conversation, soul, messages),
       body: Column(
         children: [
+          // A 1:1 conversation has trust standing worth recording (see
+          // ConversationTile for the same pattern); this invisible widget
+          // records the sight once per screen mount (and again only if the
+          // fingerprint it watches changes), instead of on every rebuild of
+          // this whole screen (recordSight itself is a no-op for an
+          // unchanged/non-real key, so this is a perf nicety).
+          if (conversation.isGroup != true)
+            _RecordPeerSight(
+              peerId: peerId,
+              fingerprint: conversation.soulFingerprint,
+            ),
           Expanded(
             child: _MessageList(
               messages: messages,
@@ -493,33 +492,47 @@ class ConversationScreen extends ConsumerWidget {
   Future<void> _startDirectCallGated(
     BuildContext context,
     WidgetRef ref,
-    dynamic conv, {
+    Conversation conv, {
     required bool withVideo,
   }) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final fp = conv.soulFingerprint as String?;
-    final tier = await ref.read(peerTrustResolverProvider).tierFor(peerId, fp);
-    if (!canCall(tier)) {
-      messenger.showSnackBar(SnackBar(
-        content: Text('Verify ${conv.displayName} before calling'),
-        action: SnackBarAction(
-          label: 'Verify',
-          onPressed: () {
-            if (!context.mounted) return;
-            showVerifyPeerSheet(
-              context,
-              ref,
-              peerId: peerId,
-              peerName: conv.displayName,
-              peerFingerprint: fp,
-            );
-          },
-        ),
-      ));
-      return;
-    }
+    if (!await _checkCallAllowed(context, ref, conv)) return;
     if (!context.mounted) return;
     _startDirectCall(context, ref, conv.displayName, withVideo: withVideo);
+  }
+
+  /// Shared trust-tier gate for every 1:1 call surface (voice, video, and
+  /// the meeting-room button): returns true when [conv] may be called,
+  /// otherwise shows the "verify before calling" snackbar (with a Verify
+  /// action that opens the safety-number sheet) and returns false. Reads
+  /// [ScaffoldMessenger] before the `await` (the handle stays valid even if
+  /// the widget is disposed mid-lookup); callers must still guard
+  /// `context.mounted` before touching `context` again afterwards.
+  Future<bool> _checkCallAllowed(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation conv,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final fp = conv.soulFingerprint;
+    final tier = await ref.read(peerTrustResolverProvider).tierFor(peerId, fp);
+    if (canCall(tier)) return true;
+    messenger.showSnackBar(SnackBar(
+      content: Text('Verify ${conv.displayName} before calling'),
+      action: SnackBarAction(
+        label: 'Verify',
+        onPressed: () {
+          if (!context.mounted) return;
+          showVerifyPeerSheet(
+            context,
+            ref,
+            peerId: peerId,
+            peerName: conv.displayName,
+            peerFingerprint: fp,
+          );
+        },
+      ),
+    ));
+    return false;
   }
 
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
@@ -647,6 +660,20 @@ class ConversationScreen extends ConsumerWidget {
     List<ChatMessage> messages,
   ) {
     final tt = Theme.of(context).textTheme;
+    final isDirect = conversation.isGroup != true;
+    final headerTier = isDirect
+        ? ref
+            .watch(peerTrustTierProvider((
+              peerId: peerId,
+              fingerprint: conversation.soulFingerprint,
+            )))
+            .valueOrNull
+        : null;
+    // A header badge only makes sense for a peer with a REAL capauth key
+    // (red = unverified, amber = verified); unverifiable (keyless) peers
+    // show nothing here.
+    final showHeaderBadge =
+        headerTier == PeerTrustTier.red || headerTier == PeerTrustTier.amber;
 
     return AppBar(
       backgroundColor: SovereignColors.surfaceBase,
@@ -694,20 +721,10 @@ class ConversationScreen extends ConsumerWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (conversation.isGroup != true &&
-                          (conversation.soulFingerprint?.isNotEmpty ??
-                              false)) ...[
+                      if (showHeaderBadge) ...[
                         const SizedBox(width: 6),
                         TrustBadge(
-                          tier: selfTierForPeer(
-                            ref
-                                    .watch(peerTrustTierProvider((
-                                      peerId: peerId,
-                                      fingerprint: conversation.soulFingerprint,
-                                    )))
-                                    .valueOrNull ??
-                                PeerTrustTier.red,
-                          ),
+                          tier: selfTierForPeer(headerTier!),
                           compact: true,
                         ),
                       ],
@@ -830,7 +847,14 @@ class ConversationScreen extends ConsumerWidget {
         IconButton(
           icon: const Icon(Icons.meeting_room_outlined),
           tooltip: 'Agent room (LiveKit)',
-          onPressed: () {
+          onPressed: () async {
+            // Same trust gate as the voice/video buttons for a 1:1 room;
+            // a group's meeting room is never gated here.
+            if (conversation.isGroup != true &&
+                !await _checkCallAllowed(context, ref, conversation)) {
+              return;
+            }
+            if (!context.mounted) return;
             final ids = [peerId, 'local']..sort();
             final roomName = 'sk-room-${ids.join("-")}';
             context.push(
@@ -871,6 +895,50 @@ class ConversationScreen extends ConsumerWidget {
     if (conv.isAgent) return 'agent · offline';
     return 'last seen recently';
   }
+}
+
+/// Invisible widget whose sole job is firing [PeerTrustController.recordSight]
+/// once when it mounts, and again only if the (peerId, fingerprint) pair it
+/// is given actually changes, instead of on every rebuild of the enclosing
+/// [ConversationScreen]. recordSight itself is a no-op for an unchanged or
+/// non-real key, so this is purely a perf nicety, not a correctness need.
+class _RecordPeerSight extends ConsumerStatefulWidget {
+  const _RecordPeerSight({required this.peerId, required this.fingerprint});
+
+  final String peerId;
+  final String? fingerprint;
+
+  @override
+  ConsumerState<_RecordPeerSight> createState() => _RecordPeerSightState();
+}
+
+class _RecordPeerSightState extends ConsumerState<_RecordPeerSight> {
+  @override
+  void initState() {
+    super.initState();
+    _record();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RecordPeerSight oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.peerId != widget.peerId ||
+        oldWidget.fingerprint != widget.fingerprint) {
+      _record();
+    }
+  }
+
+  void _record() {
+    final peerId = widget.peerId;
+    final fingerprint = widget.fingerprint;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(peerTrustControllerProvider).recordSight(peerId, fingerprint);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 class _MenuRow extends StatelessWidget {

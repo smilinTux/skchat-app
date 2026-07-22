@@ -119,4 +119,24 @@ void main() {
     expect(find.bySemanticsLabel(RegExp('Provisional')), findsNothing);
     expect(find.bySemanticsLabel(RegExp('Untrusted')), findsNothing);
   });
+
+  testWidgets(
+      '1:1 row whose fingerprint equals its peerId (unverifiable, no real '
+      'key) renders no trust badge', (tester) async {
+    final container = _containerWithFakeStore();
+    addTearDown(container.dispose);
+
+    await _pump(
+      tester,
+      container,
+      // The chats_provider fallback echoes peerId back as the fingerprint
+      // when there is no real capauth key; that must resolve to
+      // `unverifiable`, not `red`, and show no badge.
+      _conversation(
+          peerId: 'dave', displayName: 'Dave', soulFingerprint: 'dave'),
+    );
+
+    expect(find.bySemanticsLabel(RegExp('Provisional')), findsNothing);
+    expect(find.bySemanticsLabel(RegExp('Untrusted')), findsNothing);
+  });
 }
