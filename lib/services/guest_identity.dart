@@ -1,14 +1,19 @@
-/// Guest identity, an ephemeral WebCrypto keypair persisted in localStorage so
-/// the SAME shareable link maps to the SAME guest on a return visit.
+/// Guest identity, a persisted asymmetric keypair so the SAME shareable link
+/// maps to the SAME guest on a return visit.
 ///
-/// Platform seam: the real implementation lives in [guest_identity_web.dart]
-/// (uses `window.crypto.subtle` ECDSA P-256 + `window.localStorage`). On
-/// non-web targets the stub keeps an in-memory keypair so the app still
-/// compiles and unit tests can run with a [FakeGuestIdentity].
+/// Platform seam: on web the real implementation lives in
+/// [guest_identity_web.dart] (uses `window.crypto.subtle` ECDSA P-256 +
+/// `window.localStorage`). On native targets the real implementation lives in
+/// [guest_identity_io.dart] (`NativeGuestIdentity`, a persistent on-disk
+/// keystore). The stub remains only as the compile-time fallback for a
+/// target that has neither `dart:io` nor `dart:html`, and backs unit tests
+/// that use a [FakeGuestIdentity] instead of the real factory.
 library;
 
 import 'guest_identity_stub.dart'
-    if (dart.library.html) 'guest_identity_web.dart' as impl;
+    if (dart.library.io) 'guest_identity_io.dart'
+    if (dart.library.html) 'guest_identity_web.dart'
+    as impl;
 
 /// A guest's locally-held identity material.
 class GuestKeypair {
@@ -49,5 +54,6 @@ abstract class GuestIdentity {
   Future<void> clear();
 }
 
-/// The platform [GuestIdentity] (real WebCrypto on web, in-memory stub else).
+/// The platform [GuestIdentity]: real WebCrypto on web, a real persistent
+/// keystore on native, and the in-memory stub only when neither is compiled.
 GuestIdentity createGuestIdentity() => impl.createGuestIdentity();
