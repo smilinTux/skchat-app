@@ -109,6 +109,7 @@ dev_dependencies:
 
   # Linting
   flutter_lints: ^6.0.0
+  crypto: ^3.0.7
 
 # Build against the local sk_pqc checkout so the build is hermetic and uses the
 # exact audited code. The published dependency above (git) is the contract; this
