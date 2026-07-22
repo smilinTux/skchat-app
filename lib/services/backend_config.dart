@@ -21,33 +21,42 @@ import 'package:hive_flutter/hive_flutter.dart';
 // ── Compile-time default seeds (unchanged build-time behaviour) ──────────────
 
 /// SKChat web-UI base URL, serves `/spaces` + `/livekit/token`.
+///
+/// Neutral by default (empty): a public/unconfigured build ships with no
+/// baked private host. Operator builds inject the real host via
+/// `--dart-define-from-file=config/lumina.json` (or an equivalent
+/// `--dart-define=SKCHAT_WEBUI_URL=...`).
 const kDefaultSkchatWebuiUrl = String.fromEnvironment(
   'SKCHAT_WEBUI_URL',
-  defaultValue: 'https://noroc2027.tail204f0c.ts.net',
+  defaultValue: '',
 );
 
-/// LiveKit web-UI token-mint base URL.
+/// LiveKit web-UI token-mint base URL. Neutral by default; see
+/// [kDefaultSkchatWebuiUrl].
 const kDefaultLivekitWebuiUrl = String.fromEnvironment(
   'LIVEKIT_WEBUI_URL',
-  defaultValue: 'http://localhost:7779',
+  defaultValue: '',
 );
 
-/// LiveKit SFU WebSocket URL.
+/// LiveKit SFU WebSocket URL. Neutral by default; see
+/// [kDefaultSkchatWebuiUrl].
 const kDefaultLivekitUrl = String.fromEnvironment(
   'LIVEKIT_URL',
-  defaultValue: 'wss://localhost:8443',
+  defaultValue: '',
 );
 
-/// skcapstone daemon REST base URL (port 7777).
+/// skcapstone daemon REST base URL (port 7777). Neutral by default; see
+/// [kDefaultSkchatWebuiUrl].
 const kDefaultSkcapstoneUrl = String.fromEnvironment(
   'SKCAPSTONE_URL',
-  defaultValue: 'http://localhost:7777',
+  defaultValue: '',
 );
 
-/// skcapstone dashboard base URL (port 7778).
+/// skcapstone dashboard base URL (port 7778). Neutral by default; see
+/// [kDefaultSkchatWebuiUrl].
 const kDefaultSkcapstoneDashboardUrl = String.fromEnvironment(
   'SKCAPSTONE_DASHBOARD_URL',
-  defaultValue: 'http://localhost:7778',
+  defaultValue: '',
 );
 
 /// skbloom app-store / cluster-control API base URL (port 8774).
