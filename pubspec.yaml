@@ -90,6 +90,7 @@ dependencies:
   # Lat/Lon value type used by flutter_map markers + camera.
   latlong2: ^0.9.1
   gpt_markdown: ^1.1.7
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:
@@ -109,15 +110,6 @@ dev_dependencies:
 
   # Linting
   flutter_lints: ^6.0.0
-  crypto: ^3.0.7
-
-# Build against the local sk_pqc checkout so the build is hermetic and uses the
-# exact audited code. The published dependency above (git) is the contract; this
-# override is dev/build convenience. Remove to pin the GitHub ref in CI.
-#
-# Points directly at the real `sk-pqc-dart` checkout (package name `sk_pqc`)
-# rather than the stray `../sk_pqc` symlink, so the path resolves identically on
-# any machine that has the sibling repo cloned.
 dependency_overrides:
   sk_pqc:
     path: ../sk-pqc-dart
