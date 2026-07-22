@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-/// A peer's trust tier. green is self/operator only, so a peer is red or
-/// amber.
-enum PeerTrustTier { red, amber }
+/// A peer's trust tier. green is self/operator only, so a peer is red,
+/// amber, or unverifiable. unverifiable means there is no real capauth key
+/// to anchor trust to (fingerprint is null, empty, or a peerId fallback).
+enum PeerTrustTier { red, amber, unverifiable }
 
 /// One trust-on-first-use record for a peer, keyed by peerId.
 class PeerTrustRecord {
@@ -107,54 +108,81 @@ class PeerTrustResolver {
   final PeerTrustStore _store;
   final DateTime Function() _now;
 
+  /// A fingerprint anchors real trust only when it is non-null, non-empty,
+  /// and not merely the peerId echoed back (the `chats_provider` fallback
+  /// `peer.fingerprint ?? peerId` uses the peerId when there is no real
+  /// capauth key; that must never be treated as a key).
+  bool _isRealKey(String peerId, String? fp) =>
+      fp != null && fp.isNotEmpty && fp != peerId;
+
   Future<PeerTrustTier> tierFor(String peerId, String? fingerprint) async {
-    if (fingerprint == null || fingerprint.isEmpty) return PeerTrustTier.red;
+    if (!_isRealKey(peerId, fingerprint)) return PeerTrustTier.unverifiable;
     final rec = (await _store.load())[peerId];
-    if (rec == null) return PeerTrustTier.red;
-    if (rec.fingerprint != fingerprint) return PeerTrustTier.red; // key change
+    if (rec == null || rec.fingerprint != fingerprint) {
+      return PeerTrustTier.red; // no record, or key change
+    }
     return rec.verified ? PeerTrustTier.amber : PeerTrustTier.red;
   }
 
-  /// Record an observation. Returns true when this sight is a KEY CHANGE
-  /// (an existing record had a different fingerprint). First sight persists a
-  /// fresh unverified record. An unchanged sight is a no-op (no write).
+  /// Record an observation. Returns true only for a genuine ROTATION of a
+  /// previously VERIFIED key (worth surfacing as a spoof alarm). Sights
+  /// without a real key (null/empty/peerId-fallback fingerprint) are
+  /// ignored entirely so they can never overwrite or churn a real record.
+  /// First sight of a real key persists a fresh unverified record. A
+  /// changed fingerprint on an unverified record is updated silently (no
+  /// alarm, since nobody had verified that peer yet).
   Future<bool> recordSight(String peerId, String? fingerprint) async {
-    if (fingerprint == null || fingerprint.isEmpty) return false;
+    if (!_isRealKey(peerId, fingerprint)) return false;
+    final fp = fingerprint!;
     final all = await _store.load();
     final rec = all[peerId];
     if (rec == null) {
       all[peerId] = PeerTrustRecord(
         peerId: peerId,
-        fingerprint: fingerprint,
+        fingerprint: fp,
         verified: false,
         firstSeenAt: _now(),
       );
       await _store.save(all);
       return false;
     }
-    if (rec.fingerprint == fingerprint) return false; // unchanged, no write
-    // Key change: replace fingerprint, drop verification, keep firstSeenAt,
-    // and flag the rotation so isKeyChanged can report it after the fact.
+    if (rec.fingerprint == fp) return false; // unchanged, no write
+    if (rec.verified) {
+      // Rotation of a trusted key: drop verification and flag it so
+      // isKeyChanged can surface the alarm.
+      all[peerId] = rec.copyWith(
+        fingerprint: fp,
+        verified: false,
+        keyChanged: true,
+      );
+      await _store.save(all);
+      return true;
+    }
+    // Nobody had verified this peer, so a fingerprint change is a silent
+    // update, not a spoof alarm.
     all[peerId] = rec.copyWith(
-      fingerprint: fingerprint,
+      fingerprint: fp,
       verified: false,
-      keyChanged: true,
+      keyChanged: false,
     );
     await _store.save(all);
-    return true;
+    return false;
   }
 
-  /// True when the CURRENT stored record for [peerId] matches [fingerprint]
-  /// and is flagged as a key rotation (see [PeerTrustRecord.keyChanged]).
+  /// True only when a real-key record exists whose stored fingerprint
+  /// matches [fingerprint] and whose `keyChanged` flag is set (an actually
+  /// rotated, previously-verified key).
   Future<bool> isKeyChanged(String peerId, String? fingerprint) async {
-    if (fingerprint == null || fingerprint.isEmpty) return false;
+    if (!_isRealKey(peerId, fingerprint)) return false;
     final rec = (await _store.load())[peerId];
     return rec != null && rec.fingerprint == fingerprint && rec.keyChanged;
   }
 
-  /// Promote to amber, but only for the CURRENT fingerprint. Verifying also
-  /// clears any pending key-change flag, since the new key is now confirmed.
+  /// Promote to amber, but only for a real key whose CURRENT fingerprint
+  /// matches. Verifying also clears any pending key-change flag, since the
+  /// new key is now confirmed.
   Future<void> markVerified(String peerId, String fingerprint) async {
+    if (!_isRealKey(peerId, fingerprint)) return;
     final all = await _store.load();
     final rec = all[peerId];
     if (rec == null) {

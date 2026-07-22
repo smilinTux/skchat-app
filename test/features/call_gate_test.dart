@@ -11,5 +11,10 @@ void main() {
     test('allows an amber (verified) peer', () {
       expect(canCall(PeerTrustTier.amber), isTrue);
     });
+
+    test('allows an unverifiable peer (no real capauth key to anchor to)',
+        () {
+      expect(canCall(PeerTrustTier.unverifiable), isTrue);
+    });
   });
 }

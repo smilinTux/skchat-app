@@ -19,9 +19,21 @@ void main() {
     expect(await r.tierFor('bob', 'fp1'), PeerTrustTier.red);
   });
 
-  test('no fingerprint resolves red', () async {
+  test('no fingerprint resolves unverifiable', () async {
     final r = _resolver();
-    expect(await r.tierFor('ghost', null), PeerTrustTier.red);
+    expect(await r.tierFor('ghost', null), PeerTrustTier.unverifiable);
+  });
+
+  test('fingerprint equal to peerId (fallback) resolves unverifiable',
+      () async {
+    final r = _resolver();
+    expect(await r.tierFor('bob', 'bob'), PeerTrustTier.unverifiable);
+  });
+
+  test('a real fingerprint (!= peerId) first sight resolves red', () async {
+    final r = _resolver();
+    await r.recordSight('bob', 'fp1');
+    expect(await r.tierFor('bob', 'fp1'), PeerTrustTier.red);
   });
 
   test('markVerified promotes to amber for the current fingerprint', () async {
@@ -31,7 +43,9 @@ void main() {
     expect(await r.tierFor('bob', 'fp1'), PeerTrustTier.amber);
   });
 
-  test('a changed fingerprint reverts to red + flags key change', () async {
+  test(
+      'a VERIFIED peer whose real fingerprint changes reverts to red '
+      'and flags a key change', () async {
     final s = _MemStore();
     final r = _resolver(s);
     await r.recordSight('bob', 'fp1');
@@ -40,6 +54,18 @@ void main() {
     final changed = await r.recordSight('bob', 'fp2'); // key rotated
     expect(changed, isTrue);
     expect(await r.isKeyChanged('bob', 'fp2'), isTrue);
+    expect(await r.tierFor('bob', 'fp2'), PeerTrustTier.red);
+  });
+
+  test(
+      'an UNVERIFIED peer whose fingerprint changes stays red silently '
+      '(no false alarm)', () async {
+    final s = _MemStore();
+    final r = _resolver(s);
+    await r.recordSight('bob', 'fp1'); // unverified
+    final changed = await r.recordSight('bob', 'fp2'); // still unverified
+    expect(changed, isFalse);
+    expect(await r.isKeyChanged('bob', 'fp2'), isFalse);
     expect(await r.tierFor('bob', 'fp2'), PeerTrustTier.red);
   });
 
@@ -55,5 +81,25 @@ void main() {
     await _resolver(s).markVerifyFlow('bob', 'fp1'); // helper: record+verify
     final r2 = _resolver(s);
     expect(await r2.tierFor('bob', 'fp1'), PeerTrustTier.amber);
+  });
+
+  test(
+      'recordSight with a null/empty/peerId-fallback fp is a no-op and '
+      'does not clobber an existing real-key verified record', () async {
+    final s = _MemStore();
+    final r = _resolver(s);
+    await r.recordSight('bob', 'fpReal');
+    await r.markVerified('bob', 'fpReal');
+    expect(await r.tierFor('bob', 'fpReal'), PeerTrustTier.amber);
+
+    final changedByFallback = await r.recordSight('bob', 'bob'); // fp == peerId
+    expect(changedByFallback, isFalse);
+    expect(await r.tierFor('bob', 'fpReal'), PeerTrustTier.amber);
+    expect(await r.isKeyChanged('bob', 'fpReal'), isFalse);
+
+    final changedByNull = await r.recordSight('bob', null);
+    expect(changedByNull, isFalse);
+    expect(await r.tierFor('bob', 'fpReal'), PeerTrustTier.amber);
+    expect(await r.isKeyChanged('bob', 'fpReal'), isFalse);
   });
 }
