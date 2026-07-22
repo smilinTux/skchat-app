@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:skchat/core/theme/sovereign_colors.dart';
+import 'package:skchat/services/peer_trust_store.dart';
 import 'package:skchat/services/self_identity.dart';
+
+/// Map a peer tier onto the badge's self-tier enum (red->red, amber->amber).
+SelfTrustTier selfTierForPeer(PeerTrustTier t) =>
+    t == PeerTrustTier.amber ? SelfTrustTier.amber : SelfTrustTier.red;
 
 /// A small reusable badge widget that displays trust tier visually.
 /// Renders a colored dot (red/amber/green) plus optional text label.
@@ -42,15 +47,29 @@ class TrustBadge extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Colored dot
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
+        // Colored dot. In compact mode there is no visible text, so wrap it
+        // in Semantics to announce the tier to screen readers.
+        if (compact)
+          Semantics(
+            label: _getDefaultLabel(),
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+              ),
+            ),
+          )
+        else
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
           ),
-        ),
         // Optional text label
         if (!compact)
           Padding(
