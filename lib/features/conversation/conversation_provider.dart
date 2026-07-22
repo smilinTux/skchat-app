@@ -61,11 +61,23 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   /// cache on conversation open, then invalidate the PQ badge so the header
   /// re-reads the (possibly now hybrid) self-report.
   Future<void> _primePqForConversation(String peerId) async {
-    final pq = ref.read(pqConversationServiceProvider);
-    final peerShort = normalizePeerKey(peerId);
-    await pq.primeOutboundCache();
-    await pq.prefetchPeer(peerShort);
-    ref.invalidate(conversationPqStateProvider(peerShort));
+    // PQC is a best-effort DM feature: on a device where the PQC backend is
+    // unavailable (e.g. liboqs is not installed, which throws
+    // 'sk_pqc: could not load liboqs' the moment pqConversationServiceProvider
+    // is read), priming must degrade silently. Without this guard the read
+    // threw straight through ConversationNotifier.build, so ConversationScreen
+    // rendered Flutter's ErrorWidget (a grey box in release) in place of the
+    // app bar. Swallow any priming failure so the conversation still opens
+    // (just without the PQ prefetch / hybrid badge).
+    try {
+      final pq = ref.read(pqConversationServiceProvider);
+      final peerShort = normalizePeerKey(peerId);
+      await pq.primeOutboundCache();
+      await pq.prefetchPeer(peerShort);
+      ref.invalidate(conversationPqStateProvider(peerShort));
+    } catch (_) {
+      // No PQ priming on this device; the conversation renders normally.
+    }
   }
 
   /// Remove duplicates: same id, or same content+direction within 10s.
