@@ -149,15 +149,12 @@ class _CallDevicePickerButtonState
 
   /// The device id to apply: the persisted [saved] choice when it is still
   /// present in [list], otherwise the smart default (first non-virtual device).
-  /// Returns null for an empty enumeration.
-  String? _pickTarget(List<MediaDevice> list, String? saved) {
-    if (saved != null &&
-        saved.isNotEmpty &&
-        list.any((d) => d.deviceId == saved)) {
-      return saved;
-    }
-    return LiveKitCallService.pickDefaultDeviceId(list);
-  }
+  /// Returns null for an empty enumeration. Delegates to
+  /// [LiveKitCallService.resolveCameraDeviceId], which is the same
+  /// saved-or-smart-default logic (named for its camera go-live use, but
+  /// generic over any [MediaDevice] list, mic included).
+  String? _pickTarget(List<MediaDevice> list, String? saved) =>
+      LiveKitCallService.resolveCameraDeviceId(list, saved);
 
   Future<void> _openSheet() async {
     final svc = ref.read(liveKitCallServiceProvider);
@@ -266,11 +263,12 @@ class _DevicePickerSheetState extends State<_DevicePickerSheet> {
 
   /// Persisted explicit choice wins when the device is still present, otherwise
   /// fall back to the smart default that skips virtual / loopback devices.
-  String? _resolveSelection(List<MediaDevice> list, String? saved) {
-    if (list.isEmpty) return null;
-    if (saved != null && list.any((d) => d.deviceId == saved)) return saved;
-    return LiveKitCallService.pickDefaultDeviceId(list);
-  }
+  /// Delegates to [LiveKitCallService.resolveCameraDeviceId] (same logic as
+  /// [_CallDevicePickerButtonState._pickTarget] above; the empty-`saved`-string
+  /// edge case behaves identically either way since no real device enumerates
+  /// with an empty deviceId).
+  String? _resolveSelection(List<MediaDevice> list, String? saved) =>
+      LiveKitCallService.resolveCameraDeviceId(list, saved);
 
   Future<void> _onMicChanged(String? deviceId) async {
     if (deviceId == null) return;

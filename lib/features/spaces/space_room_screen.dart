@@ -11,6 +11,7 @@ import "../../services/spaces_service.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/reactions.dart";
 import "../call_shared/screen_share_source.dart";
+import "../calls/call_device_picker.dart";
 import "../calls/cast_sheet.dart";
 import "space_chat_panel.dart";
 import "watch_panel.dart";
@@ -369,10 +370,25 @@ class SpaceRoomNotifier
   /// also enforces the camera / screen mutual exclusion (stops an active
   /// screen share first). Records [position] on state so [flipCamera] and
   /// the control bar's Flip control know the current facing.
+  ///
+  /// Resolves the capture device BEFORE publishing (persisted choice, or the
+  /// smart non-virtual default via [LiveKitCallService.resolveCameraDeviceId])
+  /// so a bare go-live never lands on the first enumerated device, which on
+  /// Linux can be a dead Droidcam/v4l2loopback virtual camera ahead of the
+  /// real webcam. Enumeration failure falls back to null (the SDK default
+  /// device), matching the pre-fix behavior.
   Future<void> goLiveCamera(CameraPosition position) async {
-    await ref
-        .read(liveKitCallServiceProvider)
-        .setCameraEnabled(true, cameraPosition: position);
+    final svc = ref.read(liveKitCallServiceProvider);
+    String? deviceId;
+    try {
+      final cams = await svc.enumerateVideoInputs();
+      final saved = await CallDevicePrefs.loadCamera();
+      deviceId = LiveKitCallService.resolveCameraDeviceId(cams, saved);
+    } catch (_) {
+      deviceId = null; // fall back to the SDK default device
+    }
+    await svc.setCameraEnabled(true,
+        cameraPosition: position, deviceId: deviceId);
     if (_disposed) return;
     state = state.copyWith(cameraFacing: position);
   }
@@ -1874,6 +1890,13 @@ class _ControlBar extends ConsumerWidget {
                 activeColor: SovereignColors.soulLumina,
                 onTap: notifier.flipCamera,
               ),
+            // Live camera/mic device picker (same 1:1-call widget, same
+            // liveKitCallServiceProvider): lets a Linux user with a phantom
+            // Droidcam/v4l2loopback device switch to the real webcam without
+            // dropping the Space. Same gate as Flip (camera actually live and
+            // the speaker still holds their publish-video grant).
+            if (canShare && isCameraLive && canPublishVideoLocal)
+              const CallDevicePickerButton(size: 56),
             // Quick emoji reactions: floats to everyone in the Space.
             ReactionsButton(identity: join.identity),
             // Cast the Space's shared video to a TV (Chromecast / AirPlay) over
