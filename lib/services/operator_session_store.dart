@@ -16,6 +16,7 @@
 // localStorage; a no-op on native (which reaches operator routes over the
 // tailnet and needs no token).
 import 'operator_session_store_stub.dart'
+    if (dart.library.io) 'operator_session_store_io.dart'
     if (dart.library.html) 'operator_session_store_web.dart' as impl;
 
 /// The stored operator SESSION token, or null when unset.

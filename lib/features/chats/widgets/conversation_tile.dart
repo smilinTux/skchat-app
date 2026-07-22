@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/theme.dart';
 import '../../../models/conversation.dart';
 import '../../../core/chat_text.dart';
+import '../../identity/widgets/trust_badge.dart';
+import '../../../services/peer_trust_store.dart';
 
 /// Glass card tile representing a single conversation in the chat list.
 /// Shows soul-color avatar, name, last message, timestamp, encryption badge,
 /// delivery status, and unread count.
-class ConversationTile extends StatelessWidget {
+class ConversationTile extends ConsumerWidget {
   const ConversationTile({
     super.key,
     required this.conversation,
@@ -17,10 +20,31 @@ class ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final VoidCallback onTap;
 
+  /// A 1:1 row is never a group. Group rows never show/record trust
+  /// standing (there is no single peer key to anchor it to).
+  bool get _isDirect => conversation.isGroup != true;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tt = Theme.of(context).textTheme;
     final soul = conversation.resolvedSoulColor;
+
+    // Resolve the tier for any 1:1 row (regardless of whether the
+    // fingerprint string is empty); the tier provider itself resolves a
+    // missing/keyless/peerId-fallback fingerprint to `unverifiable`, so
+    // gating on the TIER (not just "is the string non-empty") is what keeps
+    // a keyless peer from showing a badge.
+    final tier = _isDirect
+        ? ref
+            .watch(peerTrustTierProvider(
+                (peerId: conversation.peerId,
+                    fingerprint: conversation.soulFingerprint)))
+            .valueOrNull
+        : null;
+    // A badge only makes sense for a peer with a REAL capauth key (red =
+    // unverified, amber = verified); unverifiable (keyless) peers show
+    // nothing, same as a group row.
+    final showBadge = tier == PeerTrustTier.red || tier == PeerTrustTier.amber;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -30,6 +54,15 @@ class ConversationTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
+            // Invisible: records the sight once per mount (see
+            // _RecordPeerSightState) instead of on every rebuild of this
+            // row. recordSight is already a no-op for an unchanged/non-real
+            // key, so this is a perf nicety, not a correctness need.
+            if (_isDirect)
+              _RecordPeerSight(
+                peerId: conversation.peerId,
+                fingerprint: conversation.soulFingerprint,
+              ),
             // ── Avatar ──────────────────────────────────────────────────
             SoulAvatar(
               soulColor: soul,
@@ -60,6 +93,10 @@ class ConversationTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (showBadge) ...[
+                        const SizedBox(width: 6),
+                        TrustBadge(tier: selfTierForPeer(tier!), compact: true),
+                      ],
                       const SizedBox(width: 8),
                       Text(
                         _formatTime(conversation.lastMessageTime),
@@ -179,6 +216,53 @@ extension on Conversation {
       (lastDeliveryStatus == 'sent' ||
           lastDeliveryStatus == 'delivered' ||
           lastDeliveryStatus == 'read');
+}
+
+/// Invisible widget whose sole job is firing [PeerTrustController.recordSight]
+/// once when it mounts, and again only if the (peerId, fingerprint) pair it
+/// is given actually changes. Guards against the un-keyed [ListView.builder]
+/// in the chats list reusing this row's Element/State for a DIFFERENT
+/// conversation at the same index (list reorder), where a plain "recorded
+/// once ever" bool would wrongly skip recording the new peer's first sight.
+/// recordSight itself is a no-op for an unchanged or non-real key, so this
+/// is purely a perf nicety, not a correctness need.
+class _RecordPeerSight extends ConsumerStatefulWidget {
+  const _RecordPeerSight({required this.peerId, required this.fingerprint});
+
+  final String peerId;
+  final String? fingerprint;
+
+  @override
+  ConsumerState<_RecordPeerSight> createState() => _RecordPeerSightState();
+}
+
+class _RecordPeerSightState extends ConsumerState<_RecordPeerSight> {
+  @override
+  void initState() {
+    super.initState();
+    _record();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RecordPeerSight oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.peerId != widget.peerId ||
+        oldWidget.fingerprint != widget.fingerprint) {
+      _record();
+    }
+  }
+
+  void _record() {
+    final peerId = widget.peerId;
+    final fingerprint = widget.fingerprint;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(peerTrustControllerProvider).recordSight(peerId, fingerprint);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 class _UnreadBadge extends StatelessWidget {

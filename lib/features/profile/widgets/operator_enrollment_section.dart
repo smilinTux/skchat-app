@@ -1,5 +1,4 @@
 import "package:dio/dio.dart";
-import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
@@ -47,29 +46,22 @@ enum _LinkStatus { idle, linking, linked, error }
 /// failure shows a generic, still-friendly fallback. Never crashes: every
 /// path is caught and turned into an error-state string.
 ///
-/// Web-first: the device key ([GuestIdentity]) is only a real WebCrypto key
-/// on the web build today (native is an in-memory stub, see
-/// guest_identity_stub.dart), so on a non-web build this renders a
-/// "supported on the web app for now" note instead of the control. Detected
-/// via [kIsWeb], overridable through [isWeb] so this can be widget-tested
-/// under `flutter test`'s VM target (where [kIsWeb] is always false).
+/// Platform-agnostic: shown on every platform (web and native alike), each
+/// backed by its own [GuestIdentity] implementation (see
+/// guest_identity_web.dart / guest_identity_io.dart).
 class OperatorEnrollmentSection extends ConsumerStatefulWidget {
   const OperatorEnrollmentSection({
     super.key,
-    this.isWeb,
     this.tokenReader,
     this.tokenWriter,
   });
 
-  /// Test-only override of the platform's real [kIsWeb] value.
-  final bool? isWeb;
-
   /// Test-only override of the operator-token read seam (defaults to the
-  /// real [op_token.operatorToken] when null). Mirrors [isWeb]'s pattern:
-  /// production code never passes this, tests inject a fake so the token
-  /// field's initial value can be exercised deterministically without
-  /// depending on the web-only localStorage implementation (a no-op under
-  /// `flutter test`'s VM target, see `operator_token_stub.dart`).
+  /// real [op_token.operatorToken] when null): production code never passes
+  /// this, tests inject a fake so the token field's initial value can be
+  /// exercised deterministically without depending on the web-only
+  /// localStorage implementation (a no-op under `flutter test`'s VM target,
+  /// see `operator_token_stub.dart`).
   final String? Function()? tokenReader;
 
   /// Test-only override of the operator-token write seam (defaults to the
@@ -88,8 +80,6 @@ class _OperatorEnrollmentSectionState
   String? _errorMessage;
   late final TextEditingController _tokenController;
 
-  bool get _isWeb => widget.isWeb ?? kIsWeb;
-
   String? Function() get _readToken =>
       widget.tokenReader ?? op_token.operatorToken;
 
@@ -100,9 +90,7 @@ class _OperatorEnrollmentSectionState
   void initState() {
     super.initState();
     _tokenController = TextEditingController(text: _readToken() ?? "");
-    if (_isWeb) {
-      _checkExistingSession();
-    }
+    _checkExistingSession();
   }
 
   @override
@@ -216,28 +204,6 @@ class _OperatorEnrollmentSectionState
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-
-    if (!_isWeb) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: GlassCard(
-          padding: EdgeInsets.zero,
-          child: Material(
-            color: Colors.transparent,
-            child: ListTile(
-              leading: const Icon(
-                Icons.link_off_rounded,
-                color: SovereignColors.textTertiary,
-              ),
-              title: const Text("Link this device"),
-              subtitle: const Text(
-                "Device linking is supported on the web app for now.",
-              ),
-            ),
-          ),
-        ),
-      );
-    }
 
     final linked = _status == _LinkStatus.linked;
     final linking = _status == _LinkStatus.linking;

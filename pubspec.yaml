@@ -90,6 +90,7 @@ dependencies:
   # Lat/Lon value type used by flutter_map markers + camera.
   latlong2: ^0.9.1
   gpt_markdown: ^1.1.7
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:
@@ -109,7 +110,6 @@ dev_dependencies:
 
   # Linting
   flutter_lints: ^6.0.0
-  crypto: ^3.0.7
 
 # Build against the local sk_pqc checkout so the build is hermetic and uses the
 # exact audited code. The published dependency above (git) is the contract; this

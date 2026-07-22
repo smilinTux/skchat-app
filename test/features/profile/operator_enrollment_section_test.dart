@@ -115,7 +115,6 @@ String _fakeJwt(int expUnixSeconds) {
 
 Widget _wrap(
   OperatorSessionService service, {
-  bool isWeb = true,
   String? Function()? tokenReader,
   void Function(String?)? tokenWriter,
 }) {
@@ -125,7 +124,6 @@ Widget _wrap(
       home: Scaffold(
         body: SingleChildScrollView(
           child: OperatorEnrollmentSection(
-            isWeb: isWeb,
             tokenReader: tokenReader,
             tokenWriter: tokenWriter,
           ),
@@ -136,8 +134,8 @@ Widget _wrap(
 }
 
 void main() {
-  group("non-web platform", () {
-    testWidgets("shows a web-only note instead of the control, no crash", (
+  group("platform-agnostic control", () {
+    testWidgets("renders the real link control on every platform, no crash", (
       tester,
     ) async {
       final adapter = _CannedAdapter({});
@@ -148,14 +146,12 @@ void main() {
         identity: _FakeIdentity(),
       );
 
-      await tester.pumpWidget(_wrap(service, isWeb: false));
+      await tester.pumpWidget(_wrap(service));
       await tester.pump();
 
-      expect(
-        find.textContaining("supported on the web app for now"),
-        findsOneWidget,
-      );
-      expect(find.byKey(const Key("operator-enroll-action")), findsNothing);
+      expect(find.text("Link this device"), findsOneWidget);
+      expect(find.byKey(const Key("operator-token-field")), findsOneWidget);
+      expect(find.byKey(const Key("operator-enroll-action")), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
@@ -467,7 +463,7 @@ void main() {
             child: const MaterialApp(
               home: Scaffold(
                 body: SingleChildScrollView(
-                  child: OperatorEnrollmentSection(isWeb: true),
+                  child: OperatorEnrollmentSection(),
                 ),
               ),
             ),
@@ -542,7 +538,7 @@ void main() {
             child: const MaterialApp(
               home: Scaffold(
                 body: SingleChildScrollView(
-                  child: OperatorEnrollmentSection(isWeb: true),
+                  child: OperatorEnrollmentSection(),
                 ),
               ),
             ),
