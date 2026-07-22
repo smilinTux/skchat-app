@@ -1892,10 +1892,14 @@ class _ControlBar extends ConsumerWidget {
               ),
             // Live camera/mic device picker (same 1:1-call widget, same
             // liveKitCallServiceProvider): lets a Linux user with a phantom
-            // Droidcam/v4l2loopback device switch to the real webcam without
-            // dropping the Space. Same gate as Flip (camera actually live and
-            // the speaker still holds their publish-video grant).
-            if (canShare && isCameraLive && canPublishVideoLocal)
+            // Droidcam/v4l2loopback device switch to the real webcam.
+            // Gated the same as "Go live" (can publish video), NOT on
+            // isCameraLive: the picker MUST be reachable before the camera is
+            // live so a user whose camera did not come up on the right device
+            // can select a working one (picking a device publishes it). Gating
+            // on isCameraLive was a chicken-and-egg trap (no live camera means
+            // no picker means no way to fix a bad default device).
+            if (canShare && canPublishVideoLocal)
               const CallDevicePickerButton(size: 56),
             // Quick emoji reactions: floats to everyone in the Space.
             ReactionsButton(identity: join.identity),
