@@ -1,6 +1,8 @@
 // test/fixtures/emit_device_fixture.dart
 // Emits one JSON fixture line for the Python wire-compat test. Run:
-//   dart run test/fixtures/emit_device_fixture.dart
+//   flutter test --no-pub test/fixtures/emit_device_fixture.dart
+// (plain `dart run` fails: this file transitively pulls in dart:ui via
+// flutter_secure_storage, so it must run under the Flutter test VM.)
 import 'dart:convert';
 import 'package:skchat/services/guest_identity_io.dart';
 import 'package:skchat/services/guest_key_store.dart';

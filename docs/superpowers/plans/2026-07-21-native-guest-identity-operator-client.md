@@ -1,4 +1,4 @@
-# Native GuestIdentity keystore + neutral thick-client build — Implementation Plan
+# Native GuestIdentity keystore + neutral thick-client build: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -25,15 +25,15 @@
 
 ## File Structure
 
-- Create `lib/services/guest_key_store.dart` — the `GuestKeyStore` seam + `SecureGuestKeyStore`, `FileGuestKeyStore`, `FallbackGuestKeyStore`.
-- Create `lib/services/guest_identity_io.dart` — the real native `GuestIdentity` + `createGuestIdentity()`.
-- Modify `lib/services/guest_identity.dart` — conditional import adds the io impl.
-- Modify `lib/services/backend_config.dart` — neutral (empty) compile-time defaults.
-- Create `config/lumina.json` — dart-define file with the `.158` hosts.
+- Create `lib/services/guest_key_store.dart`: the `GuestKeyStore` seam + `SecureGuestKeyStore`, `FileGuestKeyStore`, `FallbackGuestKeyStore`.
+- Create `lib/services/guest_identity_io.dart`: the real native `GuestIdentity` + `createGuestIdentity()`.
+- Modify `lib/services/guest_identity.dart`: conditional import adds the io impl.
+- Modify `lib/services/backend_config.dart`: neutral (empty) compile-time defaults.
+- Create `config/lumina.json`: dart-define file with the `.158` hosts.
 - Create `scripts/build-linux-lumina.sh`, `scripts/build-linux-neutral.sh`, `scripts/build-web-lumina.sh`.
 - Create `test/services/guest_key_store_test.dart`, `test/services/guest_identity_io_test.dart`.
-- Create `test/fixtures/emit_device_fixture.dart` — Dart entrypoint emitting a JSON fixture.
-- Create `skchat` repo `tests/test_operator_auth_wire_compat.py` — feeds the fixture through the real server verify.
+- Create `test/fixtures/emit_device_fixture.dart`: Dart entrypoint emitting a JSON fixture.
+- Create `skchat` repo `tests/test_operator_auth_wire_compat.py`: feeds the fixture through the real server verify.
 
 ---
 
@@ -239,7 +239,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: `guest_identity_io.dart` — keygen, SPKI, fingerprint, sign
+### Task 2: `guest_identity_io.dart` (keygen, SPKI, fingerprint, sign)
 
 **Files:**
 - Create: `lib/services/guest_identity_io.dart`

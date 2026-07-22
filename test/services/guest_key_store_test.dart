@@ -44,6 +44,43 @@ void main() {
     expect(await b.read('k'), isNull);
   });
 
+  test('FileGuestKeyStore write leaves no world-readable window (0600, '
+      'no leftover temp file)', () async {
+    final dir = await Directory.systemTemp.createTemp('gks-perm');
+    final store = FileGuestKeyStore(dirPath: dir.path);
+    await store.write('secret', 'top-secret-value');
+    // The final file is owner-only from the moment it holds the secret.
+    final f = File('${dir.path}/guest_identity.json');
+    final mode = (await f.stat()).mode & 0x1FF;
+    expect(mode, 0x180); // 0600
+    // The temp file used to stage the write is gone (renamed onto the
+    // target), so no `.tmp-*` artifact is left lying around.
+    final leftovers = await dir
+        .list()
+        .where((e) => e.path.contains('.tmp-'))
+        .toList();
+    expect(leftovers, isEmpty);
+  });
+
+  test('corrupt keystore file is preserved as a .corrupt-* sidecar, not '
+      'silently overwritten', () async {
+    final dir = await Directory.systemTemp.createTemp('gks-corrupt');
+    final target = File('${dir.path}/guest_identity.json');
+    await target.create(recursive: true);
+    await target.writeAsString('not valid json {{{');
+
+    final store = FileGuestKeyStore(dirPath: dir.path);
+    // The corrupt file is not a throw; it reads as if the key were absent.
+    expect(await store.read('k'), isNull);
+    // The original bytes are preserved under a .corrupt-<pid> sidecar rather
+    // than being destroyed, so prior key material survives for recovery.
+    final siblings = await dir.list().toList();
+    final corruptSidecars =
+        siblings.where((e) => e.path.contains('.corrupt-')).toList();
+    expect(corruptSidecars, isNotEmpty);
+    expect(await target.exists(), isFalse);
+  });
+
   test('FallbackGuestKeyStore uses secondary when primary throws', () async {
     final dir = await Directory.systemTemp.createTemp('gks2');
     final store = FallbackGuestKeyStore(_ThrowingStore(),

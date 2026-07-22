@@ -103,6 +103,36 @@ void main() {
     expect(kp.degraded, isTrue);
     expect(kp.publicKeyB64, isNotEmpty);
   });
+
+  test(
+    'sign caches the private key: two consecutive signs both succeed and '
+    'verify against the pubkey',
+    () async {
+      final store = _MemStore();
+      final id = NativeGuestIdentity(store: store);
+      final kp = await id.ensure();
+      final spki = base64.decode(kp.publicKeyB64);
+      final pub = _pubFromSpki(spki);
+
+      Future<void> signAndVerify(String payload) async {
+        final sigB64 = await id.sign(payload);
+        final raw = base64.decode(sigB64);
+        final r = _bi(raw.sublist(0, 32));
+        final s = _bi(raw.sublist(32, 64));
+        final e = SHA256Digest().process(
+          Uint8List.fromList(utf8.encode(payload)),
+        );
+        final v = ECDSASigner()..init(false, PublicKeyParameter(pub));
+        expect(v.verifySignature(e, ECSignature(r, s)), isTrue);
+      }
+
+      // First sign resolves and caches the key from the store; the second
+      // sign must still succeed and verify using the cached key, proving
+      // the cached-key path (not just a lucky single read) works.
+      await signAndVerify('payload-one');
+      await signAndVerify('payload-two');
+    },
+  );
 }
 
 BigInt _bi(List<int> b) {

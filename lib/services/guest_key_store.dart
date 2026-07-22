@@ -50,7 +50,13 @@ class FileGuestKeyStore implements GuestKeyStore {
         return raw.map((k, v) => MapEntry(k.toString(), v.toString()));
       }
     } catch (_) {
-      // Corrupt file: treat as empty; a fresh write will replace it.
+      // Corrupt file: rename it aside so the prior key material is kept for
+      // recovery instead of being silently overwritten by the next write.
+      try {
+        await f.rename('${f.path}.corrupt-$pid');
+      } catch (_) {
+        // Rename itself failed; fall back to the old behavior below.
+      }
     }
     return {};
   }
@@ -58,12 +64,20 @@ class FileGuestKeyStore implements GuestKeyStore {
   Future<void> _save(Map<String, String> data) async {
     await Directory(_dirPath).create(recursive: true);
     final tmp = File('${_file.path}.tmp-$pid');
+    // Create the temp file and lock it down to owner-only BEFORE any secret
+    // bytes are written into it. rename() preserves the mode, so the target
+    // file is 0600 from the instant it holds the secret, never 0644 in
+    // between. dart:io has no chmod, so this shells out on Linux/macOS.
+    await tmp.create();
+    if (Platform.isLinux || Platform.isMacOS) {
+      final r = await Process.run('chmod', ['600', tmp.path]);
+      if (r.exitCode != 0) {
+        await tmp.delete();
+        throw StateError('chmod failed on keystore temp file');
+      }
+    }
     await tmp.writeAsString(jsonEncode(data), flush: true);
     await tmp.rename(_file.path);
-    // dart:io has no chmod; enforce owner-only perms on Linux.
-    if (Platform.isLinux || Platform.isMacOS) {
-      await Process.run('chmod', ['600', _file.path]);
-    }
   }
 
   @override

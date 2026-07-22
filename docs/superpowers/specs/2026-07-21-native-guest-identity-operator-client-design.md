@@ -1,4 +1,4 @@
-# Native GuestIdentity keystore + neutral thick-client build — design
+# Native GuestIdentity keystore + neutral thick-client build: design
 
 **Date:** 2026-07-21
 **Status:** approved (design decisions confirmed with Chef)
@@ -30,21 +30,21 @@ neutral (no baked private-infra URL) while Chef's own builds still point at
 
 ## The crypto contract (verified against the live server)
 
-From `skchat/src/skchat/operator_auth.py` — the native impl MUST match all three
+From `skchat/src/skchat/operator_auth.py`, the native impl MUST match all three
 or enrollment/handshake fail:
 
-1. **Public key** — `device_pubkey_b64` is `base64(DER SubjectPublicKeyInfo)`.
+1. **Public key**: `device_pubkey_b64` is `base64(DER SubjectPublicKeyInfo)`.
    The server does `serialization.load_der_public_key(base64.b64decode(...))`.
    So we export the P-256 public key as DER SPKI (`ecPublicKey` OID
    `1.2.840.10045.2.1` + `prime256v1` OID `1.2.840.10045.3.1.7` + the
    uncompressed EC point `04 || X || Y` in the BIT STRING) and base64 it.
    This is byte-identical to WebCrypto `exportKey('spki')`.
 
-2. **Fingerprint** — `device_fingerprint = sha256(device_pubkey_b64.encode())[:16]`
+2. **Fingerprint**: `device_fingerprint = sha256(device_pubkey_b64.encode())[:16]`
    i.e. SHA-256 over the **base64 string** (ASCII bytes), first 16 hex chars.
    Identical to `guest_identity_web.dart`'s `_fingerprint()` and to the server.
 
-3. **Signature** — `verify_device_signature` accepts **either**:
+3. **Signature**: `verify_device_signature` accepts **either**:
    - 64-byte raw `r || s` (WebCrypto P1363), which it converts to DER, **or**
    - already-DER ECDSA.
    Curve P-256, hash SHA-256 (`ec.ECDSA(hashes.SHA256())`).
@@ -71,7 +71,7 @@ verify), `asn1lib` (SPKI DER encode/decode), `flutter_secure_storage`
 
 ## Architecture
 
-### Component 1 — `guest_identity_io.dart` (the real native impl)
+### Component 1: `guest_identity_io.dart` (the real native impl)
 
 Replaces the stub on native targets. Implements the existing `GuestIdentity`
 interface (`ensure/hasCached/sign/clear` → `GuestKeypair{publicKeyB64,
@@ -81,7 +81,7 @@ fingerprint, degraded}`) with:
   seeded from a `SecureRandom` (Fortuna seeded with `Random.secure()` bytes).
 - **SPKI export:** build the DER `SubjectPublicKeyInfo` with `asn1lib` from the
   public point (uncompressed `04||X||Y`, X/Y fixed 32-byte big-endian), base64.
-- **Fingerprint:** `sha256(spkiB64)[:16]` via pointycastle SHA-256 — matches the
+- **Fingerprint:** `sha256(spkiB64)[:16]` via pointycastle SHA-256. Matches the
   server and web formulas exactly.
 - **Sign:** pointycastle `ECDSASigner(SHA-256)`; take the `ECSignature(r, s)`,
   serialize as raw `r||s` (each 32-byte big-endian, left-zero-padded), base64.
@@ -104,16 +104,16 @@ abstract class GuestKeyStore {
 }
 ```
 
-- `SecureGuestKeyStore` — wraps `flutter_secure_storage`.
-- `FileGuestKeyStore` — JSON file at `~/.skchat-app/guest_identity.json`, `0600`,
+- `SecureGuestKeyStore`: wraps `flutter_secure_storage`.
+- `FileGuestKeyStore`: JSON file at `~/.skchat-app/guest_identity.json`, `0600`,
   atomic write (temp + rename), via `path_provider` / `dart:io`.
-- `FallbackGuestKeyStore` — tries secure first; on any throw, delegates to file;
+- `FallbackGuestKeyStore`: tries secure first; on any throw, delegates to file;
   surfaces "both failed" so the impl can go degraded.
 - Tests inject an in-memory fake, so `flutter test` never touches a platform
   channel or the real filesystem.
 
 The impl takes an optional `GuestKeyStore` (defaults to the fallback chain), so
-construction is side-effect-free (no eager channel/file I/O — I/O happens on
+construction is side-effect-free (no eager channel/file I/O; I/O happens on
 `ensure`/`sign`/`clear`).
 
 ### Platform seam wiring
@@ -133,7 +133,7 @@ import 'guest_identity_stub.dart'
 `flutter test` runs on the Dart VM (has `dart:io`) → exercises the real io impl,
 which is why the store seam must be injectable for tests.
 
-### Component 2 — neutral build config
+### Component 2: neutral build config
 
 - **Code defaults go neutral.** Change the `String.fromEnvironment` defaults in
   `backend_config.dart` (and any sibling `SKCHAT_WEBUI_URL` default, e.g.
@@ -155,7 +155,7 @@ which is why the store seam must be injectable for tests.
   repo) but the point is that it is now *opt-in at build time*, not the code
   default.
 
-### Component 3 — operator linux build + media parity
+### Component 3: operator linux build + media parity
 
 - `scripts/build-linux-lumina.sh`: `flutter build linux --release
   --dart-define-from-file=config/lumina.json`. Confirms the pinned
@@ -206,8 +206,8 @@ native keystore + neutral build config + operator linux build/smoke.
 
 - **libsecret at runtime:** flutter_secure_storage's Linux backend needs the
   Secret Service; the file fallback covers the box where it is missing. The
-  fallback file is protected by `0600` perms only (not the OS keyring) — an
-  accepted trade for "operator stays green on any Linux box."
+  fallback file is protected by `0600` perms only (not the OS keyring). This is
+  an accepted trade for "operator stays green on any Linux box."
 - **P1363 vs DER:** we emit raw `r||s`; the server accepts it. If a future
   server tightens to DER-only, switch the serializer to `asn1lib`
   `ECDSASignature` DER (the server already accepts DER, so this is a one-line

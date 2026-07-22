@@ -35,6 +35,7 @@ class NativeGuestIdentity implements GuestIdentity {
   final GuestKeyStore _store;
   GuestKeypair? _cached;
   ECPrivateKey? _degradedPriv; // only set on the degraded path
+  ECPrivateKey? _priv; // cached scalar for the persisted (non-degraded) path
 
   @override
   Future<bool> hasCached() async {
@@ -71,6 +72,7 @@ class NativeGuestIdentity implements GuestIdentity {
       await _store.write(_kPrivKey, base64.encode(_bytes32(priv.d!)));
       await _store.write(_kPubKey, spkiB64);
 
+      _priv = priv;
       return _cached = GuestKeypair(publicKeyB64: spkiB64, fingerprint: fp);
     } catch (_) {
       // Storage unavailable (no Secret Service AND file write blocked). Return
@@ -91,7 +93,10 @@ class NativeGuestIdentity implements GuestIdentity {
   @override
   Future<String> sign(String data) async {
     await ensure();
-    final priv = _degradedPriv ?? await _loadPriv();
+    // Prefer the in-memory scalar (degraded, then already-cached) so a
+    // resolved key is never re-read from the store on every call; cache the
+    // store-loaded key the first time so subsequent signs stay in-memory.
+    final priv = _degradedPriv ?? _priv ?? (_priv = await _loadPriv());
     final e = SHA256Digest().process(Uint8List.fromList(utf8.encode(data)));
     final signer = ECDSASigner()
       ..init(
@@ -109,6 +114,7 @@ class NativeGuestIdentity implements GuestIdentity {
   Future<void> clear() async {
     _cached = null;
     _degradedPriv = null;
+    _priv = null;
     try {
       await _store.delete(_kPrivKey);
       await _store.delete(_kPubKey);
@@ -130,7 +136,11 @@ class NativeGuestIdentity implements GuestIdentity {
   }
 
   Future<ECPrivateKey> _loadPriv() async {
-    final d = _fromBytes(base64.decode((await _store.read(_kPrivKey))!));
+    final raw = await _store.read(_kPrivKey);
+    if (raw == null) {
+      throw StateError('device private key missing from keystore');
+    }
+    final d = _fromBytes(base64.decode(raw));
     return ECPrivateKey(d, ECCurve_secp256r1());
   }
 
