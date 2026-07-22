@@ -34,6 +34,7 @@ import '../../features/join/join_screen.dart';
 import '../../features/guest/guest_landing_screen.dart';
 import '../../features/join/mode_c_review_screen.dart';
 import '../../services/join_service.dart';
+import '../../services/backend_config.dart';
 
 /// Named route paths.
 class AppRoutes {
@@ -181,11 +182,28 @@ class AppRoutes {
   }
 }
 
+/// When the backend is unconfigured (neutral build, empty web-ui URL),
+/// send the user to the server picker (Profile) so they choose an instance
+/// before any client hits an empty base URL. Returns null to proceed.
+/// The profile route itself is always allowed through (no redirect loop).
+String? backendSetupRedirect({
+  required String webuiUrl,
+  required String currentLocation,
+}) {
+  if (webuiUrl.trim().isNotEmpty) return null;
+  if (currentLocation == AppRoutes.profile) return null;
+  return AppRoutes.profile;
+}
+
 /// GoRouter provider, uses shell routes for the bottom nav structure.
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: AppRoutes.chats,
     debugLogDiagnostics: false,
+    redirect: (context, state) => backendSetupRedirect(
+      webuiUrl: ref.read(backendConfigProvider).skchatWebuiUrl,
+      currentLocation: state.matchedLocation,
+    ),
     routes: [
       ShellRoute(
         builder: (context, state, child) => AppShell(child: child),

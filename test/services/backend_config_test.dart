@@ -30,6 +30,19 @@ void main() {
     });
   });
 
+  group("neutral build defaults", () {
+    test("neutral build ships an empty skchat web-ui default (no baked host)",
+        () {
+      expect(kDefaultSkchatWebuiUrl, isEmpty);
+    });
+
+    test("a lumina preset still points at .158 (opt-in, not the default)",
+        () {
+      final lumina = kBackendPresets.firstWhere((p) => p.id == "lumina");
+      expect(lumina.config.skchatWebuiUrl, contains("noroc2027"));
+    });
+  });
+
   group("presets", () {
     test("lumina + jarvis presets resolve by id", () {
       expect(presetById("lumina")?.label, "lumina @ .158");
