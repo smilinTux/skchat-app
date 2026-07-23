@@ -9,6 +9,23 @@ import 'package:skchat/features/groups/groups_provider.dart';
 import 'package:skchat/models/conversation.dart';
 import 'package:skchat/services/daemon_service.dart';
 import 'package:skchat/services/skcomms_client.dart';
+import 'package:skchat/services/peer_trust_store.dart';
+import 'package:skchat/features/identity/widgets/trust_badge.dart';
+
+/// In-memory trust store so the tier resolver is Hive-free under widget-test
+/// fake async (real Hive I/O never completes and would stick the tier provider
+/// on AsyncLoading, masking the real render).
+class _MemTrustStore implements PeerTrustStore {
+  final Map<String, PeerTrustRecord> _m = {};
+  @override
+  Future<Map<String, PeerTrustRecord>> load() async => _m;
+  @override
+  Future<void> save(Map<String, PeerTrustRecord> records) async {
+    _m
+      ..clear()
+      ..addAll(records);
+  }
+}
 
 class _MockClient extends Mock implements SKCommsClient {}
 
@@ -36,6 +53,7 @@ Widget _wrapInfo({
   required _MockRepo repo,
   required List<GroupMemberInfo> members,
   String groupId = 'g-1',
+  List<Override> extraOverrides = const [],
 }) {
   final router = GoRouter(
     initialLocation: '/groups/$groupId/info',
@@ -59,6 +77,7 @@ Widget _wrapInfo({
           .overrideWithValue(DaemonService(identity: 'chef@skworld.io')),
       groupsProvider.overrideWith(() => _FakeGroupsNotifier([_group(groupId)])),
       groupMembersProvider(groupId).overrideWith((ref) async => members),
+      ...extraOverrides,
     ],
     child: MaterialApp.router(routerConfig: router),
   );
@@ -87,6 +106,7 @@ void main() {
         'role': 'admin',
         'participant_type': 'agent',
         'is_online': true,
+        'soul_fingerprint': '02BC0EB3CAD31DB691A753C70C5629AB893F9746',
       };
 
       final member = GroupMemberInfo.fromJson(json);
@@ -96,6 +116,16 @@ void main() {
       expect(member.role, MemberRole.admin);
       expect(member.participantType, ParticipantType.agent);
       expect(member.isOnline, true);
+      expect(member.soulFingerprint, '02BC0EB3CAD31DB691A753C70C5629AB893F9746');
+    });
+
+    test('fromJson reads the fingerprint alias when soul_fingerprint absent', () {
+      final member = GroupMemberInfo.fromJson({
+        'identity_uri': 'capauth://steward',
+        'display_name': 'Steward',
+        'fingerprint': '4E06A71935D1DF1FB9848112D8634AB3E7B55236',
+      });
+      expect(member.soulFingerprint, '4E06A71935D1DF1FB9848112D8634AB3E7B55236');
     });
 
     test('fromJson handles missing fields with defaults', () {
@@ -270,6 +300,68 @@ void main() {
 
       verify(() => client.deleteGroup('g-1')).called(1);
       expect(find.text('GROUPS LIST'), findsOneWidget);
+    });
+  });
+
+  group('Per-member trust badge (M1b)', () {
+    late _MockClient client;
+    late _MockRepo repo;
+
+    setUp(() {
+      client = _MockClient();
+      repo = _MockRepo();
+      when(() => repo.save(any())).thenAnswer((_) async {});
+    });
+
+    testWidgets('a member with a real capauth key shows a trust badge',
+        (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'steward@skworld.io',
+            displayName: 'Steward',
+            role: MemberRole.member,
+            soulFingerprint: '4E06A71935D1DF1FB9848112D8634AB3E7B55236',
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      // Exactly one keyed member (Steward) → exactly one badge. Chef here has
+      // no fingerprint, so no badge for him.
+      expect(find.byType(TrustBadge), findsOneWidget);
+    });
+
+    testWidgets('a keyless member shows no badge', (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TrustBadge), findsNothing);
     });
   });
 }
