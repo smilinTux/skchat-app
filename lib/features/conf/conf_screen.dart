@@ -9,6 +9,8 @@ import "../../core/theme/sovereign_colors.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/self_identity_provider.dart";
+import "../../services/peer_trust_store.dart";
+import "../identity/widgets/trust_badge.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
@@ -893,7 +895,7 @@ class _WaitingTile extends StatelessWidget {
   }
 }
 
-class _ParticipantTile extends StatelessWidget {
+class _ParticipantTile extends ConsumerWidget {
   const _ParticipantTile({
     required this.snapshot,
     required this.isHost,
@@ -905,10 +907,23 @@ class _ParticipantTile extends StatelessWidget {
   final VoidCallback? onAgentRemove;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final soul = SovereignColors.fromFingerprint(snapshot.identity);
     final initials =
         snapshot.identity.isNotEmpty ? snapshot.identity[0].toUpperCase() : "?";
+    // Per-participant trust tier from the server-set soul_fingerprint (M1b).
+    // A missing/keyless fingerprint resolves to `unverifiable` -> no badge.
+    final tier = ref
+        .watch(peerTrustTierProvider((
+          peerId: snapshot.identity,
+          fingerprint: snapshot.soulFingerprint,
+        )))
+        .valueOrNull;
+    // Never badge your own tile ("You"): the TOFU store has no self record, so
+    // it would resolve red ("Untrusted") on your own device, which is wrong and
+    // desensitizes users to the red badge that flags genuinely-unverified peers.
+    final showBadge = !snapshot.isLocal &&
+        (tier == PeerTrustTier.red || tier == PeerTrustTier.amber);
     return Semantics(
       label: "${snapshot.identity}"
           "${snapshot.isLocal ? " (you)" : ""}"
@@ -962,15 +977,27 @@ class _ParticipantTile extends StatelessWidget {
             const SizedBox(height: 8),
             SizedBox(
               width: 76,
-              child: Text(
-                snapshot.isLocal ? "You" : snapshot.identity,
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: SovereignColors.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      snapshot.isLocal ? "You" : snapshot.identity,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: SovereignColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (showBadge) ...[
+                    const SizedBox(width: 4),
+                    TrustBadge(tier: selfTierForPeer(tier!), compact: true),
+                  ],
+                ],
               ),
             ),
             // Connection-quality signal bars (subtle; hidden until known).

@@ -7,6 +7,8 @@ import "package:livekit_client/livekit_client.dart";
 
 import "../../core/theme/sovereign_colors.dart";
 import "../../services/livekit_call_service.dart";
+import "../../services/peer_trust_store.dart";
+import "../identity/widgets/trust_badge.dart";
 import "../../services/spaces_service.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/reactions.dart";
@@ -1343,7 +1345,7 @@ class _WatchStage extends StatelessWidget {
 }
 
 /// A speaker avatar with a soul-colored ring that pulses when speaking.
-class _SpeakerRing extends StatelessWidget {
+class _SpeakerRing extends ConsumerWidget {
   const _SpeakerRing({
     required this.snapshot,
     required this.isHost,
@@ -1355,13 +1357,24 @@ class _SpeakerRing extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final mediaReduced =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final soul = _soulColorFor(snapshot.identity);
     final speaking = snapshot.isSpeaking;
     final initials =
         snapshot.identity.isNotEmpty ? snapshot.identity[0].toUpperCase() : "?";
+    // Per-speaker trust tier from the server-set soul_fingerprint (M1b). A
+    // missing/keyless fingerprint resolves to `unverifiable` -> no badge.
+    final tier = ref
+        .watch(peerTrustTierProvider((
+          peerId: snapshot.identity,
+          fingerprint: snapshot.soulFingerprint,
+        )))
+        .valueOrNull;
+    // Never badge your own tile ("You") — no self record -> false red.
+    final showBadge = !snapshot.isLocal &&
+        (tier == PeerTrustTier.red || tier == PeerTrustTier.amber);
 
     final ringWidth = speaking ? 3.5 : 2.0;
 
@@ -1429,15 +1442,27 @@ class _SpeakerRing extends StatelessWidget {
             const SizedBox(height: 8),
             SizedBox(
               width: 80,
-              child: Text(
-                snapshot.isLocal ? "You" : snapshot.identity,
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: SovereignColors.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      snapshot.isLocal ? "You" : snapshot.identity,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: SovereignColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (showBadge) ...[
+                    const SizedBox(width: 4),
+                    TrustBadge(tier: selfTierForPeer(tier!), compact: true),
+                  ],
+                ],
               ),
             ),
             if (isHost)
