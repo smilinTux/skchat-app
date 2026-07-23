@@ -8,6 +8,8 @@ import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
 import '../../services/skcomms_client.dart';
+import '../../services/peer_trust_store.dart';
+import '../identity/widgets/trust_badge.dart';
 import '../../services/guest_group_service.dart';
 import '../chats/chats_provider.dart';
 import 'groups_provider.dart';
@@ -21,6 +23,7 @@ class GroupMemberInfo {
     this.participantType = ParticipantType.human,
     this.isOnline = false,
     this.soulColor,
+    this.soulFingerprint,
   });
 
   final String identityUri;
@@ -30,6 +33,11 @@ class GroupMemberInfo {
   final bool isOnline;
   final Color? soulColor;
 
+  /// This member's real capauth fingerprint (from the peer store, server-side),
+  /// used to anchor a per-member trust badge via [peerTrustTierProvider]. Null
+  /// or empty for a member with no known key (keyless -> no badge).
+  final String? soulFingerprint;
+
   /// Parse a member from the daemon's JSON response.
   factory GroupMemberInfo.fromJson(Map<String, dynamic> json) {
     return GroupMemberInfo(
@@ -38,6 +46,9 @@ class GroupMemberInfo {
       role: _parseRole(json['role'] as String?),
       participantType: _parseParticipantType(json['participant_type'] as String?),
       isOnline: json['is_online'] as bool? ?? false,
+      // Server emits both the conversation key and the peer alias; read either.
+      soulFingerprint: (json['soul_fingerprint'] as String?) ??
+          (json['fingerprint'] as String?),
     );
   }
 
@@ -99,6 +110,7 @@ final groupMembersProvider =
           : member.participantType,
       isOnline: member.isOnline,
       soulColor: soul,
+      soulFingerprint: member.soulFingerprint,
     );
   }).toList();
 });
@@ -1036,7 +1048,7 @@ class GroupInfoScreen extends ConsumerWidget {
 }
 
 /// Tile widget for a single group member.
-class _MemberTile extends StatelessWidget {
+class _MemberTile extends ConsumerWidget {
   const _MemberTile({
     required this.member,
     this.onRemove,
@@ -1048,10 +1060,20 @@ class _MemberTile extends StatelessWidget {
   final VoidCallback? onChangeRole;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tt = Theme.of(context).textTheme;
     final soul = member.soulColor ??
         SovereignColors.fromFingerprint(member.identityUri);
+
+    // Per-member trust tier (same anchor as a 1:1 peer). The provider resolves a
+    // missing/keyless/peerId-fallback fingerprint to `unverifiable`, so gating on
+    // the TIER (not just a non-empty string) keeps a keyless member badge-free.
+    final tier = ref
+        .watch(peerTrustTierProvider(
+            (peerId: member.identityUri, fingerprint: member.soulFingerprint)))
+        .valueOrNull;
+    final showBadge =
+        tier == PeerTrustTier.red || tier == PeerTrustTier.amber;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 3),
@@ -1073,9 +1095,23 @@ class _MemberTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    member.displayName,
-                    style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          member.displayName,
+                          style: tt.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (showBadge) ...[
+                        const SizedBox(width: 6),
+                        TrustBadge(
+                            tier: selfTierForPeer(tier!), compact: true),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Row(
