@@ -73,6 +73,7 @@ class LiveKitParticipantSnapshot {
     this.isSpeaking = false,
     this.connectionQuality = ConnectionQuality.unknown,
     this.metadata,
+    this.soulFingerprint,
   });
 
   final String identity;
@@ -141,6 +142,29 @@ class LiveKitParticipantSnapshot {
 
   /// Raw participant metadata JSON (as written by the Space moderation API).
   final String? metadata;
+
+  /// This participant's capauth fingerprint, set by the server at token mint and
+  /// carried in the participant metadata (M1b trust badges). Null/empty for an
+  /// unknown/guest participant (keyless -> no badge). Because a guest lacks the
+  /// `can_update_own_metadata` grant, this is unspoofable client-side.
+  final String? soulFingerprint;
+
+  /// Parse the server-set `soul_fingerprint` out of a participant metadata JSON
+  /// blob. Defensive (same contract as [parseHandRaised]): any missing key,
+  /// non-object payload, or malformed JSON yields null (keyless).
+  static String? parseSoulFingerprint(String? metadata) {
+    if (metadata == null || metadata.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(metadata);
+      if (decoded is Map<String, dynamic>) {
+        final fp = decoded['soul_fingerprint'];
+        if (fp is String && fp.isNotEmpty) return fp;
+      }
+    } on FormatException {
+      // Malformed metadata, treat as keyless.
+    }
+    return null;
+  }
 
   /// Parse the `hand_raised` boolean out of a participant metadata JSON blob.
   ///
@@ -1397,6 +1421,7 @@ class LiveKitCallService {
       isSpeaking: p.isSpeaking,
       connectionQuality: p.connectionQuality,
       metadata: p.metadata,
+      soulFingerprint: LiveKitParticipantSnapshot.parseSoulFingerprint(p.metadata),
     );
   }
 
@@ -1417,6 +1442,7 @@ class LiveKitCallService {
       isSpeaking: p.isSpeaking,
       connectionQuality: p.connectionQuality,
       metadata: p.metadata,
+      soulFingerprint: LiveKitParticipantSnapshot.parseSoulFingerprint(p.metadata),
     );
   }
 

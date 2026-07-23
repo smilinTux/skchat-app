@@ -254,4 +254,34 @@ void main() {
       expect(snap.canPublishVideo, isTrue);
     });
   });
+
+  group('LiveKitParticipantSnapshot.parseSoulFingerprint', () {
+    test('reads a real soul_fingerprint from participant metadata', () {
+      expect(
+        LiveKitParticipantSnapshot.parseSoulFingerprint(
+            '{"soul_fingerprint":"4E06A71935D1DF1FB9848112D8634AB3E7B55236"}'),
+        '4E06A71935D1DF1FB9848112D8634AB3E7B55236',
+      );
+    });
+
+    test('survives alongside the stage flags (round-tripped metadata)', () {
+      expect(
+        LiveKitParticipantSnapshot.parseSoulFingerprint(
+            '{"hand_raised":true,"invited_to_stage":true,"soul_fingerprint":"ABC123"}'),
+        'ABC123',
+      );
+    });
+
+    test('null / empty / malformed / missing-key / empty-value all yield null', () {
+      expect(LiveKitParticipantSnapshot.parseSoulFingerprint(null), isNull);
+      expect(LiveKitParticipantSnapshot.parseSoulFingerprint(''), isNull);
+      expect(LiveKitParticipantSnapshot.parseSoulFingerprint('not json'), isNull);
+      expect(LiveKitParticipantSnapshot.parseSoulFingerprint('[1,2,3]'), isNull);
+      expect(LiveKitParticipantSnapshot.parseSoulFingerprint('{}'), isNull);
+      expect(
+        LiveKitParticipantSnapshot.parseSoulFingerprint('{"soul_fingerprint":""}'),
+        isNull,
+      );
+    });
+  });
 }

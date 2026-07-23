@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
+import '../../services/peer_trust_store.dart';
+import '../identity/widgets/trust_badge.dart';
 import '../../services/recordings_service.dart';
 import '../call_shared/call_elapsed_timer.dart';
 import '../call_shared/connection_quality_bars.dart';
@@ -969,7 +971,7 @@ class _EmptyRoomPlaceholder extends StatelessWidget {
 // ── Participant tile ───────────────────────────────────────────────────────
 
 /// One tile in the grid, video or avatar fallback.
-class _ParticipantTile extends StatelessWidget {
+class _ParticipantTile extends ConsumerWidget {
   const _ParticipantTile({
     required this.snapshot,
     required this.room,
@@ -981,8 +983,18 @@ class _ParticipantTile extends StatelessWidget {
   final bool fullScreen;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final soul = _soulColorFor(snapshot.identity);
+    // Per-participant trust tier from the server-set soul_fingerprint (M1b).
+    final trustTier = ref
+        .watch(peerTrustTierProvider((
+          peerId: snapshot.identity,
+          fingerprint: snapshot.soulFingerprint,
+        )))
+        .valueOrNull;
+    // Never badge your own tile ("(you)") — no self record -> false red.
+    final showTrustBadge = !snapshot.isLocal &&
+        (trustTier == PeerTrustTier.red || trustTier == PeerTrustTier.amber);
     final videoTrack = _resolveVideoTrack();
     // Active-speaker highlight: a brighter, thicker soul-color ring while the
     // participant is speaking (LiveKit audio-level detection).
@@ -1071,6 +1083,11 @@ class _ParticipantTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  if (showTrustBadge) ...[
+                    const SizedBox(width: 4),
+                    TrustBadge(
+                        tier: selfTierForPeer(trustTier!), compact: true),
+                  ],
                   // Connection-quality signal bars (subtle; hidden until known).
                   ConnectionQualityBars(quality: snapshot.connectionQuality),
                   // Mic icon.
