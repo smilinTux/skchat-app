@@ -54,6 +54,26 @@ abstract class GuestIdentity {
   Future<void> clear();
 }
 
+/// Optional capability mixed into a [GuestIdentity] whose private key can be
+/// exported as a BIP39 recovery phrase and restored onto another (new/wiped)
+/// device. ONLY the native device keystore implements this: it holds the raw
+/// 32-byte P-256 scalar, so it can encode + reconstruct the exact keypair. The
+/// web build (non-extractable WebCrypto keys) and the stub deliberately do not
+/// implement it, so a caller gates the feature with `is RecoverableIdentity`.
+abstract class RecoverableIdentity {
+  /// The 24-word BIP39 recovery phrase for THIS device's private key. Anyone
+  /// holding these words can reconstruct the identity, so a caller must gate
+  /// the reveal (e.g. biometric). Throws if the key is not persisted (a
+  /// degraded, in-memory-only identity has nothing durable to back up).
+  Future<List<String>> exportRecoveryPhrase();
+
+  /// Reconstruct + persist the keypair encoded by [words], replacing whatever
+  /// this identity currently holds. Validates the BIP39 checksum AND that the
+  /// decoded scalar is a valid P-256 private key (1 <= d < n); throws
+  /// otherwise. Returns the restored public key material.
+  Future<GuestKeypair> restoreFromRecoveryPhrase(List<String> words);
+}
+
 /// The platform [GuestIdentity]: real WebCrypto on web, a real persistent
 /// keystore on native, and the in-memory stub only when neither is compiled.
 GuestIdentity createGuestIdentity() => impl.createGuestIdentity();

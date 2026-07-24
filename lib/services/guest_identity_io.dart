@@ -11,6 +11,7 @@ import 'package:asn1lib/asn1lib.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pointycastle/export.dart';
 
+import 'device_recovery_codec.dart';
 import 'guest_identity.dart';
 import 'guest_key_store.dart';
 
@@ -19,7 +20,7 @@ const _kPubKey = 'skchat.guest.pub_spki'; // publicKeyB64 (DER SPKI base64)
 
 GuestIdentity createGuestIdentity() => NativeGuestIdentity();
 
-class NativeGuestIdentity implements GuestIdentity {
+class NativeGuestIdentity implements GuestIdentity, RecoverableIdentity {
   NativeGuestIdentity({GuestKeyStore? store})
     : _store =
           store ??
@@ -55,6 +56,31 @@ class NativeGuestIdentity implements GuestIdentity {
       final pubB64 = await _store.read(_kPubKey);
       final privB64 = await _store.read(_kPrivKey);
       if (pubB64 != null && privB64 != null) {
+        // Self-heal a private/public MISMATCH: the priv and pub are two separate
+        // store writes (enrollment and restore), so a partial write (priv
+        // persisted, pub write failed) could leave a stale pub that silently
+        // advertises one identity while sign() uses another. The private scalar
+        // is the source of truth: derive Q = d·G from it and, on mismatch,
+        // rewrite the correct pub. Runs once (then _cached short-circuits).
+        try {
+          final d = _fromBytes(base64.decode(privB64));
+          final domain = ECCurve_secp256r1();
+          if (d >= BigInt.one && d < domain.n) {
+            final derivedPub =
+                base64.encode(_spkiDer(ECPublicKey(domain.G * d, domain)));
+            if (derivedPub != pubB64) {
+              await _store.write(_kPubKey, derivedPub);
+              _priv = ECPrivateKey(d, domain);
+              return _cached = GuestKeypair(
+                publicKeyB64: derivedPub,
+                fingerprint: _fingerprint(derivedPub),
+              );
+            }
+          }
+        } catch (_) {
+          // Malformed stored priv: fall through to trusting the stored pub
+          // (sign() will surface any real key problem).
+        }
         return _cached = GuestKeypair(
           publicKeyB64: pubB64,
           fingerprint: _fingerprint(pubB64),
@@ -121,6 +147,71 @@ class NativeGuestIdentity implements GuestIdentity {
     } catch (_) {
       // Nothing persisted (degraded), nothing to clear.
     }
+  }
+
+  // ── recovery phrase (RecoverableIdentity) ──────────────────────────────
+  @override
+  Future<List<String>> exportRecoveryPhrase() async {
+    await ensure();
+    // Only a DURABLE key can be truthfully "backed up". A degraded, in-memory
+    // key (storage unavailable) has nothing persisted, and its scalar dies on
+    // reload, so refuse rather than hand out a phrase that restores nothing
+    // useful. Read the persisted scalar bytes so the phrase encodes exactly
+    // what is on disk (32-byte big-endian d), not a re-derived copy.
+    String? raw;
+    try {
+      raw = await _store.read(_kPrivKey);
+    } catch (_) {
+      raw = null;
+    }
+    if (raw == null || _degradedPriv != null) {
+      throw const RecoveryPhraseException(
+        'This identity is temporary and cannot be backed up. Enroll on a '
+        'device with working secure storage first.',
+      );
+    }
+    final scalar = base64.decode(raw);
+    if (scalar.length != 32) {
+      throw const RecoveryPhraseException(
+        'stored device key is malformed (expected a 32-byte scalar)',
+      );
+    }
+    return DeviceRecoveryCodec.entropyToWords(Uint8List.fromList(scalar));
+  }
+
+  @override
+  Future<GuestKeypair> restoreFromRecoveryPhrase(List<String> words) async {
+    // Tolerate casing / stray spaces on individual entries; the codec itself
+    // validates the BIP39 checksum, word membership, and 24-word length.
+    final cleaned = words.map((w) => w.trim().toLowerCase()).toList();
+    final entropy = DeviceRecoveryCodec.wordsToEntropy(cleaned);
+
+    final d = _fromBytes(entropy);
+    final domain = ECCurve_secp256r1();
+    final n = domain.n;
+    // A checksum-valid phrase can still decode to a scalar outside the valid
+    // P-256 private-key range [1, n). Reject those: d == 0 has no inverse and
+    // d >= n is not a group element, either would corrupt signing.
+    if (d < BigInt.one || d >= n) {
+      throw const RecoveryPhraseException(
+        'This recovery phrase does not encode a valid device key. Re-check '
+        'the words (a typo can pass the checksum yet be out of range).',
+      );
+    }
+
+    final priv = ECPrivateKey(d, domain);
+    final q = domain.G * d; // public point Q = d·G
+    final pub = ECPublicKey(q, domain);
+    final spkiB64 = base64.encode(_spkiDer(pub));
+    final fp = _fingerprint(spkiB64);
+
+    // Persist the reconstructed key (same layout ensure() writes), then adopt
+    // it in-memory so subsequent sign()/ensure() use the restored identity.
+    await _store.write(_kPrivKey, base64.encode(_bytes32(d)));
+    await _store.write(_kPubKey, spkiB64);
+    _priv = priv;
+    _degradedPriv = null;
+    return _cached = GuestKeypair(publicKeyB64: spkiB64, fingerprint: fp);
   }
 
   // ── crypto helpers ─────────────────────────────────────────────────────
