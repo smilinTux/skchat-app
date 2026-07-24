@@ -1,13 +1,54 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/router/app_router.dart';
-import '../../features/calls/call_provider.dart';
+import '../../features/calls/incoming_call_watcher.dart';
+import '../../features/calls/widgets/incoming_call_banner.dart';
 import '../../features/calls/widgets/pip_overlay.dart';
-import '../../models/call_state.dart';
 import '../../services/skcomms_sync.dart';
 import 'app_drawer_sheet.dart';
+
+/// How often [_IncomingCallPoller] calls [IncomingCallWatcher.pollOnce] while
+/// the shell is mounted (foreground only; no background/isolate polling).
+const _incomingCallPollInterval = Duration(seconds: 4);
+
+/// Thin `ConsumerStatefulWidget` wrapper that owns the foreground poll
+/// [Timer] for incoming calls. A stateless `ref.listen` cannot start/cancel a
+/// periodic timer tied to the widget lifecycle, so this small wrapper holds
+/// it: started in [initState], cancelled in [dispose]. Renders [child]
+/// unchanged, so it adds no visual footprint to [AppShell].
+class _IncomingCallPoller extends ConsumerStatefulWidget {
+  const _IncomingCallPoller({required this.child});
+
+  final Widget child;
+
+  @override
+  ConsumerState<_IncomingCallPoller> createState() => _IncomingCallPollerState();
+}
+
+class _IncomingCallPollerState extends ConsumerState<_IncomingCallPoller> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(_incomingCallPollInterval, (_) {
+      ref.read(incomingCallWatcherProvider).pollOnce();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 /// AppShell wraps all main tab screens with the Sovereign Glass bottom nav bar.
 /// Shows a subtle offline banner when the SKComms daemon is unreachable.
@@ -75,19 +116,8 @@ class AppShell extends ConsumerWidget {
     final daemonState = ref.watch(skcommsSyncProvider);
     final isOffline = daemonState.status == DaemonStatus.offline;
 
-    // Navigate to incoming call screen when a call arrives from any tab.
-    ref.listen<CallState?>(callProvider, (prev, next) {
-      if (next == null) return;
-      if (next.status == CallStatus.ringing && next.isIncoming) {
-        // Only push if not already on a call screen.
-        final location = GoRouterState.of(context).matchedLocation;
-        if (!location.startsWith('/call/')) {
-          context.push(AppRoutes.incomingCallPath(next.peerId));
-        }
-      }
-    });
-
-    return PiPOverlay(
+    return _IncomingCallPoller(
+      child: PiPOverlay(
       child: Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       // extendBody must stay FALSE. When true, each child screen's body (and
@@ -102,6 +132,9 @@ class AppShell extends ConsumerWidget {
       extendBody: false,
       body: Column(
         children: [
+          // Ringing incoming-call banner (Accept/Decline). Sits above the
+          // offline banner so a ring is never buried under it.
+          const IncomingCallBanner(),
           // Offline banner, shown when daemon is unreachable.
           if (isOffline)
             Material(
@@ -226,7 +259,8 @@ class AppShell extends ConsumerWidget {
         ),
       ),
       ),  // end Scaffold
-    );    // end PiPOverlay
+      ),    // end PiPOverlay
+    );      // end _IncomingCallPoller
   }
 }
 

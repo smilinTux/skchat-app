@@ -256,11 +256,10 @@ enum ScreenShareFrameRate {
 
 // ── Service ────────────────────────────────────────────────────────────────
 
-/// LiveKit SFU call service, group and agent room calls.
-///
-/// Use this alongside [WebRTCCallService] (direct P2P tier):
-/// - **P2P** ([WebRTCCallService]): two-party calls, low-latency, no server.
-/// - **SFU** ([LiveKitCallService]): group rooms, agent broadcast, recording.
+/// LiveKit SFU call service, the single funnel for calling: 1:1 calls (via
+/// [CallSession]), group rooms, and agent broadcast/recording all drive this.
+/// The legacy direct-P2P WebRTC tier (`WebRTCCallService`) was retired; every
+/// call now rings and connects through a server-derived room + minted token.
 ///
 /// Typical usage:
 /// ```dart

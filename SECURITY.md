@@ -102,6 +102,26 @@ with no realizable client-side impact, and issues already noted in
   end-to-end encrypted. Do not treat Spaces lane content as E2E-confidential.
 - **Token handling:** room JWTs are held in memory only for the call session.
 
+### 3a. Call signaling (ringing, in-thread calling Phase 2)
+- Ringing for a 1:1 call rides the server's signed `CALL_INVITE` (the
+  `/call/start`, `/call/answer`, `/call/incoming` routes), with an anti-spoof
+  `from_fqid` cross-check against the signature so a caller cannot ring as
+  someone else's identity.
+- The 1:1 verify-before-call gate (`canCall` plus the trust/verify sheet) is
+  unchanged: placing a call is still gated on the same peer-verification
+  state as before this feature.
+- Server-side, `/call/start`, `/call/answer`, and `/call/incoming` are now
+  gated by the same `_gate_token_mint` check as `/livekit/token`
+  (loopback/tailnet, or a valid `SKCHAT_GUEST_OPERATOR_TOKEN` off-tailnet),
+  closing a gap where those routes minted a full-publish LiveKit JWT (or, for
+  `/call/incoming`, disclosed who is calling whom) with no auth check at all
+  (see skchat `CHANGELOG.md`).
+- Call media stays DTLS-SRTP (see §3 above): this change is about who may
+  ring or mint a call token, not the media transport.
+- Retiring the `__CALL_REQUEST__` chat-sentinel path (the old client-side
+  trick of sending a special chat message to start a call) removes a second,
+  unauthenticated way to trigger a call and reduces client attack surface.
+
 ### 4. Direct-message confidentiality
 - 1:1 DMs may be sealed with `PqDmCodec` (hybrid `x25519-mlkem768` KEM +
   HKDF-SHA256 + AES-256-GCM) via `sk_pqc`, interoperable with the daemon's
