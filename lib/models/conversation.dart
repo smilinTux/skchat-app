@@ -1,6 +1,36 @@
 import 'package:flutter/material.dart';
 import '../core/theme/sovereign_colors.dart';
 
+/// One participant of a group conversation, carrying the identity plus the
+/// real capauth soul-fingerprint needed to anchor a per-member trust tier
+/// (and the folded aggregate group badge). Mirrors GroupMemberInfo's parse
+/// keys so the server emits ONE member shape for both /groups/:id/members and
+/// the participants embedded in /conversations.
+class ConversationMember {
+  const ConversationMember({
+    required this.identityUri,
+    required this.displayName,
+    this.soulFingerprint,
+  });
+
+  final String identityUri;
+  final String displayName;
+
+  /// Real capauth fingerprint from the peer store (server-resolved). Null or
+  /// empty for a keyless member (keyless means no badge, never a fabricated key).
+  final String? soulFingerprint;
+
+  factory ConversationMember.fromJson(Map<String, dynamic> json) {
+    return ConversationMember(
+      identityUri: json['identity_uri'] as String? ?? '',
+      displayName: json['display_name'] as String? ?? '',
+      // Server emits both the conversation-contract key and the peer alias.
+      soulFingerprint: (json['soul_fingerprint'] as String?) ??
+          (json['fingerprint'] as String?),
+    );
+  }
+}
+
 /// Represents a conversation thread (DM or group).
 class Conversation {
   const Conversation({
@@ -19,6 +49,7 @@ class Conversation {
     this.memberCount = 0,
     this.initials,
     this.avatarUrl,
+    this.members = const [],
   });
 
   final String peerId;
@@ -40,6 +71,10 @@ class Conversation {
   final int memberCount;
   final String? initials;
   final String? avatarUrl;
+
+  /// Group participants (empty for a 1:1). Populated from the server
+  /// `participants` array; drives the composite avatar + aggregate badge.
+  final List<ConversationMember> members;
 
   /// Resolved soul-color, derives from fingerprint if [soulColor] is not set.
   Color get resolvedSoulColor {
@@ -75,6 +110,7 @@ class Conversation {
     int? memberCount,
     String? initials,
     String? avatarUrl,
+    List<ConversationMember>? members,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -92,6 +128,7 @@ class Conversation {
       memberCount: memberCount ?? this.memberCount,
       initials: initials ?? this.initials,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      members: members ?? this.members,
     );
   }
 
@@ -111,6 +148,11 @@ class Conversation {
       isGroup: json['is_group'] as bool? ?? false,
       memberCount: json['member_count'] as int? ?? 0,
       avatarUrl: json['avatar_url'] as String?,
+      members: (json['participants'] as List<dynamic>?)
+              ?.map((e) =>
+                  ConversationMember.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
     );
   }
 }
