@@ -3,13 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/sovereign_colors.dart';
 import 'onboarding_provider.dart';
 import 'pages/welcome_page.dart';
-import 'pages/identity_page.dart';
-import 'pages/transport_page.dart';
-import 'pages/pair_page.dart';
+import 'pages/server_url_page.dart';
+import 'pages/identity_enroll_page.dart';
 import 'pages/complete_page.dart';
 
-/// Main onboarding wizard, a horizontal PageView with 5 pages, animated dot
-/// indicators, and Skip / Next navigation controls.
+/// Main onboarding wizard, a horizontal PageView (welcome -> server URL ->
+/// identity enrollment -> done), with animated dot indicators and Skip / Next
+/// navigation controls.
 ///
 /// Pass [onComplete] to receive a callback when the user taps "Enter SKChat"
 /// on the final page.
@@ -74,9 +74,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             },
             children: [
               WelcomePage(onNext: _next),
-              IdentityPage(onNext: _next),
-              TransportPage(onNext: _next),
-              PairPage(onNext: _next),
+              ServerUrlPage(onNext: _next),
+              IdentityEnrollPage(onNext: _next),
               CompletePage(onEnterChat: widget.onComplete),
             ],
           ),

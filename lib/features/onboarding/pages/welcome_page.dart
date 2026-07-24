@@ -12,8 +12,9 @@ class WelcomePage extends StatefulWidget {
 }
 
 class _WelcomePageState extends State<WelcomePage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _gradientController;
+  late AnimationController _fadeController;
   late Animation<double> _gradientAnimation;
   late Animation<double> _fadeIn;
 
@@ -30,11 +31,13 @@ class _WelcomePageState extends State<WelcomePage>
       curve: Curves.easeInOut,
     );
 
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..forward();
+
     _fadeIn = CurvedAnimation(
-      parent: AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 900),
-      )..forward(),
+      parent: _fadeController,
       curve: Curves.easeOut,
     );
   }
@@ -42,6 +45,7 @@ class _WelcomePageState extends State<WelcomePage>
   @override
   void dispose() {
     _gradientController.dispose();
+    _fadeController.dispose();
     super.dispose();
   }
 
