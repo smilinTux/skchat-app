@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 ## [Unreleased]
 
 ### Added
+- **1:1 calls now ring the peer (in-thread calling, Phase 2).** A call now
+  rings the callee via the server's signed `CALL_INVITE` (the `/call/*`
+  routes) instead of the retired `__CALL_REQUEST__` chat-sentinel path, is
+  minimizable to a floating pill without dropping the call, and flows through
+  one `CallSession` funnel shared by the outgoing/incoming/minimize/restore
+  paths (see `SECURITY.md` for the anti-spoof + gating notes).
 - **Unified conversation list.** Group conversations now render inline in the
   single Chats list alongside 1:1s, with a composite group avatar and one
   aggregate trust badge folded from each member's peer trust tier over the
