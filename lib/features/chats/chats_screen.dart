@@ -81,15 +81,6 @@ class ChatsScreen extends ConsumerWidget {
       title: Text('SKChat', style: tt.displayLarge?.copyWith(fontSize: 24)),
       actions: [
         const ToolbarModuleActions(),
-        // Direct, discoverable entry to the dedicated Groups list/section
-        // (the operator couldn't find a way to their groups, they were only
-        // mixed into the Chats list). Reachable from the primary screen.
-        IconButton(
-          key: const Key('chats-open-groups'),
-          icon: const Icon(Icons.groups_rounded),
-          tooltip: 'Groups',
-          onPressed: () => context.push(AppRoutes.groups),
-        ),
         IconButton(
           icon: const Icon(Icons.search_rounded),
           tooltip: 'Search',

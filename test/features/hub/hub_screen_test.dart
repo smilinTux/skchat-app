@@ -99,7 +99,6 @@ GoRouter _router() {
       GoRoute(path: "/cluster", builder: build(stub("CLUSTER"))),
       GoRoute(path: "/coord", builder: build(stub("COORD"))),
       GoRoute(path: "/recordings", builder: build(stub("RECORDINGS"))),
-      GoRoute(path: "/groups", builder: build(stub("GROUPS"))),
       // Captures the ConfArgs the Conferences tile builds (via `extra`) so
       // Task 7's identity-split assertions can inspect it directly, rather
       // than trying to reconstruct it from rendered text.
@@ -129,12 +128,9 @@ void main() {
     expect(find.text("Recordings"), findsOneWidget);
     expect(find.text("Conferences"), findsOneWidget);
 
-    // Groups + the new Contact Requests tile sit lower in the lazy list — scroll
-    // them into view before asserting (the list grew past one viewport).
+    // The Contact Requests tile sits lower in the lazy list: scroll it into
+    // view before asserting (the list grew past one viewport).
     final scrollable = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(find.text("Groups"), 200,
-        scrollable: scrollable);
-    expect(find.text("Groups"), findsOneWidget);
     await tester.scrollUntilVisible(find.text("Contact Requests"), 200,
         scrollable: scrollable);
     expect(find.text("Contact Requests"), findsOneWidget);

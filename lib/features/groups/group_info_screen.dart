@@ -1015,7 +1015,7 @@ class GroupInfoScreen extends ConsumerWidget {
                   content: Text('Removed locally (daemon offline).'),
                 ));
               }
-              if (context.mounted) context.go(AppRoutes.groups);
+              if (context.mounted) context.go(AppRoutes.chats);
             },
             child: const Text('Delete'),
           ),

@@ -93,13 +93,6 @@ class HubScreen extends ConsumerWidget {
         ),
       ),
       _OpsTile(
-        label: 'Groups',
-        description: 'Group chats & members',
-        icon: Icons.group_outlined,
-        accent: SovereignColors.soulChef,
-        onTap: () => context.go(AppRoutes.groups),
-      ),
-      _OpsTile(
         label: 'Contact Requests',
         description: pendingRequests > 0
             ? '$pendingRequests pending first-contact '

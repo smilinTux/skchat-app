@@ -453,7 +453,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   /// group-info screen) so there is no members-fetch spinner to hang on and the
   /// new group is immediately visible + tappable with a working back path.
   void _navigateToGroups(String? groupId) {
-    context.go(AppRoutes.groups);
+    context.go(AppRoutes.chats);
   }
 
   Future<void> _showKeyDistributionSheet(CreateGroupResult result) async {

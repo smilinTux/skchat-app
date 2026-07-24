@@ -59,7 +59,6 @@ Widget _app(String initialLocation, {Widget child = const _FabChild()}) {
             AppRoutes.skmap,
             AppRoutes.coord,
             AppRoutes.recordings,
-            AppRoutes.groups,
           ])
             GoRoute(path: path, builder: (_, _) => child),
         ],
@@ -104,7 +103,6 @@ void main() {
     AppRoutes.skmap: 'ops',
     AppRoutes.coord: 'ops',
     AppRoutes.recordings: 'ops',
-    AppRoutes.groups: 'ops',
   };
 
   cases.forEach((route, tab) {

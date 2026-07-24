@@ -59,8 +59,8 @@ Widget _wrapInfo({
     initialLocation: '/groups/$groupId/info',
     routes: [
       GoRoute(
-        path: '/groups',
-        builder: (_, __) => const Scaffold(body: Text('GROUPS LIST')),
+        path: '/chats',
+        builder: (_, __) => const Scaffold(body: Text('CHATS LIST')),
       ),
       GoRoute(
         path: '/groups/:id/info',
@@ -272,7 +272,7 @@ void main() {
       expect(find.text('Leave group'), findsOneWidget);
     });
 
-    testWidgets('confirming Delete calls the API + navigates to Groups list',
+    testWidgets('confirming Delete calls the API + navigates to Chats list',
         (tester) async {
       // Taller surface so the actions (Delete) sit on screen in the scroll view.
       tester.view.physicalSize = const Size(1000, 2000);
@@ -299,7 +299,7 @@ void main() {
       await tester.pumpAndSettle();
 
       verify(() => client.deleteGroup('g-1')).called(1);
-      expect(find.text('GROUPS LIST'), findsOneWidget);
+      expect(find.text('CHATS LIST'), findsOneWidget);
     });
   });
 
