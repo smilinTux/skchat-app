@@ -31,7 +31,7 @@ class PgpKeyPair {
 /// Uses [pointycastle] for pure-Dart cryptography so no platform-channel is
 /// required.  Full OpenPGP packet formatting (UID, subkeys, self-signatures)
 /// is deferred to a native/FFI layer; this bridge provides the key material
-/// and fingerprint consumed by the onboarding flow and [PairPage].
+/// and fingerprint consumed by the local identity service.
 ///
 /// ## Typical usage
 /// ```dart

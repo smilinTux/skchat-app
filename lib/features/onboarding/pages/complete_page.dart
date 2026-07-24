@@ -55,11 +55,6 @@ class _CompletePageState extends ConsumerState<CompletePage>
 
   @override
   Widget build(BuildContext context) {
-    final identityChoice =
-        ref.watch(onboardingProvider).identityChoice;
-    final name =
-        identityChoice == 'import' ? 'sovereign' : 'new sovereign';
-
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
@@ -116,10 +111,10 @@ class _CompletePageState extends ConsumerState<CompletePage>
               opacity: _fadeIn,
               child: Column(
                 children: [
-                  Text(
-                    'Welcome to the kingdom,\n$name!',
+                  const Text(
+                    'Welcome to the kingdom,\nsovereign!',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 26,
                       fontWeight: FontWeight.w700,
                       color: SovereignColors.textPrimary,

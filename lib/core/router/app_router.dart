@@ -35,6 +35,8 @@ import '../../features/skos/skos_control_screen.dart';
 import '../../features/join/join_screen.dart';
 import '../../features/guest/guest_landing_screen.dart';
 import '../../features/join/mode_c_review_screen.dart';
+import '../../features/onboarding/onboarding_screen.dart';
+import '../../features/onboarding/onboarding_provider.dart';
 import '../../services/join_service.dart';
 import '../../services/backend_config.dart';
 
@@ -155,6 +157,10 @@ class AppRoutes {
   /// Build a guest-group landing path for an invite [token].
   static String guestGroupPath(String token) => '/g/$token';
 
+  /// First-run onboarding wizard (welcome -> server -> identity -> done),
+  /// shown outside the shell until the user completes it: /onboarding
+  static const onboarding = '/onboarding';
+
   /// Operator Mode C review: pending peer accept assertions + counter-sign.
   static const modeCReview = '/mode-c';
 
@@ -203,14 +209,81 @@ String? backendSetupRedirect({
   return AppRoutes.profile;
 }
 
+/// Path prefixes that must NEVER be bounced by [startupRedirect]. Guest
+/// deep-links drop an unauthenticated user straight into one room / invite,
+/// so the first-run onboarding gate has to let them through untouched, even
+/// on a neutral (unconfigured) build. Verified against the actual guest-facing
+/// routes below: `/g/:token` (guest group landing), `/join` (conference
+/// deep-link chooser), and `/conf` (native conf hand-off with a minted token).
+const kGuestDeepLinkPrefixes = <String>['/g/', '/join', '/conf'];
+
+/// True when [location] is (or is under) a guest deep-link that the onboarding
+/// gate must never redirect away from.
+bool isGuestDeepLink(String location) {
+  for (final prefix in kGuestDeepLinkPrefixes) {
+    if (location == prefix || location.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+/// First-run gate for the app router. Returns the path to redirect to, or null
+/// to proceed to [currentLocation] unchanged.
+///
+/// Rules, in order:
+///  (a) A guest deep-link ([isGuestDeepLink]) is ALWAYS allowed through, so a
+///      shared invite/room link opens even before onboarding, on any build.
+///  (b) Already at `/onboarding` -> null, so the wizard never redirects onto
+///      itself (no loop), whether or not it has been completed.
+///  (c) A first-run user (onboarding not yet completed) is sent to
+///      `/onboarding`; a returning/configured user proceeds to the normal
+///      shell (null).
+///
+/// This is a pure function of its inputs (no Hive, no providers) so it can be
+/// unit-tested as a truth table. The router reads the live
+/// [onboardingCompleteProvider] value and passes it in.
+String? startupRedirect({
+  required String currentLocation,
+  required bool onboardingComplete,
+}) {
+  // (a) Never bounce a guest deep-link.
+  if (isGuestDeepLink(currentLocation)) return null;
+  // (b) Already at the target: no redirect loop.
+  if (currentLocation == AppRoutes.onboarding) return null;
+  // (c) First run -> wizard; otherwise proceed.
+  if (!onboardingComplete) return AppRoutes.onboarding;
+  return null;
+}
+
+/// A [ChangeNotifier] GoRouter listens to via `refreshListenable`. It is
+/// "bumped" whenever a provider the [startupRedirect] depends on changes AFTER
+/// the async Hive load. Without it, the redirect is evaluated exactly once on
+/// cold start, before `onboardingCompleteProvider` / `backendConfigProvider`
+/// have hydrated from Hive, and never re-runs, so a returning user could be
+/// misrouted into the wizard (or a guest bounced) until the next manual
+/// navigation. Bridging those providers to a Listenable makes GoRouter
+/// re-evaluate `redirect` the moment the persisted state settles.
+class RouterRefreshListenable extends ChangeNotifier {
+  void bump() => notifyListeners();
+}
+
 /// GoRouter provider, uses shell routes for the bottom nav structure.
 final appRouterProvider = Provider<GoRouter>((ref) {
+  // Bridge the async-loaded state into GoRouter's refresh mechanism. These are
+  // `listen`ed (not `watch`ed) so a state change re-runs the redirect via the
+  // Listenable instead of rebuilding the whole GoRouter (which would reset
+  // navigation state on every config change).
+  final refresh = RouterRefreshListenable();
+  ref.onDispose(refresh.dispose);
+  ref.listen(onboardingCompleteProvider, (_, _) => refresh.bump());
+  ref.listen(backendConfigProvider, (_, _) => refresh.bump());
+
   return GoRouter(
     initialLocation: AppRoutes.chats,
     debugLogDiagnostics: false,
-    redirect: (context, state) => backendSetupRedirect(
-      webuiUrl: ref.read(backendConfigProvider).skchatWebuiUrl,
+    refreshListenable: refresh,
+    redirect: (context, state) => startupRedirect(
       currentLocation: state.matchedLocation,
+      onboardingComplete: ref.read(onboardingCompleteProvider),
     ),
     routes: [
       ShellRoute(
@@ -416,6 +489,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           if (token.isEmpty) return const _InvalidJoinScreen();
           return GuestLandingScreen(token: token);
         },
+      ),
+
+      // ── First-run onboarding wizard (outside the shell) ─────────────────
+      // Reached via [startupRedirect] when onboarding has not been completed.
+      // On finish it persists the completion flag (which bumps the router's
+      // refreshListenable) and navigates to the normal shell.
+      GoRoute(
+        path: AppRoutes.onboarding,
+        builder: (context, state) => OnboardingScreen(
+          onComplete: () => context.go(AppRoutes.chats),
+        ),
       ),
 
       // Operator Mode C review: pending peer accept assertions + counter-sign.

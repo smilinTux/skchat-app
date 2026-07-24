@@ -29,6 +29,18 @@ Future<void> main() async {
   Hive.registerAdapter(ChatMessageAdapter());
   Hive.registerAdapter(ConversationAdapter());
 
+  // Pre-open the boxes the router's startup redirect depends on (backend
+  // config lives in `settings`; the onboarding-complete flag in `onboarding`)
+  // so the redirect can read hydrated state as early as possible. Each open is
+  // isolated in its own try/catch: a corrupt or locked box must NEVER brick
+  // launch, on failure we drop the box from disk and fall through to defaults
+  // (first-run / build defaults), which is always a safe, recoverable state.
+  // The type params match every later `Hive.openBox` call for these boxes
+  // (`settings` as <String>, `onboarding` as <dynamic>) so re-opens elsewhere
+  // return the same instance without a type conflict.
+  await _openBoxSafely<String>('settings');
+  await _openBoxSafely<dynamic>('onboarding');
+
   // Full-screen OLED experience, hide system UI chrome.
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
@@ -43,6 +55,23 @@ Future<void> main() async {
   runApp(
     const ProviderScope(child: SKChatApp()),
   );
+}
+
+/// Open a Hive box, tolerating a corrupt/locked box so a bad on-disk file can
+/// never prevent the app from launching. On any failure the box is deleted
+/// from disk (best-effort) and the caller proceeds on defaults; the notifiers
+/// that own these boxes re-open them lazily and re-seed from their own
+/// compile-time defaults.
+Future<void> _openBoxSafely<T>(String name) async {
+  try {
+    await Hive.openBox<T>(name);
+  } catch (_) {
+    try {
+      await Hive.deleteBoxFromDisk(name);
+    } catch (_) {
+      // Nothing more we can safely do; fall through to defaults.
+    }
+  }
 }
 
 /// Root widget, wires Riverpod, GoRouter, and the Sovereign Glass theme.
