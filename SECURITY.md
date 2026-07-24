@@ -44,6 +44,34 @@ with no realizable client-side impact, and issues already noted in
   high-value identities should pair on native.
 - **Mitigations:** biometric gate (`local_auth` / `biometric_service.dart`) where
   available; keys never leave the device unencrypted; wiping the app clears them.
+- **Native device key (GuestIdentity, ECDSA P-256):** persisted via
+  `FallbackGuestKeyStore(SecureGuestKeyStore, EncryptedFileGuestKeyStore)`. When
+  the OS keyring works it is used directly. When it is **absent** (headless /
+  minimal Linux), the file fallback is now **encrypted at rest with AES-256-GCM**
+  (`guest_keystore_crypto.dart`): the wrapping key is HKDF-SHA256 derived from
+  `/etc/machine-id` (outside the home dir) + a separate 0600 salt file kept out
+  of the envelope. This **defeats casual exfiltration** (a filesystem backup, a
+  home-dir sync, or a copied `guest_identity.json`) but is explicitly
+  **reduced-assurance**: a privileged / same-UID attacker who can read both the
+  salt and `/etc/machine-id` can re-derive the key. The OS keyring is always
+  preferred. Legacy plaintext stores are read + re-encrypted transparently;
+  reads fail safe (tamper/wrong-key surfaces as a GCM-tag failure, the file is
+  sidecar-preserved, the key reported absent, never partial bytes).
+- **Recovery phrase (native only):** the device key can be backed up as a 24-word
+  BIP39 phrase (the raw P-256 scalar as entropy). The phrase IS the private key;
+  the reveal is gated (biometric where present, an explicit confirmation dialog
+  where not, e.g. Linux) and warns against screenshots. Restore validates the
+  scalar is in `[1, n)` and self-heals a priv/pub mismatch. Web / non-extractable
+  keys deliberately cannot export a phrase.
+
+### 1a. Peer trust display (M1b badges)
+- Trust badges (red = keyed-unverified, amber = verified) render only from a
+  **server-set `soul_fingerprint`** carried in the peer/member record or LiveKit
+  participant metadata. The client never resolves an identity string to a
+  fingerprint locally, so a peer/participant cannot forge a badge by choosing an
+  identity. The server stamps the fingerprint only from a cryptographically-proven
+  identity (see skchat `SECURITY.md`). A keyless peer shows no badge; your own
+  tile is never badged.
 
 ### 2. Daemon & backend trust
 - The app trusts whatever URL `daemonUrlProvider` / `backendConfigProvider`

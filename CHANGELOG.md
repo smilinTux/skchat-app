@@ -5,6 +5,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 
 ## [Unreleased]
 
+### Added
+- **M1b trust-badge trilogy.** A compact TrustBadge (red = keyed-but-unverified,
+  amber = verified) now renders on every peer surface, anchored to the peer's
+  real capauth fingerprint via `peerTrustTierProvider`: 1:1 conversation tiles +
+  header, group-member rows (`group_info_screen`), and conf/Space/call
+  participants (`conf_screen`, Space `_SpeakerRing`, call `_ParticipantTile`).
+  A keyless peer shows nothing; your own tile is never badged.
+- **Device-key recovery phrase.** Back up + restore the native operator identity
+  (ECDSA P-256) as a 24-word BIP39 mnemonic derived from the private scalar
+  (vendored 2048-word list, no `bip39` dep). Reveal (`recovery_phrase_screen`)
+  and restore (`restore_from_phrase_screen`) screens; a discoverable "Device
+  recovery" section in the Me screen; native-only.
+- **First-run onboarding wizard.** Wired the previously-orphaned wizard into the
+  router (Welcome → Server URL → device-key enrollment → done), with a pure,
+  unit-tested `startupRedirect`.
+
+### Fixed
+- **PQC grey-screen on devices without liboqs.** `HybridKemImpl()` loaded its
+  ML-KEM backend eagerly in a constructor inside the pq provider bodies, so a
+  device without liboqs threw and Flutter rendered a grey ErrorWidget in place
+  of the app bar. New guarded `hybridKemProvider` degrades to the classical path.
+- **Guest-invite bounce + async-Hive cold-start misroute** in the router
+  (guest deep-links `/g/`,`/join`,`/conf` are exempt; a `RouterRefreshListenable`
+  re-evaluates once persisted state hydrates; boxes pre-opened fail-safe).
+- **Keystore self-heal:** `ensure()` derives the public key from the stored
+  private scalar and rewrites a stale/mismatched pub (a partial restore could
+  otherwise advertise one identity while signing as another).
+
+### Security
+- **Fallback file keystore is encrypted at rest (AES-256-GCM).** When the OS
+  keyring is unavailable the private scalar was written base64-plaintext to
+  `guest_identity.json`; it is now sealed with a key HKDF-SHA256-derived from
+  `/etc/machine-id` + a separate 0600 salt file (salt kept out of the envelope).
+  Legacy plaintext files are read + migrated transparently; reads fail safe.
+  Threat model in `SECURITY.md`: defeats casual exfil (backup/sync/copied file),
+  not a privileged same-UID attacker; the OS keyring is always preferred.
+- **Participant/group trust badges are unspoofable.** The badge fingerprint is
+  read only from server-set metadata (never from a client-resolvable identity),
+  and the server stamps it only from a cryptographically-proven identity.
+
 ## [1.1.1] - 2026-07-03
 
 ### Added
