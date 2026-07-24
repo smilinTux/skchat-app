@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:go_router/go_router.dart';
-import '../../../core/router/app_router.dart';
 import '../../../core/theme/sovereign_colors.dart';
-import '../../../models/call_state.dart';
-import '../call_provider.dart';
+import '../call_session.dart';
 
-/// Floating picture-in-picture overlay shown when an active call enters PiP mode.
+/// Floating picture-in-picture overlay shown while the active call is
+/// minimized ([CallSession.minimize]).
 ///
-/// Draggable mini window pinned to the top-right corner. Tapping it returns to
-/// the full in-call screen. Shown on top of all other content via an Overlay.
+/// Draggable mini pill pinned to the top-right corner. Tapping it restores
+/// the call ([CallSession.restore]); the pill's own hang-up button ends the
+/// call outright ([CallSession.hangUp]). Shown on top of all other content
+/// via an Overlay, so it survives navigation between screens (mounted once,
+/// high in the tree, e.g. AppShell).
 class PiPOverlay extends ConsumerStatefulWidget {
   const PiPOverlay({super.key, required this.child});
 
@@ -22,56 +22,56 @@ class PiPOverlay extends ConsumerStatefulWidget {
 
 class _PiPOverlayState extends ConsumerState<PiPOverlay> {
   OverlayEntry? _entry;
-  RTCVideoRenderer? _renderer;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _syncOverlay();
+    // Defer to after this build frame: inserting an OverlayEntry synchronously
+    // here (e.g. on first mount with an already-minimized session) trips
+    // "setState() or markNeedsBuild() called during build" because the
+    // ancestor Overlay is still mid-build at this point.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncOverlay(ref.read(callSessionProvider));
+    });
   }
 
   @override
   void dispose() {
     _removeOverlay();
-    _renderer?.dispose();
     super.dispose();
   }
 
-  void _syncOverlay() {
-    final call = ref.read(callProvider);
-    final isPiP = call?.isPiP == true && call?.status == CallStatus.active;
+  bool _isPip(CallSessionState? s) =>
+      s != null &&
+      (s.isMinimized || s.status == CallSessionStatus.minimized);
 
-    if (isPiP && _entry == null) {
-      _showOverlay(call!);
-    } else if (!isPiP && _entry != null) {
+  void _syncOverlay(CallSessionState? s) {
+    final isPip = _isPip(s);
+    if (isPip && _entry == null) {
+      _showOverlay();
+    } else if (!isPip && _entry != null) {
       _removeOverlay();
     }
   }
 
-  void _showOverlay(CallState call) {
-    _renderer = RTCVideoRenderer();
-    _renderer!.initialize().then((_) {
-      final service = ref.read(callProvider.notifier).webrtcService;
-      if (service?.localStream != null) {
-        _renderer!.srcObject = service!.localStream;
-      }
-    });
-
+  /// The entry's own builder watches [callSessionProvider] directly (via the
+  /// [Consumer] below), so once shown the pill stays live for name/status
+  /// changes without this State needing to tear down and recreate the entry.
+  void _showOverlay() {
     _entry = OverlayEntry(
-      builder: (_) => _PiPWindow(
-        call: call,
-        renderer: _renderer,
-        onTap: () {
-          ref.read(callProvider.notifier).togglePiP();
-          context.push(AppRoutes.inCallPath(call.peerId));
-        },
-        onHangUp: () {
-          ref.read(callProvider.notifier).hangUp();
-          _removeOverlay();
+      builder: (_) => Consumer(
+        builder: (context, ref, _) {
+          final call = ref.watch(callSessionProvider);
+          if (!_isPip(call)) return const SizedBox.shrink();
+          return _PiPWindow(
+            call: call!,
+            onTap: () => ref.read(callSessionProvider.notifier).restore(),
+            onHangUp: () => ref.read(callSessionProvider.notifier).hangUp(),
+          );
         },
       ),
     );
-
     Overlay.of(context).insert(_entry!);
   }
 
@@ -82,13 +82,8 @@ class _PiPOverlayState extends ConsumerState<PiPOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<CallState?>(callProvider, (prev, next) {
-      final isPiP = next?.isPiP == true && next?.status == CallStatus.active;
-      if (isPiP && _entry == null && next != null) {
-        _showOverlay(next);
-      } else if (!isPiP && _entry != null) {
-        _removeOverlay();
-      }
+    ref.listen<CallSessionState?>(callSessionProvider, (prev, next) {
+      _syncOverlay(next);
     });
 
     return widget.child;
@@ -99,13 +94,11 @@ class _PiPOverlayState extends ConsumerState<PiPOverlay> {
 class _PiPWindow extends StatefulWidget {
   const _PiPWindow({
     required this.call,
-    required this.renderer,
     required this.onTap,
     required this.onHangUp,
   });
 
-  final CallState call;
-  final RTCVideoRenderer? renderer;
+  final CallSessionState call;
   final VoidCallback onTap;
   final VoidCallback onHangUp;
 
@@ -119,10 +112,12 @@ class _PiPWindowState extends State<_PiPWindow> {
 
   @override
   Widget build(BuildContext context) {
+    final soul = SovereignColors.fromFingerprint(widget.call.peer);
     return Positioned(
       right: _right,
       top: _top,
       child: GestureDetector(
+        key: const Key('call-pip-window'),
         onPanUpdate: (d) {
           setState(() {
             _right = (_right - d.delta.dx).clamp(0.0, 300.0);
@@ -144,7 +139,7 @@ class _PiPWindowState extends State<_PiPWindow> {
                 color: SovereignColors.surfaceRaised,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: widget.call.peerSoulColor.withValues(alpha: 0.5),
+                  color: soul.withValues(alpha: 0.5),
                   width: 1.5,
                 ),
                 boxShadow: [
@@ -157,25 +152,17 @@ class _PiPWindowState extends State<_PiPWindow> {
               ),
               child: Stack(
                 children: [
-                  // Video preview (or avatar for voice).
-                  if (widget.renderer != null &&
-                      widget.call.type == CallType.video)
-                    RTCVideoView(
-                      widget.renderer!,
-                      objectFit:
-                          RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    )
-                  else
-                    _VoicePiPContent(call: widget.call),
+                  _PiPAvatar(peerName: widget.call.peerName, soulColor: soul),
 
-                  // Duration overlay.
+                  // Peer-name strip.
                   Positioned(
                     bottom: 28,
                     left: 0,
                     right: 0,
                     child: Text(
-                      widget.call.formattedDuration,
+                      widget.call.peerName,
                       textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 11,
@@ -213,20 +200,24 @@ class _PiPWindowState extends State<_PiPWindow> {
   }
 }
 
-class _VoicePiPContent extends StatelessWidget {
-  const _VoicePiPContent({required this.call});
+/// Voice-call fallback content: peer-initial avatar over a soul-color wash.
+/// (No live video preview here: the LiveKit render surface lives on the
+/// full-screen call view; the pill is a lightweight return-to-call handle.)
+class _PiPAvatar extends StatelessWidget {
+  const _PiPAvatar({required this.peerName, required this.soulColor});
 
-  final CallState call;
+  final String peerName;
+  final Color soulColor;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: call.peerSoulColor.withValues(alpha: 0.12),
+      color: soulColor.withValues(alpha: 0.12),
       child: Center(
         child: Text(
-          call.peerName.isNotEmpty ? call.peerName[0].toUpperCase() : '?',
+          peerName.isNotEmpty ? peerName[0].toUpperCase() : '?',
           style: TextStyle(
-            color: call.peerSoulColor,
+            color: soulColor,
             fontSize: 28,
             fontWeight: FontWeight.w700,
           ),

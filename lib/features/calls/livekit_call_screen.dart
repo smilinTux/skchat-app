@@ -7,6 +7,7 @@ import 'package:livekit_client/livekit_client.dart';
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/livekit_call_service.dart';
 import '../../services/peer_trust_store.dart';
+import 'call_session.dart';
 import '../identity/widgets/trust_badge.dart';
 import '../../services/recordings_service.dart';
 import '../call_shared/call_elapsed_timer.dart';
@@ -390,6 +391,12 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
   Future<void> leave(BuildContext context) async {
     _cancelSubs();
     await stopActiveCast(ref);
+    // CallSession is the authority for call lifecycle (drives the PiP pill
+    // and the in-thread CallBanner); hangUp() tears the room down (best-
+    // effort, safe even if this notifier's own svc.leaveRoom() below already
+    // did) AND clears the session to null so nothing keeps pointing at a
+    // dead call.
+    await ref.read(callSessionProvider.notifier).hangUp();
     final svc = ref.read(liveKitCallServiceProvider);
     await svc.leaveRoom();
     state = null;
@@ -672,9 +679,15 @@ class _TopBar extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          // Back / collapse.
+          // Back / collapse: MINIMIZE (via CallSession), not hang up. Leaving
+          // this screen this way keeps the room live (PiP pill + in-thread
+          // CallBanner pick it back up) instead of orphaning it: previously
+          // this was a bare context.pop() that never told CallSession the
+          // room was still connected, so the call stayed live server-side
+          // with no UI referencing it (the orphaned-call bug).
           GestureDetector(
             onTap: () {
+              ref.read(callSessionProvider.notifier).minimize();
               if (context.canPop()) context.pop();
             },
             child: const Icon(

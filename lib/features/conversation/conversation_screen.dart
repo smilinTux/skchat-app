@@ -11,6 +11,7 @@ import '../../services/peer_trust_store.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/group_call_service.dart';
 import '../calls/livekit_call_screen.dart';
+import '../calls/widgets/call_banner.dart';
 import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
 import '../identity/identity_card_screen.dart';
@@ -66,6 +67,9 @@ class ConversationScreen extends ConsumerWidget {
       appBar: _buildAppBar(context, ref, conversation, soul, messages),
       body: Column(
         children: [
+          // Active/minimized-call return strip for THIS peer (see
+          // pip_overlay.dart for the cross-screen PiP pill counterpart).
+          CallBanner(peerId: peerId),
           // A 1:1 conversation has trust standing worth recording (see
           // ConversationTile for the same pattern); this invisible widget
           // records the sight once per screen mount (and again only if the
