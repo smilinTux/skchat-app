@@ -6,6 +6,8 @@ import '../../../models/conversation.dart';
 import '../../../core/chat_text.dart';
 import '../../identity/widgets/trust_badge.dart';
 import '../../../services/peer_trust_store.dart';
+import '../group_trust.dart';
+import 'group_composite_avatar.dart';
 
 /// Glass card tile representing a single conversation in the chat list.
 /// Shows soul-color avatar, name, last message, timestamp, encryption badge,
@@ -29,22 +31,31 @@ class ConversationTile extends ConsumerWidget {
     final tt = Theme.of(context).textTheme;
     final soul = conversation.resolvedSoulColor;
 
-    // Resolve the tier for any 1:1 row (regardless of whether the
-    // fingerprint string is empty); the tier provider itself resolves a
-    // missing/keyless/peerId-fallback fingerprint to `unverifiable`, so
-    // gating on the TIER (not just "is the string non-empty") is what keeps
-    // a keyless peer from showing a badge.
-    final tier = _isDirect
+    // 1:1 tier: resolve for any direct row (the provider maps a
+    // missing/keyless/peerId-fallback fingerprint to `unverifiable`).
+    final directTier = _isDirect
         ? ref
             .watch(peerTrustTierProvider(
                 (peerId: conversation.peerId,
                     fingerprint: conversation.soulFingerprint)))
             .valueOrNull
         : null;
-    // A badge only makes sense for a peer with a REAL capauth key (red =
-    // unverified, amber = verified); unverifiable (keyless) peers show
-    // nothing, same as a group row.
-    final showBadge = tier == PeerTrustTier.red || tier == PeerTrustTier.amber;
+
+    // Group tier: watch each member's tier (memoized per (peerId,fingerprint)
+    // across the app) and fold to one aggregate. red if any keyed member is
+    // unverified, amber if all keyed are verified, null if keyless.
+    final PeerTrustTier? groupTier = _isDirect
+        ? null
+        : foldGroupTier(conversation.members.map((m) => ref
+            .watch(peerTrustTierProvider(
+                (peerId: m.identityUri, fingerprint: m.soulFingerprint)))
+            .valueOrNull));
+
+    final PeerTrustTier? badgeTier = _isDirect ? directTier : groupTier;
+    // A badge only makes sense for a REAL key (red = unverified, amber =
+    // verified); unverifiable/none shows nothing.
+    final showBadge =
+        badgeTier == PeerTrustTier.red || badgeTier == PeerTrustTier.amber;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -64,13 +75,20 @@ class ConversationTile extends ConsumerWidget {
                 fingerprint: conversation.soulFingerprint,
               ),
             // ── Avatar ──────────────────────────────────────────────────
-            SoulAvatar(
-              soulColor: soul,
-              initials: conversation.resolvedInitials,
-              isOnline: conversation.isOnline,
-              isAgent: conversation.isAgent,
-              size: 48,
-            ),
+            if (_isDirect)
+              SoulAvatar(
+                soulColor: soul,
+                initials: conversation.resolvedInitials,
+                isOnline: conversation.isOnline,
+                isAgent: conversation.isAgent,
+                size: 48,
+              )
+            else
+              GroupCompositeAvatar(
+                members: conversation.members,
+                fallbackColor: soul,
+                size: 48,
+              ),
             const SizedBox(width: 12),
 
             // ── Main content ─────────────────────────────────────────────
@@ -95,7 +113,8 @@ class ConversationTile extends ConsumerWidget {
                       ),
                       if (showBadge) ...[
                         const SizedBox(width: 6),
-                        TrustBadge(tier: selfTierForPeer(tier!), compact: true),
+                        TrustBadge(
+                            tier: selfTierForPeer(badgeTier!), compact: true),
                       ],
                       const SizedBox(width: 8),
                       Text(
