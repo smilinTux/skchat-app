@@ -90,9 +90,11 @@ assume the backend runs on the same device (`localhost`).
 | **Household agents** | Live roster of online AI agents | skcapstone `GET /api/v1/household/agents` `:7777` |
 | **Consciousness panel** | Agent consciousness-loop state + backend health badge | skcapstone `/consciousness` `:7777` |
 | **Coord board** | Coordination task board, polled every 60s | skcapstone dashboard `GET /api/board` `:7778` |
-| **Identity** | CapAuth onboarding, QR pairing, identity card, capability chips, trust meter | CapAuth (via daemon) |
-| **Crypto core** | Pure-Dart RSA-2048 keygen (in an isolate), PGP-style fingerprints, RSA-PKCS1v15-SHA256 message signing | local — `flutter_secure_storage` |
-| **Onboarding** | First-run sovereign-identity flow: welcome → identity → transport → pair → complete | local + daemon |
+| **Identity** | CapAuth onboarding, QR pairing, identity card, capability chips, trust meter; native device-key (ECDSA P-256) enrollment as a first-class operator | CapAuth (via daemon) |
+| **Trust badges (M1b)** | Per-peer / per-member / per-participant trust tier (red = keyed-unverified, amber = verified), a 1:1 call-gate, and a safety-number verify sheet; anchored to the server-set capauth fingerprint | daemon (fingerprint in peer/member/LiveKit-metadata) |
+| **Device recovery** | Back up + restore the native device key as a 24-word BIP39 recovery phrase; encrypted-at-rest fallback keystore when no OS keyring | local |
+| **Crypto core** | Pure-Dart RSA-2048 keygen (in an isolate), PGP-style fingerprints, RSA-PKCS1v15-SHA256 message signing; hybrid X25519+ML-KEM-768 PQ DMs (degrade to classical without liboqs) | local — `flutter_secure_storage` |
+| **Onboarding** | First-run wizard: welcome → server URL → device-key enrollment → complete | local + daemon |
 
 ### How a message actually moves
 
