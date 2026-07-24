@@ -30,7 +30,12 @@ class NativeGuestIdentity implements GuestIdentity, RecoverableIdentity {
                 aOptions: AndroidOptions(encryptedSharedPreferences: true),
               ),
             ),
-            FileGuestKeyStore(),
+            // When the OS keyring is unavailable, fall back to an AES-256-GCM
+            // encrypted-at-rest file store (machine-bound key) instead of the
+            // legacy plaintext FileGuestKeyStore, so the private scalar is not
+            // left in the clear on disk. Legacy plaintext files are read and
+            // migrated transparently.
+            EncryptedFileGuestKeyStore(),
           );
 
   final GuestKeyStore _store;
