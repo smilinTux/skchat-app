@@ -11,8 +11,8 @@ import '../../services/daemon_service.dart';
 import '../../services/peer_trust_store.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/group_call_service.dart';
-import '../../services/self_identity_provider.dart';
 import '../calls/call_gate.dart';
+import '../calls/call_session.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
@@ -24,6 +24,7 @@ import '../../services/pq_conversation_service.dart';
 import '../../core/chat_text.dart';
 import 'conversation_provider.dart';
 import 'reply_state_provider.dart';
+import 'widgets/conversation_call_button.dart';
 import 'widgets/model_picker_button.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/reply_preview.dart';
@@ -442,42 +443,22 @@ class ConversationScreen extends ConsumerWidget {
     }
   }
 
-  /// Start a 1:1 call over the LiveKit SFU (the working sovereign call path)
-  /// and land on the LiveKit call screen, which carries the collaborative
-  /// in-call panels (chat / whiteboard / watch / terminal / screenshare) and
-  /// the camera/mic device picker. Replaces the dead P2P outgoing-call stub.
-  ///
-  /// The room is derived deterministically from the sorted pair of the local
-  /// fingerprint and the peer id, so both parties compute the same room and land
-  /// together. The screen mints a token via POST /livekit/token on join.
-  /// [withVideo] enables the camera (video button); false starts mic-only
-  /// (voice button).
+  /// Start a 1:1 call by routing through [CallSession], the single source of
+  /// truth for a 1:1 call (drives the LiveKit connect + the signed
+  /// CALL_INVITE ring together; the banner/pill/full-screen call view all
+  /// read/drive the same session). [withVideo] enables the camera (video
+  /// button); false starts mic-only (voice button).
   void _startDirectCall(
     BuildContext context,
     WidgetRef ref,
     String displayName, {
     required bool withVideo,
   }) {
-    // The resolved SELF identity (operator's daemon identity, unchanged, or
-    // a guest's own per-device identity, never the operator's) drives the
-    // deterministic room name below, so a guest's 1:1 call room is derived
-    // from THEIR fingerprint. If it has not resolved yet, fall back to
-    // [selfFingerprintNowFromWidget]'s SAME operator-aware gate, guarding
-    // against a null on first tap without ever leaking the operator's
-    // identity to a guest.
-    final fp = selfFingerprintNowFromWidget(ref);
-    final selfId = fp.isNotEmpty ? fp : 'local';
-    final ids = [peerId, selfId]..sort();
-    final roomName = 'sk-room-${ids.join("-")}';
-    context.push(
-      AppRoutes.livekitCall,
-      extra: LiveKitCallArgs(
-        roomName: roomName,
-        identity: selfId,
-        displayName: displayName,
-        withVideo: withVideo,
-      ),
-    );
+    ref.read(callSessionProvider.notifier).startOutgoing(
+          peer: peerId,
+          peerName: displayName,
+          video: withVideo,
+        );
   }
 
   /// Gate a 1:1 call behind the peer's trust tier (Chef's rule: a red/
@@ -768,105 +749,55 @@ class ConversationScreen extends ConsumerWidget {
             ),
           ),
         if (conversation.isAgent == true) ModelPickerButton(peerId: peerId),
-        Consumer(
-          builder: (context, ref, _) {
-            final isDirect = conversation.isGroup != true;
-            final peerTier = isDirect
-                ? ref
-                        .watch(peerTrustTierProvider((
-                          peerId: peerId,
-                          fingerprint: conversation.soulFingerprint,
-                        )))
-                        .valueOrNull ??
-                    PeerTrustTier.red
-                : null;
-            final dimmed = isDirect && peerTier == PeerTrustTier.red;
-            return Opacity(
-              opacity: dimmed ? 0.5 : 1.0,
-              child: IconButton(
-                icon: const Icon(Icons.call_outlined),
-                tooltip: conversation.isGroup == true
-                    ? 'Group voice call'
-                    : 'Voice call',
-                onPressed: () async {
-                  final conversations = ref.read(chatsProvider);
-                  final conv = conversations.firstWhere(
-                    (c) => c.peerId == peerId,
-                    orElse: () => conversations.first,
-                  );
-                  if (conversation.isGroup == true) {
-                    _startGroupCall(context, ref, conv.displayName,
-                        withVideo: false);
-                    return;
-                  }
-                  await _startDirectCallGated(context, ref, conv,
-                      withVideo: false);
-                },
-              ),
-            );
-          },
-        ),
-        Consumer(
-          builder: (context, ref, _) {
-            final isDirect = conversation.isGroup != true;
-            final peerTier = isDirect
-                ? ref
-                        .watch(peerTrustTierProvider((
-                          peerId: peerId,
-                          fingerprint: conversation.soulFingerprint,
-                        )))
-                        .valueOrNull ??
-                    PeerTrustTier.red
-                : null;
-            final dimmed = isDirect && peerTier == PeerTrustTier.red;
-            return Opacity(
-              opacity: dimmed ? 0.5 : 1.0,
-              child: IconButton(
-                icon: const Icon(Icons.videocam_outlined),
-                tooltip: conversation.isGroup == true
-                    ? 'Group video call'
-                    : 'Video call',
-                onPressed: () async {
-                  final conversations = ref.read(chatsProvider);
-                  final conv = conversations.firstWhere(
-                    (c) => c.peerId == peerId,
-                    orElse: () => conversations.first,
-                  );
-                  if (conversation.isGroup == true) {
-                    _startGroupCall(context, ref, conv.displayName,
-                        withVideo: true);
-                    return;
-                  }
-                  await _startDirectCallGated(context, ref, conv,
-                      withVideo: true);
-                },
-              ),
-            );
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.meeting_room_outlined),
-          tooltip: 'Agent room (LiveKit)',
-          onPressed: () async {
-            // Same trust gate as the voice/video buttons for a 1:1 room;
-            // a group's meeting room is never gated here.
-            if (conversation.isGroup != true &&
-                !await _checkCallAllowed(context, ref, conversation)) {
-              return;
-            }
-            if (!context.mounted) return;
-            final ids = [peerId, 'local']..sort();
-            final roomName = 'sk-room-${ids.join("-")}';
-            context.push(
-              AppRoutes.livekitCall,
-              extra: LiveKitCallArgs(
-                roomName: roomName,
-                identity: 'local',
-                displayName: peerId,
-              ),
-            );
-          },
-        ),
+        if (conversation.isGroup == true) ...[
+          Consumer(
+            builder: (context, ref, _) => IconButton(
+              icon: const Icon(Icons.call_outlined),
+              tooltip: 'Group voice call',
+              onPressed: () async {
+                final conversations = ref.read(chatsProvider);
+                final conv = conversations.firstWhere(
+                  (c) => c.peerId == peerId,
+                  orElse: () => conversations.first,
+                );
+                _startGroupCall(context, ref, conv.displayName,
+                    withVideo: false);
+              },
+            ),
+          ),
+          Consumer(
+            builder: (context, ref, _) => IconButton(
+              icon: const Icon(Icons.videocam_outlined),
+              tooltip: 'Group video call',
+              onPressed: () async {
+                final conversations = ref.read(chatsProvider);
+                final conv = conversations.firstWhere(
+                  (c) => c.peerId == peerId,
+                  orElse: () => conversations.first,
+                );
+                _startGroupCall(context, ref, conv.displayName,
+                    withVideo: true);
+              },
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.meeting_room_outlined),
+            tooltip: 'Agent room (LiveKit)',
+            onPressed: () async {
+              final ids = [peerId, 'local']..sort();
+              final roomName = 'sk-room-${ids.join("-")}';
+              context.push(
+                AppRoutes.livekitCall,
+                extra: LiveKitCallArgs(
+                  roomName: roomName,
+                  identity: 'local',
+                  displayName: peerId,
+                ),
+              );
+            },
+          ),
+        ] else
+          ConversationCallButton(conversation: conversation),
         // Header menu, per-conversation sub-views.
         PopupMenuButton<int>(
           icon: const Icon(Icons.more_vert_rounded),
