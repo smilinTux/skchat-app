@@ -43,21 +43,18 @@ class CallBanner extends ConsumerWidget {
       color: SovereignColors.soulLumina.withValues(alpha: 0.16),
       child: InkWell(
         onTap: () => _returnToCall(context, ref, s),
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                const Icon(Icons.call_rounded,
-                    size: 18, color: SovereignColors.soulLumina),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Tap to return to call with ${s.peerName}'),
-                ),
-                const Icon(Icons.chevron_right_rounded, size: 18),
-              ],
-            ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.call_rounded,
+                  size: 18, color: SovereignColors.soulLumina),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Tap to return to call with ${s.peerName}'),
+              ),
+              const Icon(Icons.chevron_right_rounded, size: 18),
+            ],
           ),
         ),
       ),
@@ -96,20 +93,17 @@ class _FailedBanner extends ConsumerWidget {
       child: InkWell(
         key: const Key('call-banner-dismiss'),
         onTap: () => ref.read(callSessionProvider.notifier).hangUp(),
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline_rounded,
-                    size: 18, color: SovereignColors.accentDanger),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Call with $peerName failed. Tap to dismiss.'),
-                ),
-              ],
-            ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.error_outline_rounded,
+                  size: 18, color: SovereignColors.accentDanger),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Call with $peerName failed. Tap to dismiss.'),
+              ),
+            ],
           ),
         ),
       ),
