@@ -953,7 +953,7 @@ class GroupInfoScreen extends ConsumerWidget {
                 // Daemon offline, remove locally.
               }
               await ref.read(groupsProvider.notifier).removeGroup(groupId);
-              if (context.mounted) context.go('/groups');
+              if (context.mounted) context.go(AppRoutes.chats);
             },
             child: const Text('Leave'),
           ),
@@ -1015,7 +1015,7 @@ class GroupInfoScreen extends ConsumerWidget {
                   content: Text('Removed locally (daemon offline).'),
                 ));
               }
-              if (context.mounted) context.go(AppRoutes.groups);
+              if (context.mounted) context.go(AppRoutes.chats);
             },
             child: const Text('Delete'),
           ),

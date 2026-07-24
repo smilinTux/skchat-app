@@ -6,6 +6,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 ## [Unreleased]
 
 ### Added
+- **Unified conversation list.** Group conversations now render inline in the
+  single Chats list alongside 1:1s, with a composite group avatar and one
+  aggregate trust badge folded from each member's peer trust tier over the
+  server-set `soul_fingerprint`. The standalone Groups surface is retired:
+  group management stays reachable from `group_info`, and New chat/New group
+  compose from the existing Chats compose sheet. Server-side, `Conversation`
+  gained a `members` list and the daemon proxy resolves per-member
+  `soul_fingerprint` for group threads (see skchat `CHANGELOG.md`).
 - **M1b trust-badge trilogy.** A compact TrustBadge (red = keyed-but-unverified,
   amber = verified) now renders on every peer surface, anchored to the peer's
   real capauth fingerprint via `peerTrustTierProvider`: 1:1 conversation tiles +

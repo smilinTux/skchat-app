@@ -130,16 +130,6 @@ const List<ModuleManifest> kBuiltinModules = [
     order: 140,
     description: 'Call & space recordings',
   ),
-  ModuleManifest(
-    id: 'groups',
-    title: 'Groups',
-    icon: Icons.group_outlined,
-    route: AppRoutes.groups,
-    requires: [CapabilityRef('service:text')],
-    defaultPlacement: ModulePlacement.drawer,
-    order: 150,
-    description: 'Group chats & members',
-  ),
 ];
 
 // ── Providers ───────────────────────────────────────────────────────────────

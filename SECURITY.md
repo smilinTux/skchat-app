@@ -72,6 +72,13 @@ with no realizable client-side impact, and issues already noted in
   identity. The server stamps the fingerprint only from a cryptographically-proven
   identity (see skchat `SECURITY.md`). A keyless peer shows no badge; your own
   tile is never badged.
+- **Aggregate group badge (unified conversation list).** The single trust badge
+  shown on a group tile folds each member's `peerTrustTierProvider` tier over
+  the member's SERVER-set `soul_fingerprint`, the same fingerprint source as
+  the 1:1 and participant badges above. There is no client-side identity to
+  fingerprint resolution anywhere in the fold, so the M1b unspoofability
+  invariant holds unchanged for groups: a keyless member contributes no key
+  and cannot raise a group's aggregate badge to verified.
 
 ### 2. Daemon & backend trust
 - The app trusts whatever URL `daemonUrlProvider` / `backendConfigProvider`

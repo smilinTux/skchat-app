@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/shell/app_shell.dart';
 import '../../features/chats/chats_screen.dart';
-import '../../features/groups/groups_screen.dart';
 import '../../features/activity/activity_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/conversation/conversation_screen.dart';
@@ -310,24 +309,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             ],
           ),
           GoRoute(
-            path: AppRoutes.groups,
-            pageBuilder: (context, state) => _noTransitionPage(
-              state,
-              const GroupsScreen(),
-            ),
-            routes: [
-              GoRoute(
-                path: 'new',
-                builder: (context, state) => const CreateGroupScreen(),
-              ),
-              GoRoute(
-                path: ':groupId/info',
-                builder: (context, state) {
-                  final groupId = state.pathParameters['groupId']!;
-                  return GroupInfoScreen(groupId: groupId);
-                },
-              ),
-            ],
+            path: AppRoutes.createGroup,
+            builder: (context, state) => const CreateGroupScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.groupInfo,
+            builder: (context, state) {
+              final groupId = state.pathParameters['groupId']!;
+              return GroupInfoScreen(groupId: groupId);
+            },
           ),
           GoRoute(
             path: AppRoutes.activity,

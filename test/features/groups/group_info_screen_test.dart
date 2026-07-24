@@ -59,8 +59,8 @@ Widget _wrapInfo({
     initialLocation: '/groups/$groupId/info',
     routes: [
       GoRoute(
-        path: '/groups',
-        builder: (_, __) => const Scaffold(body: Text('GROUPS LIST')),
+        path: '/chats',
+        builder: (_, __) => const Scaffold(body: Text('CHATS LIST')),
       ),
       GoRoute(
         path: '/groups/:id/info',
@@ -272,7 +272,7 @@ void main() {
       expect(find.text('Leave group'), findsOneWidget);
     });
 
-    testWidgets('confirming Delete calls the API + navigates to Groups list',
+    testWidgets('confirming Delete calls the API + navigates to Chats list',
         (tester) async {
       // Taller surface so the actions (Delete) sit on screen in the scroll view.
       tester.view.physicalSize = const Size(1000, 2000);
@@ -299,7 +299,62 @@ void main() {
       await tester.pumpAndSettle();
 
       verify(() => client.deleteGroup('g-1')).called(1);
-      expect(find.text('GROUPS LIST'), findsOneWidget);
+      expect(find.text('CHATS LIST'), findsOneWidget);
+    });
+  });
+
+  group('Leave group (non-admin)', () {
+    late _MockClient client;
+    late _MockRepo repo;
+
+    setUpAll(() {
+      registerFallbackValue(_group('x'));
+    });
+
+    setUp(() {
+      client = _MockClient();
+      repo = _MockRepo();
+      when(() => repo.save(any())).thenAnswer((_) async {});
+      when(() => repo.delete(any())).thenAnswer((_) async {});
+      when(() => client.leaveGroup(any())).thenAnswer((_) async {});
+    });
+
+    testWidgets('confirming Leave calls the API + navigates to Chats list',
+        (tester) async {
+      // Taller surface so the actions (Leave) sit on screen in the scroll
+      // view, mirroring the Delete test above.
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      // The operator (chef) is only a plain member here, so "Leave group" is
+      // the offered destructive action (mirrors the Delete test above).
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'lumina@skworld.io',
+            displayName: 'Lumina',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.member,
+          ),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Leave group'));
+      await tester.tap(find.text('Leave group'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leave'));
+      await tester.pumpAndSettle();
+
+      verify(() => client.leaveGroup('g-1')).called(1);
+      expect(find.text('CHATS LIST'), findsOneWidget);
     });
   });
 

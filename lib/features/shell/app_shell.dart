@@ -62,8 +62,7 @@ class AppShell extends ConsumerWidget {
         location.startsWith(AppRoutes.cluster) ||
         location.startsWith(AppRoutes.skmap) ||
         location.startsWith(AppRoutes.coord) ||
-        location.startsWith(AppRoutes.recordings) ||
-        location.startsWith(AppRoutes.groups)) {
+        location.startsWith(AppRoutes.recordings)) {
       return 3;
     }
     if (location.startsWith(AppRoutes.profile)) return 4;

@@ -14,7 +14,7 @@ import '../conf/conf_screen.dart' show ConfArgs;
 /// don't fit there live here as discoverable glass tiles. Every destination is
 /// reachable in <= 2 taps (Ops tab -> tile).
 ///
-/// Tiles route to: /cluster, /coord, /recordings, /conf, /groups.
+/// Tiles route to: /cluster, /coord, /recordings, /conf.
 /// (SkMap moved to the swipe-up app drawer, it is now a registry module.)
 /// Room is intentionally left for a future /facetime tile (added by a parallel
 /// branch), see [_OpsTile] list below.
@@ -91,13 +91,6 @@ class HubScreen extends ConsumerWidget {
             createTitle: 'Conference',
           ),
         ),
-      ),
-      _OpsTile(
-        label: 'Groups',
-        description: 'Group chats & members',
-        icon: Icons.group_outlined,
-        accent: SovereignColors.soulChef,
-        onTap: () => context.go(AppRoutes.groups),
       ),
       _OpsTile(
         label: 'Contact Requests',

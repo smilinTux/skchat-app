@@ -38,7 +38,7 @@ Conversation _peer(String id, {bool isAgent = false}) => Conversation(
       isAgent: isAgent,
     );
 
-/// Wrap with a GoRouter so post-create navigation (context.go('/groups'))
+/// Wrap with a GoRouter so post-create navigation (context.go('/chats'))
 /// resolves to a real route instead of throwing.
 Widget _wrap({
   required MockSKCommsClient client,
@@ -49,8 +49,8 @@ Widget _wrap({
     initialLocation: '/groups/new',
     routes: [
       GoRoute(
-        path: '/groups',
-        builder: (_, __) => const Scaffold(body: Text('GROUPS LIST')),
+        path: '/chats',
+        builder: (_, __) => const Scaffold(body: Text('CHATS LIST')),
       ),
       GoRoute(
         path: '/groups/new',
@@ -221,14 +221,14 @@ void main() {
       expect(sentName, 'Builders');
       expect(sentMembers, contains('chef'));
 
-      // Dismiss the key-distribution sheet → navigation completes to the list.
+      // Dismiss the key-distribution sheet -> navigation completes to the list.
       await tester.ensureVisible(find.text('Got it'));
       await tester.tap(find.text('Got it'));
       await tester.pumpAndSettle();
 
-      // No spinner left hanging, and we landed on the Groups list.
+      // No spinner left hanging, and we landed on the unified Chats list.
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.text('GROUPS LIST'), findsOneWidget);
+      expect(find.text('CHATS LIST'), findsOneWidget);
     });
 
     testWidgets('daemon offline → creates locally and still navigates',
@@ -254,7 +254,7 @@ void main() {
 
       // No key sheet on the offline path; navigation still completes cleanly.
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.text('GROUPS LIST'), findsOneWidget);
+      expect(find.text('CHATS LIST'), findsOneWidget);
     });
   });
 }
