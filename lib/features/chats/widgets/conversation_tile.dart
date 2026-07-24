@@ -44,12 +44,23 @@ class ConversationTile extends ConsumerWidget {
     // Group tier: watch each member's tier (memoized per (peerId,fingerprint)
     // across the app) and fold to one aggregate. red if any keyed member is
     // unverified, amber if all keyed are verified, null if keyless.
-    final PeerTrustTier? groupTier = _isDirect
-        ? null
-        : foldGroupTier(conversation.members.map((m) => ref
-            .watch(peerTrustTierProvider(
-                (peerId: m.identityUri, fingerprint: m.soulFingerprint)))
-            .valueOrNull));
+    final PeerTrustTier? groupTier;
+    if (_isDirect) {
+      groupTier = null;
+    } else {
+      // Watch every member's tier eagerly (materialize before folding) so
+      // the fold's short-circuit can never skip a ref.watch and drop a
+      // member from this tile's subscription set. Riverpod: never watch
+      // conditionally.
+      final memberTiers = <PeerTrustTier?>[
+        for (final m in conversation.members)
+          ref
+              .watch(peerTrustTierProvider(
+                  (peerId: m.identityUri, fingerprint: m.soulFingerprint)))
+              .valueOrNull,
+      ];
+      groupTier = foldGroupTier(memberTiers);
+    }
 
     final PeerTrustTier? badgeTier = _isDirect ? directTier : groupTier;
     // A badge only makes sense for a REAL key (red = unverified, amber =
