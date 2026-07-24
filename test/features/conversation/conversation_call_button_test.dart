@@ -42,20 +42,6 @@ Conversation _peer(String fp) => Conversation(
       soulFingerprint: fp,
     );
 
-Widget _host(Conversation c, {PeerTrustStore? store}) => ProviderScope(
-      overrides: [
-        callApiProvider.overrideWithValue(_FakeApi()),
-        liveKitCallServiceProvider.overrideWithValue(_FakeLk()),
-        peerTrustResolverProvider
-            .overrideWithValue(PeerTrustResolver(store ?? _MemStore())),
-      ],
-      child: MaterialApp(
-        home: Scaffold(
-          appBar: AppBar(actions: [ConversationCallButton(conversation: c)]),
-        ),
-      ),
-    );
-
 void main() {
   testWidgets('tap starts an audio call', (tester) async {
     final store = _MemStore();

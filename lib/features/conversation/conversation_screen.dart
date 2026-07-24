@@ -6,18 +6,14 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
-import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
 import '../../services/peer_trust_store.dart';
 import '../../services/skcomms_client.dart';
 import '../../services/group_call_service.dart';
-import '../calls/call_gate.dart';
-import '../calls/call_session.dart';
 import '../calls/livekit_call_screen.dart';
 import '../chats/chats_provider.dart';
 import '../groups/groups_provider.dart';
 import '../identity/identity_card_screen.dart';
-import '../identity/verify_peer_sheet.dart';
 import '../identity/widgets/trust_badge.dart';
 import '../../services/skcomms_sync.dart';
 import '../../services/pq_conversation_service.dart';
@@ -441,79 +437,6 @@ class ConversationScreen extends ConsumerWidget {
         SnackBar(content: Text('Group call failed: $e')),
       );
     }
-  }
-
-  /// Start a 1:1 call by routing through [CallSession], the single source of
-  /// truth for a 1:1 call (drives the LiveKit connect + the signed
-  /// CALL_INVITE ring together; the banner/pill/full-screen call view all
-  /// read/drive the same session). [withVideo] enables the camera (video
-  /// button); false starts mic-only (voice button).
-  void _startDirectCall(
-    BuildContext context,
-    WidgetRef ref,
-    String displayName, {
-    required bool withVideo,
-  }) {
-    ref.read(callSessionProvider.notifier).startOutgoing(
-          peer: peerId,
-          peerName: displayName,
-          video: withVideo,
-        );
-  }
-
-  /// Gate a 1:1 call behind the peer's trust tier (Chef's rule: a red/
-  /// unverified peer must be verified before a voice/video call). A group
-  /// call is never gated here, callers must check `isGroup` first and skip
-  /// this entirely.
-  ///
-  /// Reads [ScaffoldMessenger] before the `await` (the messenger handle
-  /// stays valid even if the widget is disposed mid-lookup), then guards
-  /// `context.mounted` before pushing the call screen or opening the verify
-  /// sheet from the snackbar action, since both happen after an await.
-  Future<void> _startDirectCallGated(
-    BuildContext context,
-    WidgetRef ref,
-    Conversation conv, {
-    required bool withVideo,
-  }) async {
-    if (!await _checkCallAllowed(context, ref, conv)) return;
-    if (!context.mounted) return;
-    _startDirectCall(context, ref, conv.displayName, withVideo: withVideo);
-  }
-
-  /// Shared trust-tier gate for every 1:1 call surface (voice, video, and
-  /// the meeting-room button): returns true when [conv] may be called,
-  /// otherwise shows the "verify before calling" snackbar (with a Verify
-  /// action that opens the safety-number sheet) and returns false. Reads
-  /// [ScaffoldMessenger] before the `await` (the handle stays valid even if
-  /// the widget is disposed mid-lookup); callers must still guard
-  /// `context.mounted` before touching `context` again afterwards.
-  Future<bool> _checkCallAllowed(
-    BuildContext context,
-    WidgetRef ref,
-    Conversation conv,
-  ) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final fp = conv.soulFingerprint;
-    final tier = await ref.read(peerTrustResolverProvider).tierFor(peerId, fp);
-    if (canCall(tier)) return true;
-    messenger.showSnackBar(SnackBar(
-      content: Text('Verify ${conv.displayName} before calling'),
-      action: SnackBarAction(
-        label: 'Verify',
-        onPressed: () {
-          if (!context.mounted) return;
-          showVerifyPeerSheet(
-            context,
-            ref,
-            peerId: peerId,
-            peerName: conv.displayName,
-            peerFingerprint: fp,
-          );
-        },
-      ),
-    ));
-    return false;
   }
 
   Future<void> _promoteToGroup(BuildContext context, WidgetRef ref) async {
