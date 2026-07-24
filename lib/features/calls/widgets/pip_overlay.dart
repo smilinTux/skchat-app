@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/theme/sovereign_colors.dart';
 import '../call_session.dart';
 
@@ -66,7 +68,17 @@ class _PiPOverlayState extends ConsumerState<PiPOverlay> {
           if (!_isPip(call)) return const SizedBox.shrink();
           return _PiPWindow(
             call: call!,
-            onTap: () => ref.read(callSessionProvider.notifier).restore(),
+            onTap: () {
+              final peer = call.peer;
+              ref.read(callSessionProvider.notifier).restore();
+              // Land on the peer's conversation, where the in-thread
+              // CallBanner gives mute/hang-up/expand for the restored call.
+              // Pushing the LiveKit call screen directly here would re-join
+              // the room on init and disrupt the live call, so this is the
+              // safe target for now; a full-screen expand without rejoin is
+              // a Phase 2b follow-up.
+              context.push(AppRoutes.conversationPath(peer));
+            },
             onHangUp: () => ref.read(callSessionProvider.notifier).hangUp(),
           );
         },
@@ -180,6 +192,7 @@ class _PiPWindowState extends State<_PiPWindow> {
                     left: 0,
                     right: 0,
                     child: GestureDetector(
+                      key: const Key('call-pip-hangup'),
                       onTap: widget.onHangUp,
                       child: const Center(
                         child: Icon(
