@@ -14,9 +14,6 @@ import '../../features/groups/create_group_screen.dart';
 import '../../features/chats/peer_picker_screen.dart';
 import '../../features/profile/qr_login_screen.dart';
 import '../../features/profile/modules_settings_screen.dart';
-import '../../features/calls/outgoing_call_screen.dart';
-import '../../features/calls/incoming_call_screen.dart';
-import '../../features/calls/in_call_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
@@ -112,21 +109,9 @@ class AppRoutes {
   /// Restore this device's identity from a recovery phrase: /identity/restore
   static const restoreFromPhrase = '/identity/restore';
 
-  /// Outgoing call screen: /call/outgoing/:peerId
-  static const outgoingCall = '/call/outgoing/:peerId';
-
-  /// Incoming call screen: /call/incoming/:peerId
-  static const incomingCall = '/call/incoming/:peerId';
-
-  /// Active in-call screen: /call/active/:peerId
-  static const inCall = '/call/active/:peerId';
-
   static String conversationPath(String peerId) => '/chats/$peerId';
   static String identityPath(String peerId) => '/identity/$peerId';
   static String groupInfoPath(String groupId) => '/groups/$groupId/info';
-  static String outgoingCallPath(String peerId) => '/call/outgoing/$peerId';
-  static String incomingCallPath(String peerId) => '/call/incoming/$peerId';
-  static String inCallPath(String peerId) => '/call/active/$peerId';
   static String spaceRoomPath(String spaceId) => '/spaces/$spaceId';
 
   /// LiveKit SFU call screen: /call/livekit
@@ -498,37 +483,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ModeCReviewScreen(),
       ),
 
-      // ── Call screens ────────────────────────────────────────────────────
-      GoRoute(
-        path: AppRoutes.outgoingCall,
-        pageBuilder: (context, state) {
-          final peerId = state.pathParameters['peerId']!;
-          return MaterialPage(
-            fullscreenDialog: true,
-            child: OutgoingCallScreen(peerId: peerId),
-          );
-        },
-      ),
-      GoRoute(
-        path: AppRoutes.incomingCall,
-        pageBuilder: (context, state) {
-          final peerId = state.pathParameters['peerId']!;
-          return MaterialPage(
-            fullscreenDialog: true,
-            child: IncomingCallScreen(peerId: peerId),
-          );
-        },
-      ),
-      GoRoute(
-        path: AppRoutes.inCall,
-        pageBuilder: (context, state) {
-          final peerId = state.pathParameters['peerId']!;
-          return MaterialPage(
-            fullscreenDialog: true,
-            child: InCallScreen(peerId: peerId),
-          );
-        },
-      ),
       // -- LiveKit SFU call screen
       GoRoute(
         path: AppRoutes.livekitCall,

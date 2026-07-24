@@ -5,11 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/router/app_router.dart';
-import '../../features/calls/call_provider.dart';
 import '../../features/calls/incoming_call_watcher.dart';
 import '../../features/calls/widgets/incoming_call_banner.dart';
 import '../../features/calls/widgets/pip_overlay.dart';
-import '../../models/call_state.dart';
 import '../../services/skcomms_sync.dart';
 import 'app_drawer_sheet.dart';
 
@@ -117,18 +115,6 @@ class AppShell extends ConsumerWidget {
     final currentIndex = _indexFor(context, ref);
     final daemonState = ref.watch(skcommsSyncProvider);
     final isOffline = daemonState.status == DaemonStatus.offline;
-
-    // Navigate to incoming call screen when a call arrives from any tab.
-    ref.listen<CallState?>(callProvider, (prev, next) {
-      if (next == null) return;
-      if (next.status == CallStatus.ringing && next.isIncoming) {
-        // Only push if not already on a call screen.
-        final location = GoRouterState.of(context).matchedLocation;
-        if (!location.startsWith('/call/')) {
-          context.push(AppRoutes.incomingCallPath(next.peerId));
-        }
-      }
-    });
 
     return _IncomingCallPoller(
       child: PiPOverlay(

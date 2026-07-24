@@ -1,11 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/theme/sovereign_colors.dart';
-import '../features/calls/call_provider.dart';
-import '../models/call_state.dart';
 import '../models/control_signal.dart';
-import '../models/conversation.dart';
-import '../features/chats/chats_provider.dart';
 import 'daemon_service.dart';
 import 'pq_conversation_service.dart';
 import 'skcomms_client.dart';
@@ -49,7 +44,6 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
 
   Timer? _pollTimer;
   Timer? _daemonTimer;
-  final Set<String> _seenEnvelopeIds = {};
 
   /// Consecutive failed health checks. The daemon goes briefly unresponsive
   /// while generating an agent reply (~15-20s), so ONE failed /health poll must
@@ -72,7 +66,7 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     // (which polls `skchat history`, both directions). We do NOT ingest chat
     // messages here, a second path created duplicates under different ids and
     // rendered the operator's own message as a green inbound copy. _pollInbox
-    // now forwards ONLY the call-request sentinel.
+    // is now purely a daemon-liveness heartbeat (see its doc comment).
     _pollInbox();
     _pollTimer = Timer.periodic(_pollInterval, (_) => _pollInbox());
     _daemonTimer = Timer.periodic(_daemonCheckInterval, (_) => _checkDaemon());
@@ -130,28 +124,23 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     );
   }
 
-  /// Poll inbox for **call-request sentinels only**.
+  /// Poll the inbox purely as a daemon-liveness heartbeat.
   ///
   /// Chat-message ingestion is owned solely by [ConversationNotifier] (which
-  /// polls `skchat history`, both directions). If we also dispatched inbox
+  /// polls `skchat history`, both directions); if we also dispatched inbox
   /// messages here they would be re-injected as `isOutbound: false`, producing
   /// a green inbound duplicate of the operator's own message AND a second copy
-  /// of every agent reply. So this path now forwards ONLY `__CALL_REQUEST__`
-  /// envelopes and drops all normal chat traffic.
+  /// of every agent reply, so normal chat traffic is never ingested here.
+  /// This poll used to also forward `__CALL_REQUEST__` sentinels to the now
+  /// retired Path-A `callProvider`; incoming-call signaling moved to
+  /// CallSession's `/call/incoming` REST poll (see [IncomingCallWatcher]), so
+  /// nothing in the inbox needs routing here anymore.
   Future<void> _pollInbox() async {
     if (state.status == DaemonStatus.offline) return;
 
     final client = ref.read(skcommsClientProvider);
     try {
-      final messages = await client.getInbox();
-      for (final msg in messages) {
-        // Only call sentinels travel this path; chat messages are owned by
-        // ConversationNotifier and must not be ingested twice.
-        if (!msg.content.startsWith('__CALL_REQUEST__:')) continue;
-        if (_seenEnvelopeIds.contains(msg.envelopeId)) continue;
-        _seenEnvelopeIds.add(msg.envelopeId);
-        _dispatchIncoming(msg);
-      }
+      await client.getInbox();
       // A successful poll only refreshes the heartbeat timestamp; it does NOT
       // assert "online". Online/offline is owned authoritatively by
       // _checkDaemon (health-gated), so the inbox poll cannot race it into a
@@ -332,37 +321,6 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     } catch (_) {}
   }
 
-  // ── Routing incoming messages into state ──────────────────────────────────
-
-  void _dispatchIncoming(InboxMessage msg) {
-    // This path now carries ONLY call-request sentinels (see _pollInbox).
-    // Chat messages are owned solely by ConversationNotifier's history poll;
-    // dispatching them here would create inbound duplicates.
-    if (msg.content.startsWith('__CALL_REQUEST__:')) {
-      _handleIncomingCallRequest(msg);
-    }
-  }
-
-  void _handleIncomingCallRequest(InboxMessage msg) {
-    // Derive call type from sentinel suffix: __CALL_REQUEST__:video or :voice
-    final suffix = msg.content.split(':').elementAtOrNull(1) ?? 'voice';
-    final callType = suffix == 'video' ? CallType.video : CallType.voice;
-
-    // Look up conversation for display name and soul color.
-    final chats = ref.read(chatsProvider);
-    final conv = chats.cast<Conversation?>().firstWhere(
-          (c) => c?.peerId == msg.sender,
-          orElse: () => null,
-        );
-
-    ref.read(callProvider.notifier).incomingCall(
-      peerId: msg.sender,
-      peerName: conv?.displayName ?? msg.sender,
-      peerSoulColor: conv?.resolvedSoulColor ??
-          SovereignColors.fromFingerprint(msg.sender),
-      type: callType,
-    );
-  }
 }
 
 final skcommsSyncProvider =
