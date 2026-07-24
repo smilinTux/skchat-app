@@ -297,9 +297,22 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
     });
 
     try {
-      await svc.connectWithToken(wsUrl: wsUrl, token: token);
-      await svc.setMicEnabled(true);
-      if (withVideo) await svc.setCameraEnabled(true);
+      // ADOPT instead of re-join: when this exact token is already connected
+      // (e.g. CallBanner._returnToCall expanding a CallSession the user
+      // started/accepted, which already published mic/camera on connect, see
+      // CallSession._connectAndPublish), a fresh connectWithToken would
+      // dispose + reconnect the ALREADY-live room, dropping every remote
+      // participant's view of us for a beat. Skip straight to rendering the
+      // live room instead. A mismatched/absent token (guest link, group call,
+      // deep-link join, or a first-time entry that never went through
+      // CallSession) always falls through to the normal connect + publish
+      // path below, so those flows are unaffected.
+      final alreadyLive = svc.room != null && svc.lastToken == token;
+      if (!alreadyLive) {
+        await svc.connectWithToken(wsUrl: wsUrl, token: token);
+        await svc.setMicEnabled(true);
+        if (withVideo) await svc.setCameraEnabled(true);
+      }
       if (state != null) {
         state = state!.copyWith(
           participants: svc.currentParticipants,

@@ -89,7 +89,7 @@ class CallSession extends Notifier<CallSessionState?> {
     );
     try {
       final r = await _api.startCall(peer);
-      await _lk.connectWithToken(wsUrl: r.livekitUrl, token: r.token);
+      await _connectAndPublish(wsUrl: r.livekitUrl, token: r.token, video: video);
       state = state?.copyWith(
         status: CallSessionStatus.active,
         room: r.room,
@@ -120,7 +120,10 @@ class CallSession extends Notifier<CallSessionState?> {
     state = s.copyWith(status: CallSessionStatus.connecting);
     try {
       final r = await _api.answerCall(s.peer);
-      await _lk.connectWithToken(wsUrl: r.livekitUrl, token: r.token);
+      // An incoming invite does not currently carry a video flag (see
+      // receiveIncoming), so s.isVideo defaults to false: an accepted call
+      // publishes audio-only unless the session is explicitly marked video.
+      await _connectAndPublish(wsUrl: r.livekitUrl, token: r.token, video: s.isVideo);
       state = state?.copyWith(
         status: CallSessionStatus.active,
         room: r.room,
@@ -169,6 +172,33 @@ class CallSession extends Notifier<CallSessionState?> {
     final next = !s.isCameraEnabled;
     await _lk.setCameraEnabled(next);
     state = s.copyWith(isCameraEnabled: next, isVideo: next ? true : s.isVideo);
+  }
+
+  /// Connect to the LiveKit room, then publish the mic (and camera if
+  /// [video]) BEST-EFFORT.
+  ///
+  /// [connectWithToken] is DELIBERATELY silent on tracks (it joins the room
+  /// only, publish is the caller's decision); without a publish step here
+  /// the call connects but sends no audio (dead air) until something else
+  /// (e.g. opening the full-screen call view) publishes for it. A connect
+  /// failure (bad token, network) still propagates so the caller's outer
+  /// try/catch can fail the session; a PUBLISH failure (missing/busy mic,
+  /// denied permission) must NOT: the room is already live, so it is caught
+  /// here and swallowed, leaving an active call the user can retry the
+  /// mic/camera toggle on rather than a stranded `failed` session.
+  Future<void> _connectAndPublish({
+    required String wsUrl,
+    required String token,
+    required bool video,
+  }) async {
+    await _lk.connectWithToken(wsUrl: wsUrl, token: token);
+    try {
+      await _lk.setMicEnabled(true);
+      if (video) await _lk.setCameraEnabled(true);
+    } catch (_) {
+      // Best-effort: a device/permission error must not fail a call whose
+      // room is already connected.
+    }
   }
 
   Future<void> _safeLeave() async {
