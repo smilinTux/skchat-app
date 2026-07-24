@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -201,6 +202,40 @@ class ProfileScreen extends ConsumerWidget {
           _SectionLabel(label: 'Operator'),
           const OperatorEnrollmentSection(),
           const SizedBox(height: 20),
+
+          // ── Device recovery ──────────────────────────────────────────
+          // Back up / restore THIS device's operator key as a 24-word BIP39
+          // phrase. Native-only: the browser build cannot export its
+          // (non-extractable) WebCrypto key, so the rows are hidden on web.
+          if (!kIsWeb) ...[
+            _SectionLabel(label: 'Device recovery'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: GlassCard(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.vpn_key_outlined),
+                      title: const Text('Back up recovery phrase'),
+                      subtitle: const Text('Reveal 24 words to restore later'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => context.push(AppRoutes.recoveryPhrase),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.restore_rounded),
+                      title: const Text('Restore from phrase'),
+                      subtitle: const Text('Re-key this device from 24 words'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => context.push(AppRoutes.restoreFromPhrase),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
 
           // ── Appearance ──────────────────────────────────────────────
           _SectionLabel(label: 'Appearance'),

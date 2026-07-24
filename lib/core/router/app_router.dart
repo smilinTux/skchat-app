@@ -8,6 +8,8 @@ import '../../features/activity/activity_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/conversation/conversation_screen.dart';
 import '../../features/identity/identity_card_screen.dart';
+import '../../features/identity/recovery_phrase_screen.dart';
+import '../../features/identity/restore_from_phrase_screen.dart';
 import '../../features/groups/group_info_screen.dart';
 import '../../features/groups/create_group_screen.dart';
 import '../../features/chats/peer_picker_screen.dart';
@@ -102,6 +104,12 @@ class AppRoutes {
 
   /// Modules settings (enable/disable + placement): /modules
   static const modules = '/modules';
+
+  /// Reveal this device's 24-word recovery phrase (biometric-gated): /identity/recovery
+  static const recoveryPhrase = '/identity/recovery';
+
+  /// Restore this device's identity from a recovery phrase: /identity/restore
+  static const restoreFromPhrase = '/identity/restore';
 
   /// Outgoing call screen: /call/outgoing/:peerId
   static const outgoingCall = '/call/outgoing/:peerId';
@@ -347,6 +355,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.qrLogin,
         builder: (context, state) => const QrLoginScreen(),
+      ),
+
+      // ── Device recovery phrase (BIP39 backup / restore) ─────────────────
+      // Top-level (outside the shell) so they push over the bottom nav.
+      GoRoute(
+        path: AppRoutes.recoveryPhrase,
+        builder: (context, state) => const RecoveryPhraseScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.restoreFromPhrase,
+        builder: (context, state) => const RestoreFromPhraseScreen(),
       ),
 
       // ── skos full-screen media viewer (above the shell) ─────────────────
