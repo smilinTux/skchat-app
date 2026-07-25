@@ -26,7 +26,9 @@ class ModelPickerButton extends ConsumerWidget {
     final agent = AgentModelService.agentFromPeerId(peerId);
     final state = await svc.getModel(agent);
     if (!context.mounted) return;
-    if (state == null || state.available.isEmpty) {
+    final hasRoles = state != null && state.catalog.roles.isNotEmpty;
+    final hasModels = state != null && state.catalog.models.isNotEmpty;
+    if (state == null || (!hasRoles && !hasModels)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Model settings unavailable (daemon offline)')),
       );
@@ -37,43 +39,78 @@ class ModelPickerButton extends ConsumerWidget {
       context: context,
       showDragHandle: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-              child: Text(
-                'Reply model: ${state.agent}',
-                style: Theme.of(ctx).textTheme.titleMedium,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                child: Text(
+                  'Reply model: ${state.agent}',
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
               ),
-            ),
-            for (final m in state.available)
-              ListTile(
-                leading: Icon(m.local ? Icons.computer_outlined : Icons.cloud_outlined),
-                title: Text(m.label),
-                subtitle: Text(m.id),
-                trailing: m.id == state.model
-                    ? const Icon(Icons.check_circle, color: Colors.green)
-                    : null,
-                selected: m.id == state.model,
-                onTap: () async {
-                  Navigator.of(ctx).pop();
-                  final updated = await svc.setModel(agent, m.id);
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        updated != null
-                            ? '${state.agent} now replies via ${m.label}'
-                            : 'Failed to set model',
-                      ),
+              if (hasRoles) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                  child: Text('Roles', style: Theme.of(ctx).textTheme.labelLarge),
+                ),
+                for (final role in state.catalog.roles)
+                  ListTile(
+                    leading: const Icon(Icons.auto_awesome_outlined),
+                    title: Text(role),
+                    trailing: role == state.selection
+                        ? const Icon(Icons.check_circle, color: Colors.green)
+                        : null,
+                    selected: role == state.selection,
+                    onTap: () => _select(context, ctx, svc, agent, state, role),
+                  ),
+              ],
+              if (hasModels) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                  child: Text('Models', style: Theme.of(ctx).textTheme.labelLarge),
+                ),
+                for (final m in state.catalog.models)
+                  ListTile(
+                    leading: Icon(
+                      m.free == true ? Icons.savings_outlined : Icons.cloud_outlined,
                     ),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
+                    title: Text(m.displayLabel),
+                    subtitle: m.provider.isNotEmpty ? Text(m.provider) : null,
+                    trailing: m.id == state.selection
+                        ? const Icon(Icons.check_circle, color: Colors.green)
+                        : null,
+                    selected: m.id == state.selection,
+                    onTap: () => _select(context, ctx, svc, agent, state, m.id),
+                  ),
+              ],
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _select(
+    BuildContext context,
+    BuildContext sheetContext,
+    AgentModelService svc,
+    String agent,
+    AgentModelState state,
+    String selection,
+  ) async {
+    Navigator.of(sheetContext).pop();
+    final updated = await svc.setSelection(agent, selection);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          updated != null
+              ? '${state.agent} now replies via $selection'
+              : 'Failed to set model',
         ),
       ),
     );
