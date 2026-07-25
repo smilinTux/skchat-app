@@ -70,5 +70,51 @@ void main() {
       final api = CallApiClient(baseUrl: 'https://webui.test', dio: dio);
       expect(await api.pollIncoming(), isEmpty);
     });
+
+    test('attaches X-Operator-Token when a token is present', () async {
+      final adapter = _CapturingAdapter(
+        '{"room":"r","token":"t","livekit_url":"w","peer_fqid":"p","identity":"i"}');
+      final dio = Dio(BaseOptions(baseUrl: 'https://webui.test'))
+        ..httpClientAdapter = adapter;
+      final api = CallApiClient(
+        baseUrl: 'https://webui.test',
+        dio: dio,
+        tokenReader: () => 'OPTOKEN123',
+      );
+      await api.startCall('steward@skworld.io');
+      expect(adapter.lastHeaders['X-Operator-Token'], 'OPTOKEN123');
+      await api.pollIncoming();
+      expect(adapter.lastHeaders['X-Operator-Token'], 'OPTOKEN123');
+    });
+
+    test('omits X-Operator-Token when no token is available', () async {
+      final adapter = _CapturingAdapter(
+        '{"room":"r","token":"t","livekit_url":"w","peer_fqid":"p","identity":"i"}');
+      final dio = Dio(BaseOptions(baseUrl: 'https://webui.test'))
+        ..httpClientAdapter = adapter;
+      final api = CallApiClient(
+        baseUrl: 'https://webui.test',
+        dio: dio,
+        tokenReader: () => null,
+      );
+      await api.startCall('steward@skworld.io');
+      expect(adapter.lastHeaders.containsKey('X-Operator-Token'), isFalse);
+    });
   });
+}
+
+/// Records the headers of the most recent request so a test can assert on them.
+class _CapturingAdapter implements HttpClientAdapter {
+  _CapturingAdapter(this.body);
+  final String body;
+  Map<String, dynamic> lastHeaders = {};
+  @override
+  void close({bool force = false}) {}
+  @override
+  Future<ResponseBody> fetch(
+      RequestOptions options, Stream<List<int>>? _, Future<void>? __) async {
+    lastHeaders = Map<String, dynamic>.from(options.headers);
+    return ResponseBody.fromString(body, 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+  }
 }
