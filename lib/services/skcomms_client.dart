@@ -347,6 +347,33 @@ class SKCommsClient {
     return IdentityInfo.fromJson(resp.data ?? {});
   }
 
+  // ── Audience tokens ───────────────────────────────────────────────────────
+
+  /// POST /api/v1/audience-token, mint a short-lived, audience-scoped bearer.
+  ///
+  /// Reuses THIS client's authenticated Dio: the operator-session Bearer is
+  /// attached by the auth interceptor, so the mint call carries the same
+  /// credential the app already sends to the dataplane. Returns the raw
+  /// response map (`{token, audience, expires_at}`) on a 2xx.
+  ///
+  /// The backend guards this route behind the `SKCHAT_AUDIENCE_MINT` flag,
+  /// which is OFF by default, so the endpoint 404s. On a 404 (endpoint inert),
+  /// a 401, or any network error this returns null rather than throwing, so a
+  /// caller can degrade to running tokenless.
+  Future<Map<String, dynamic>?> mintAudienceToken(String audience) async {
+    try {
+      final resp = await _dio.post<dynamic>(
+        '/api/v1/audience-token',
+        data: {'audience': audience},
+      );
+      final data = resp.data;
+      return data is Map ? Map<String, dynamic>.from(data) : null;
+    } catch (_) {
+      // 404 (flag off / inert), 401, network error: no token available.
+      return null;
+    }
+  }
+
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
   /// GET /api/v1/webrtc/ice-config, ICE server list with TURN credentials.

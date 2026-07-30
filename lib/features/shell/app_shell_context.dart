@@ -93,13 +93,30 @@ class AppShellBus implements ShellBus {
 /// Minimal concrete [AuthContext] for the mounted skchat module.
 ///
 /// The module never holds a root credential (spec 2.3): it is scoped to the
-/// `skchat` audience with the chat capability scopes. A real, short-lived,
-/// audience-scoped token mint (via `capauth`) lands with M2, so [token]
-/// currently returns null with a TODO. [subjectFqid] carries whatever local
-/// identity the host resolves (the device PGP fingerprint today), or null when
-/// no identity is established yet.
+/// `skchat` audience with the chat capability scopes. [subjectFqid] carries
+/// whatever local identity the host resolves (the device PGP fingerprint
+/// today), or null when no identity is established yet.
+///
+/// [token] completes the audience-token chain: it delegates to [tokenMinter],
+/// which mints (and caches) a short-lived, audience-scoped bearer from the
+/// backend `POST /api/v1/audience-token` endpoint using the app's existing
+/// authenticated client. The mint endpoint is guarded behind the server's
+/// `SKCHAT_AUDIENCE_MINT` flag (OFF by default, so it 404s); on that inert
+/// case, or any network / auth / parse failure, [token] returns null (the prior
+/// stubbed behavior) and NEVER throws, so a mounted module simply runs with no
+/// token until the server enables minting. When no [tokenMinter] is supplied
+/// (standalone / test), [token] returns null unconditionally.
 class AppAuthContext implements AuthContext {
-  const AppAuthContext({this.subjectFqid});
+  const AppAuthContext({
+    this.subjectFqid,
+    Future<String?> Function(String audience)? tokenMinter,
+  }) : _tokenMinter = tokenMinter;
+
+  /// Mints an audience-scoped bearer for the given audience, or null when none
+  /// is available. The concrete implementation caches by audience and swallows
+  /// failures; see `AudienceTokenService`. Null (the default) means "no minter
+  /// wired", so [token] returns null.
+  final Future<String?> Function(String audience)? _tokenMinter;
 
   @override
   String get audience => 'skchat';
@@ -115,11 +132,15 @@ class AppAuthContext implements AuthContext {
 
   @override
   Future<String?> token() async {
-    // TODO(U-auth): mint a short-lived, audience-scoped bearer via capauth once
-    // M2 audience minting lands. Until then the module runs with no token; the
-    // live chats feed reaches the daemon through the app's own session, not a
-    // module-scoped credential.
-    return null;
+    final minter = _tokenMinter;
+    if (minter == null) return null;
+    try {
+      return await minter(audience);
+    } catch (_) {
+      // Contract: token() must never throw. Any failure that slipped past the
+      // minter's own guards degrades to "no token".
+      return null;
+    }
   }
 }
 
