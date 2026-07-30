@@ -27,11 +27,27 @@ class _FakeBus implements ShellBus {
   Stream<ShellEvent> get events => const Stream.empty();
 }
 
+/// A bus that records the deep links it is asked to navigate, so the mounted
+/// navigation wiring can be asserted.
+class _RecordingBus implements ShellBus {
+  final List<String> navigated = [];
+  @override
+  void navigate(String deeplink) => navigated.add(deeplink);
+  @override
+  void emit(ShellEvent event) {}
+  @override
+  Stream<ShellEvent> get events => const Stream.empty();
+}
+
 class _FakeShell implements ShellContext {
+  _FakeShell({ShellBus? bus}) : _bus = bus ?? _FakeBus();
+
+  final ShellBus _bus;
+
   @override
   AuthContext get auth => _FakeAuth();
   @override
-  ShellBus get bus => _FakeBus();
+  ShellBus get bus => _bus;
   @override
   ThemeData get theme => ThemeData();
 }
@@ -51,7 +67,7 @@ void main() {
     expect(module.nav.deeplinkPrefix, 'skworld://skchat/');
   });
 
-  testWidgets('build(null) returns a widget in standalone mode',
+  testWidgets('build(null) renders the real chats surface standalone',
       (tester) async {
     const module = SkchatModule();
     await tester.pumpWidget(
@@ -63,10 +79,13 @@ void main() {
       ),
     );
     expect(find.byType(ChatsSurface), findsOneWidget);
-    expect(find.text('skchat (standalone)'), findsOneWidget);
+    // The real list renders the sample rows (not a placeholder message).
+    expect(find.byType(ConversationListTile), findsWidgets);
+    expect(find.text('Lumina'), findsOneWidget);
   });
 
-  testWidgets('build(shell) returns a widget in mounted mode', (tester) async {
+  testWidgets('build(shell) renders the real chats surface mounted',
+      (tester) async {
     const module = SkchatModule();
     final ShellContext shell = _FakeShell();
     await tester.pumpWidget(
@@ -75,7 +94,56 @@ void main() {
       ),
     );
     expect(find.byType(ChatsSurface), findsOneWidget);
-    expect(find.text('skchat (mounted in shell)'), findsOneWidget);
+    expect(find.byType(ConversationListTile), findsWidgets);
+  });
+
+  testWidgets('ChatsSurface renders injected conversations', (tester) async {
+    final convos = [
+      Conversation(
+        peerId: 'p1',
+        displayName: 'Test Peer',
+        lastMessage: 'hi there',
+        lastMessageTime: DateTime.now(),
+        unreadCount: 3,
+      ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(home: ChatsSurface(conversations: convos)),
+    );
+    expect(find.byType(ConversationListTile), findsOneWidget);
+    expect(find.text('Test Peer'), findsOneWidget);
+    expect(find.text('hi there'), findsOneWidget);
+    // Unread badge renders the count.
+    expect(find.text('3'), findsOneWidget);
+  });
+
+  testWidgets('ChatsSurface renders the empty state for an empty list',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: ChatsSurface(conversations: [])),
+    );
+    expect(find.byType(ConversationListTile), findsNothing);
+    expect(find.text('No conversations yet'), findsOneWidget);
+  });
+
+  testWidgets('tapping a row asks the shell bus to navigate the deep link',
+      (tester) async {
+    final bus = _RecordingBus();
+    final ShellContext shell = _FakeShell(bus: bus);
+    final convos = [
+      Conversation(
+        peerId: 'lumina',
+        displayName: 'Lumina',
+        lastMessage: 'hey',
+        lastMessageTime: DateTime.now(),
+      ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(home: ChatsSurface(shell: shell, conversations: convos)),
+    );
+    await tester.tap(find.byType(ConversationListTile).first);
+    await tester.pump();
+    expect(bus.navigated, contains('skworld://skchat/thread/lumina'));
   });
 
   test('extracted leaf ChatMessage round-trips through JSON', () {
