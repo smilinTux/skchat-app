@@ -27,6 +27,12 @@ dependencies:
   skchat_ui:
     path: packages/skchat_ui
 
+  # The module UI-facet contract (ShellContext, SkworldModule). The app-side
+  # live-feed adapter (lib/features/chats/live_chats_surface.dart) names
+  # ShellContext when it bridges chatsProvider into SkchatModule (spec 3.2).
+  skworld_module_api:
+    path: packages/skworld_module_api
+
   # State management
   flutter_riverpod: ^2.6.0
   freezed_annotation: ^2.4.0
