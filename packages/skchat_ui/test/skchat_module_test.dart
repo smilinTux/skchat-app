@@ -146,6 +146,57 @@ void main() {
     expect(bus.navigated, contains('skworld://skchat/thread/lumina'));
   });
 
+  testWidgets(
+      'build renders the injected bodyBuilder (live-feed seam) over the sample',
+      (tester) async {
+    // The app injects a live body through bodyBuilder; here a marker widget
+    // stands in for the app's Riverpod LiveChatsSurface adapter.
+    final module = SkchatModule(
+      bodyBuilder: (context, shell) => const Text('LIVE-FEED'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(builder: (context) => module.build(context, null)),
+      ),
+    );
+    // The injected body renders; the sample-backed surface does NOT.
+    expect(find.text('LIVE-FEED'), findsOneWidget);
+    expect(find.byType(ChatsSurface), findsNothing);
+  });
+
+  testWidgets('bodyBuilder receives the same nullable shell build was given',
+      (tester) async {
+    final ShellContext shell = _FakeShell();
+    ShellContext? seenMounted;
+    ShellContext? seenStandalone = _FakeShell();
+
+    final mounted = SkchatModule(
+      bodyBuilder: (context, s) {
+        seenMounted = s;
+        return const SizedBox.shrink();
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(builder: (context) => mounted.build(context, shell)),
+      ),
+    );
+    expect(identical(seenMounted, shell), isTrue);
+
+    final standalone = SkchatModule(
+      bodyBuilder: (context, s) {
+        seenStandalone = s;
+        return const SizedBox.shrink();
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(builder: (context) => standalone.build(context, null)),
+      ),
+    );
+    expect(seenStandalone, isNull);
+  });
+
   test('extracted leaf ChatMessage round-trips through JSON', () {
     final msg = ChatMessage(
       id: 'm1',
