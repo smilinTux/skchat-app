@@ -3,13 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../core/theme/theme.dart';
 import '../../core/router/app_router.dart';
 import '../../features/calls/incoming_call_watcher.dart';
 import '../../features/calls/widgets/incoming_call_banner.dart';
 import '../../features/calls/widgets/pip_overlay.dart';
+import '../../features/chats/chats_provider.dart';
+import '../../services/consent_service.dart';
 import '../../services/skcomms_sync.dart';
-import 'app_drawer_sheet.dart';
+import 'app_shell_scaffold.dart';
 
 /// How often [_IncomingCallPoller] calls [IncomingCallWatcher.pollOnce] while
 /// the shell is mounted (foreground only; no background/isolate polling).
@@ -57,20 +58,20 @@ class AppShell extends ConsumerWidget {
 
   final Widget child;
 
-  static const _tabs = [
-    _TabItem(
+  static const _tabs = <AppNavTab>[
+    AppNavTab(
       label: 'Chats',
       icon: Icons.chat_bubble_outline_rounded,
       activeIcon: Icons.chat_bubble_rounded,
       path: AppRoutes.chats,
     ),
-    _TabItem(
+    AppNavTab(
       label: 'Spaces',
       icon: Icons.podcasts_outlined,
       activeIcon: Icons.podcasts_rounded,
       path: AppRoutes.spaces,
     ),
-    _TabItem(
+    AppNavTab(
       label: 'Activity',
       icon: Icons.notifications_outlined,
       activeIcon: Icons.notifications_rounded,
@@ -79,13 +80,13 @@ class AppShell extends ConsumerWidget {
     // Ops hub, gateway to the operator control surfaces (Cluster, Coord,
     // Recordings, Conferences, Groups). Keeps the bottom bar at 5 items while
     // making every operator route reachable in <= 2 taps.
-    _TabItem(
+    AppNavTab(
       label: 'Ops',
       icon: Icons.grid_view_outlined,
       activeIcon: Icons.grid_view_rounded,
       path: AppRoutes.hub,
     ),
-    _TabItem(
+    AppNavTab(
       label: 'Me',
       icon: Icons.person_outline_rounded,
       activeIcon: Icons.person_rounded,
@@ -116,164 +117,34 @@ class AppShell extends ConsumerWidget {
     final daemonState = ref.watch(skcommsSyncProvider);
     final isOffline = daemonState.status == DaemonStatus.offline;
 
+    // Badge counts are derived from the SAME existing providers, so both the
+    // bottom bar and the wide left rail render one model. Chats shows total
+    // unread across conversations; Ops shows pending consent requests. Other
+    // tabs carry no badge. The list aligns 1:1 with [_tabs].
+    final unreadTotal = ref
+        .watch(chatsProvider)
+        .fold<int>(0, (sum, c) => sum + c.unreadCount);
+    final pendingConsent = ref.watch(consentPendingCountProvider);
+    final badgeCounts = <int>[
+      unreadTotal, // Chats
+      0, // Spaces
+      0, // Activity
+      pendingConsent, // Ops
+      0, // Me
+    ];
+
     return _IncomingCallPoller(
       child: PiPOverlay(
-      child: Scaffold(
-      backgroundColor: SovereignColors.surfaceBase,
-      // extendBody must stay FALSE. When true, each child screen's body (and
-      // its FloatingActionButton) extends behind the frosted GlassNavBar; the
-      // nav bar's BackdropFilter then blurs a child FAB (Chats' round FAB,
-      // Spaces' wide extended FAB) into a diffuse purple glow that reads as a
-      // spurious selection highlight over the bar (NAVBUG: "Spaces lights up
-      // the whole menu background", "Chats lights up Me"). Keeping the body
-      // above the bar stops that bleed-through, so each tab highlights only
-      // its own item. Screens without a FAB (Activity, Ops, Me) were already
-      // unaffected.
-      extendBody: false,
-      body: Column(
-        children: [
-          // Ringing incoming-call banner (Accept/Decline). Sits above the
-          // offline banner so a ring is never buried under it.
-          const IncomingCallBanner(),
-          // Offline banner, shown when daemon is unreachable.
-          if (isOffline)
-            Material(
-              color: SovereignColors.accentWarning.withValues(alpha: 0.15),
-              child: const SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.cloud_off_outlined,
-                        size: 14,
-                        color: SovereignColors.accentWarning,
-                      ),
-                      SizedBox(width: 6),
-                      Text(
-                        'SKComms daemon offline, messages will queue',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: SovereignColors.accentWarning,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              // Swipe up anywhere → reveal the app drawer (the user's
-              // swipe-up-from-bottom instinct is honored; see plan §6 thumb
-              // zone). A fast upward fling opens the module drawer.
-              onVerticalDragEnd: (details) {
-                final v = details.primaryVelocity ?? 0;
-                if (v < -350) {
-                  AppDrawerSheet.show(context);
-                }
-              },
-              child: child,
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: GlassNavBar(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Tappable grip, opens the swipe-up app drawer (discoverability for
-            // the swipe-up gesture).
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => AppDrawerSheet.show(context),
-              onVerticalDragEnd: (d) {
-                if ((d.primaryVelocity ?? 0) < -200) {
-                  AppDrawerSheet.show(context);
-                }
-              },
-              child: Padding(
-                padding: const EdgeInsets.only(top: 6, bottom: 2),
-                child: Container(
-                  key: const Key('app-drawer-grip'),
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: SovereignColors.textTertiary.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-            ),
-            Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: List.generate(_tabs.length, (i) {
-            final tab = _tabs[i];
-            final isActive = i == currentIndex;
-            final accentColor = Theme.of(context).colorScheme.primary;
-
-            return Expanded(
-              child: InkWell(
-                onTap: () => context.go(tab.path),
-                borderRadius: BorderRadius.circular(12),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        child: Icon(
-                          isActive ? tab.activeIcon : tab.icon,
-                          key: ValueKey(isActive),
-                          size: 24,
-                          color: isActive
-                              ? accentColor
-                              : SovereignColors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        tab.label,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: isActive
-                              ? accentColor
-                              : SovereignColors.textSecondary,
-                          fontWeight: isActive
-                              ? FontWeight.w600
-                              : FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
-            ),
-          ],
+        child: AppShellScaffold(
+          tabs: _tabs,
+          currentIndex: currentIndex,
+          isOffline: isOffline,
+          badgeCounts: badgeCounts,
+          onSelect: context.go,
+          banner: const IncomingCallBanner(),
+          child: child,
         ),
       ),
-      ),  // end Scaffold
-      ),    // end PiPOverlay
-    );      // end _IncomingCallPoller
+    );
   }
-}
-
-class _TabItem {
-  const _TabItem({
-    required this.label,
-    required this.icon,
-    required this.activeIcon,
-    required this.path,
-  });
-
-  final String label;
-  final IconData icon;
-  final IconData activeIcon;
-  final String path;
 }
