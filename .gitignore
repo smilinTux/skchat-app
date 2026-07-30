@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Workspace member build artifacts (root /build/ only covers the app package).
+packages/*/build/
+packages/*/.dart_tool/
+
 # Symbolication related
 app.*.symbols
 

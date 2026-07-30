@@ -4,6 +4,14 @@ publish_to: 'none'
 
 version: 1.4.0+10
 
+# Dart workspace root. Member packages resolve together under one shared
+# lockfile (Dart >= 3.6; this repo is on 3.12). Step 1 of the workspace split
+# (reconciled spec 3.2): the app itself is unchanged, we only add the module
+# contract package as a workspace member. Feature extraction (skchat_ui,
+# apps/skchat_standalone) is a later, separate wave.
+workspace:
+  - packages/skworld_module_api
+
 environment:
   sdk: ^3.11.0
 
