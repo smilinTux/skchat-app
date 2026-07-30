@@ -1,0 +1,30 @@
+name: skchat_ui
+description: >-
+  The skchat subapp UI facet: SkchatModule (implements SkworldModule) plus the
+  extracted skchat feature surfaces. This is the real Flutter package the
+  grade-A skchat manifest points its entry.flutter_package at (reconciled spec
+  3.1, 3.2 step 2). It depends ONLY on skworld_module_api and Flutter, never on
+  a shell package (enforced by the import gate, spec 3.2 step 4).
+version: 0.0.1
+publish_to: 'none'
+
+# Resolves as a member of the skchat-app Dart workspace (root pubspec.yaml
+# `workspace:` list). One shared lockfile at the workspace root.
+resolution: workspace
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.0.0"
+
+dependencies:
+  # The UI-facet contract this module implements. This is the ONLY non-Flutter
+  # dependency allowed to cross the boundary (import gate proves it).
+  skworld_module_api:
+    path: ../skworld_module_api
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

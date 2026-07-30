@@ -1,46 +1,9 @@
-import 'package:flutter/material.dart';
-
-/// Sovereign Glass color palette, OLED-first dark mode with glass surfaces.
-/// All values derived from the PRD color spec.
-class SovereignColors {
-  SovereignColors._();
-
-  // ── Surface ──────────────────────────────────────────────────────────────
-  static const Color surfaceBase = Color(0xFF000000); // OLED black
-  static const Color surfaceRaised = Color(0xFF0A0A0F); // card backgrounds
-  static const Color surfaceCard = Color(0xFF0B0D10); // near-black surface (2027 token)
-  static const Color surfaceGlass = Color(0x0FFFFFFF); // ~6% white opacity
-  static const Color surfaceGlassBorder = Color(0x14FFFFFF); // ~8% white
-
-  // ── Text ─────────────────────────────────────────────────────────────────
-  static const Color textPrimary = Color(0xFFE8E8F0);
-  static const Color textSecondary = Color(0xFF808098);
-  static const Color textTertiary = Color(0xFF505068);
-
-  // ── Accent ───────────────────────────────────────────────────────────────
-  static const Color accentEncrypt = Color(0xFF10B981); // emerald green
-  static const Color accentDanger = Color(0xFFEF4444); // red
-  static const Color accentWarning = Color(0xFFF59E0B); // amber
-
-  // ── Soul colors (well-known agents) ──────────────────────────────────────
-  static const Color soulLumina = Color(0xFFBB86FC); // violet-rose
-  static const Color soulJarvis = Color(0xFF00E5FF); // electric cyan
-  static const Color soulChef = Color(0xFFFFC107); // amber-gold
-
-  // ── Light mode surfaces ───────────────────────────────────────────────────
-  static const Color surfaceBaseLight = Color(0xFFFAFAFE);
-  static const Color surfaceRaisedLight = Color(0xFFF0F0F8);
-  static const Color surfaceGlassLight = Color(0x0A000000); // ~4% black
-  static const Color surfaceGlassBorderLight = Color(0x14000000);
-
-  /// Derives a soul-color from a CapAuth fingerprint string.
-  /// Uses the PRD formula: HSL(hue: hash % 360, sat: 70%, light: 55%)
-  static Color fromFingerprint(String fingerprint) {
-    final hash = fingerprint.codeUnits.fold<int>(
-      0,
-      (acc, c) => (acc * 31 + c) & 0x7FFFFFFF,
-    );
-    final hue = (hash % 360).toDouble();
-    return HSLColor.fromAHSL(1.0, hue, 0.70, 0.55).toColor();
-  }
-}
+// Export shim (reconciled spec 3.2 step 2).
+//
+// The Sovereign Glass color tokens MOVED into the `skchat_ui` workspace package
+// (`packages/skchat_ui/lib/src/theme/sovereign_colors.dart`) so the extracted
+// chats surface can render its real look without importing a shell/app package
+// (import gate, spec 3.2 step 4). This file stays at its original path and
+// re-exports the moved type so every existing importer keeps resolving
+// unchanged. New code should import `package:skchat_ui/skchat_ui.dart`.
+export 'package:skchat_ui/skchat_ui.dart' show SovereignColors;

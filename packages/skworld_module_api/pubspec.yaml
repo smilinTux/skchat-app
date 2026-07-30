@@ -1,0 +1,26 @@
+name: skworld_module_api
+description: >-
+  The UI-facet contract of the SKWorld subapp contract: SkworldModule,
+  ShellContext (nullable at the boundary), AuthContext, and ShellBus. Abstract
+  types only, no shell or skchat imports.
+version: 0.0.1
+publish_to: 'none'
+
+# Resolves as a member of the skchat-app Dart workspace (root pubspec.yaml
+# `workspace:` list). One shared lockfile at the workspace root.
+resolution: workspace
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.0.0"
+
+dependencies:
+  # Only Flutter widget/theme primitives (Widget, BuildContext, ThemeData,
+  # IconData). No shell or skchat dependency crosses this boundary.
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

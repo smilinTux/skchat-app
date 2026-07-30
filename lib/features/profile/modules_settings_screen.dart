@@ -1,8 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../core/config/feature_flags.dart';
 import '../../core/modules/module_manifest.dart';
 import '../../core/modules/module_registry.dart';
+import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../services/module_prefs.dart';
 
@@ -25,6 +29,7 @@ class ModulesSettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final availability = ref.watch(moduleAvailabilityProvider);
     final prefs = ref.watch(modulePrefsProvider);
+    final useChatsModule = ref.watch(chatsTabModuleFlagProvider);
     final tt = Theme.of(context).textTheme;
 
     return Scaffold(
@@ -44,6 +49,65 @@ class ModulesSettingsScreen extends ConsumerWidget {
               'the node it needs is offline.',
               style: tt.bodySmall?.copyWith(
                 color: SovereignColors.textSecondary,
+              ),
+            ),
+          ),
+          // Dev-only: mount and preview the LIVE skchat_ui SkworldModule via a
+          // concrete ShellContext (U3). Pushed (not go'd) so system back pops
+          // it; never shown in release builds.
+          if (kDebugMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: ListTile(
+                key: const Key('dev-mount-skchat-module'),
+                tileColor: SovereignColors.surfaceRaised,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                leading: const Icon(
+                  Icons.science_outlined,
+                  color: SovereignColors.soulLumina,
+                ),
+                title: Text('Preview skchat module (dev)', style: tt.bodyLarge),
+                subtitle: Text(
+                  'Mount the live skchat_ui module via a concrete ShellContext',
+                  style: tt.bodySmall
+                      ?.copyWith(color: SovereignColors.textSecondary),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push(AppRoutes.moduleSkchat),
+              ),
+            ),
+          // Runtime toggle for the Chats-tab source: flip the whole Chats tab
+          // between the native ChatsScreen (off, the default) and the mounted
+          // skchat_ui module (on). Persisted in Hive, so it survives restarts,
+          // and the tab re-renders live because ChatsTab watches the same flag.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: GlassCard(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              child: SwitchListTile(
+                key: const Key('use-skchat-module-chats-tab-toggle'),
+                value: useChatsModule,
+                onChanged: (v) =>
+                    ref.read(chatsTabModuleFlagProvider.notifier).set(v),
+                activeThumbColor: SovereignColors.soulLumina,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                title: Text(
+                  'Use skchat module for Chats',
+                  style: tt.titleMedium?.copyWith(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  'Render the Chats tab with the skchat_ui module instead of '
+                  'the native screen. Off by default.',
+                  style: tt.bodySmall?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
+                ),
               ),
             ),
           ),
