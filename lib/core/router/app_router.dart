@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/shell/app_shell.dart';
+import '../../features/shell/module_host_screen.dart';
 import '../../features/chats/chats_screen.dart';
 import '../../features/activity/activity_screen.dart';
 import '../../features/profile/profile_screen.dart';
@@ -147,6 +148,11 @@ class AppRoutes {
 
   /// Operator Mode C review: pending peer accept assertions + counter-sign.
   static const modeCReview = '/mode-c';
+
+  /// Dev/preview host that MOUNTS the live `skchat_ui` SkworldModule via a
+  /// concrete ShellContext (U3). Top-level (outside the shell) and reached via
+  /// `context.push`, so it never disturbs the primary Chats tab: /module/skchat
+  static const moduleSkchat = '/module/skchat';
 
   /// Build a guest join link/route for [room] with an [invite] token.
   static String guestJoinPath(String room, String invite) =>
@@ -481,6 +487,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.modeCReview,
         builder: (context, state) => const ModeCReviewScreen(),
+      ),
+
+      // -- Module host (U3): mounts the LIVE skchat_ui SkworldModule with a
+      //    concrete ShellContext. Top-level so it never touches the shell's
+      //    tab-highlight logic; the module's deep links map back onto this
+      //    router via AppShellBus. A dev/preview entry, not the primary tab.
+      GoRoute(
+        path: AppRoutes.moduleSkchat,
+        builder: (context, state) => const SkchatModuleHostScreen(),
       ),
 
       // -- LiveKit SFU call screen

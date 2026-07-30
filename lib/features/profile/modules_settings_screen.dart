@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/modules/module_manifest.dart';
 import '../../core/modules/module_registry.dart';
+import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../services/module_prefs.dart';
 
@@ -47,6 +50,32 @@ class ModulesSettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          // Dev-only: mount and preview the LIVE skchat_ui SkworldModule via a
+          // concrete ShellContext (U3). Pushed (not go'd) so system back pops
+          // it; never shown in release builds.
+          if (kDebugMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: ListTile(
+                key: const Key('dev-mount-skchat-module'),
+                tileColor: SovereignColors.surfaceRaised,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                leading: const Icon(
+                  Icons.science_outlined,
+                  color: SovereignColors.soulLumina,
+                ),
+                title: Text('Preview skchat module (dev)', style: tt.bodyLarge),
+                subtitle: Text(
+                  'Mount the live skchat_ui module via a concrete ShellContext',
+                  style: tt.bodySmall
+                      ?.copyWith(color: SovereignColors.textSecondary),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push(AppRoutes.moduleSkchat),
+              ),
+            ),
           for (final a in availability)
             _ModuleCard(
               key: Key('module-card-${a.manifest.id}'),
