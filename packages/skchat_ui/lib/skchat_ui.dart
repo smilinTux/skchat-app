@@ -11,9 +11,12 @@
 ///                      REAL chats list ([ConversationListTile] rows on the
 ///                      extracted Sovereign Glass theme, wired to the shell
 ///                      theme bridge and navigation bus), not the earlier
-///                      placeholder. The live data feed and the full
-///                      ConsumerWidget tile (trust badges, group composite
-///                      avatar) still land in later increments (see its TODO).
+///                      placeholder. Trust badges and the group composite
+///                      avatar are now wired too: the tile renders a
+///                      package-pure [PeerTrust] the app injects via
+///                      `ChatsSurface.trustResolver`, and a group row renders
+///                      the [GroupCompositeAvatar]. The live data feed is
+///                      injected from the app side (`LiveChatsSurface`).
 ///  * [ChatMessage] / [Conversation] - extracted leaf domain models (pure
 ///                      Dart / theme-only). The app keeps
 ///                      `lib/models/chat_message.dart` and
@@ -33,7 +36,10 @@ library;
 export 'src/chat_text.dart' show displayTextFor, normalizePeerKey;
 export 'src/chats_surface.dart';
 export 'src/conversation_tile.dart';
+export 'src/group_composite_avatar.dart';
 export 'src/models/chat_message.dart';
 export 'src/models/conversation.dart';
+export 'src/models/peer_trust.dart';
 export 'src/skchat_module.dart';
 export 'src/theme/theme.dart';
+export 'src/trust_badge.dart';

@@ -4,9 +4,15 @@ import 'package:skworld_module_api/skworld_module_api.dart';
 import 'chat_text.dart';
 import 'conversation_tile.dart';
 import 'models/conversation.dart';
+import 'models/peer_trust.dart';
 import 'theme/glass_widgets.dart';
 import 'theme/sovereign_colors.dart';
 import 'theme/sovereign_theme.dart';
+
+/// Resolves the injected trust view-model for a conversation row, or null for
+/// no badge. The app supplies this (resolving the real `peer_trust_store` /
+/// `group_trust` standing) so the package stays pure; omitted means no badges.
+typedef ConversationTrustResolver = PeerTrust? Function(Conversation conversation);
 
 /// Pure local filter over an injected conversation list (reconciled spec 3.2).
 ///
@@ -62,13 +68,21 @@ List<Conversation> filterConversations(
 /// representative sample so the real list UI is exercised in both modes, and an
 /// explicitly empty list renders the empty state.
 ///
-/// TODO(skchat-ui-extraction): trust badges + the group composite avatar remain
-/// the ONLY deferred ChatsScreen-parity pieces. They need `peer_trust_store` /
-/// `trust_badge`, which are still app-side and entangled with the service graph,
-/// so they stay behind until `lib/services` and the Riverpod graph are
-/// extracted. Everything else (real rows, navigation, compose, search) is wired.
+/// TRUST (the last deferred ChatsScreen-parity piece): trust badges and the
+/// group composite avatar are now wired. The badge draws from a package-pure
+/// [PeerTrust] view-model resolved app-side and injected via [trustResolver];
+/// the group composite avatar renders whenever a row is a group. Both stay on
+/// the pure side of the import gate: the real `peer_trust_store` / `group_trust`
+/// standing is resolved in the app's `LiveChatsSurface` and handed in through
+/// [trustResolver], never imported into this package. Omitting it (standalone /
+/// unwired) simply renders no badges.
 class ChatsSurface extends StatefulWidget {
-  const ChatsSurface({super.key, this.shell, this.conversations});
+  const ChatsSurface({
+    super.key,
+    this.shell,
+    this.conversations,
+    this.trustResolver,
+  });
 
   /// The shell surfaces when mounted, or null in standalone mode.
   final ShellContext? shell;
@@ -76,6 +90,11 @@ class ChatsSurface extends StatefulWidget {
   /// Injected conversations. Null renders a representative sample; an empty
   /// list renders the empty state; a populated list renders the real rows.
   final List<Conversation>? conversations;
+
+  /// Resolves the trust badge for each row from app-injected data. Null (or a
+  /// null result per row) renders no badge, so standalone / unwired mounts
+  /// still render cleanly.
+  final ConversationTrustResolver? trustResolver;
 
   @override
   State<ChatsSurface> createState() => _ChatsSurfaceState();
@@ -196,6 +215,7 @@ class _ChatsSurfaceState extends State<ChatsSurface> {
                       final conv = visible[index];
                       return ConversationListTile(
                         conversation: conv,
+                        trust: widget.trustResolver?.call(conv),
                         onTap: () => _openConversation(context, conv),
                       );
                     },
@@ -251,6 +271,23 @@ class _ChatsSurfaceState extends State<ChatsSurface> {
         soulFingerprint: 'skworld-ops-group',
         isGroup: true,
         memberCount: 4,
+        members: const [
+          ConversationMember(
+            identityUri: 'agent:lumina@skworld.io',
+            displayName: 'Lumina',
+            soulFingerprint: 'lumina-fp',
+          ),
+          ConversationMember(
+            identityUri: 'agent:jarvis@skworld.io',
+            displayName: 'Jarvis',
+            soulFingerprint: 'jarvis-fp',
+          ),
+          ConversationMember(
+            identityUri: 'agent:chef@skworld.io',
+            displayName: 'Chef',
+            soulFingerprint: 'chef-fp',
+          ),
+        ],
       ),
     ];
   }

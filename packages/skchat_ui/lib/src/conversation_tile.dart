@@ -1,37 +1,44 @@
 import 'package:flutter/material.dart';
 
 import 'chat_text.dart';
+import 'group_composite_avatar.dart';
 import 'models/conversation.dart';
+import 'models/peer_trust.dart';
 import 'theme/glass_widgets.dart';
 import 'theme/sovereign_colors.dart';
+import 'trust_badge.dart';
 
 /// A single conversation row in the extracted chats list (reconciled spec 3.2).
 ///
 /// This is a FAITHFUL SUBSET of the app's
 /// `lib/features/chats/widgets/conversation_tile.dart`: it renders the same
-/// Sovereign Glass card, soul-color [SoulAvatar], name, timestamp, E2E badge,
+/// Sovereign Glass card, soul-color avatar, name, timestamp, E2E badge,
 /// last-message preview (via [displayTextFor]), delivery status and unread
-/// count, but it is a plain [StatelessWidget] with NO Riverpod, NO
-/// `peer_trust_store` provider graph and NO Hive. That entanglement is why the
-/// full ConsumerWidget tile cannot move into this package yet (the import gate,
-/// spec 3.2 step 4, forbids skchat_ui importing a shell/app package).
+/// count, plus the two pieces the earlier increments deferred:
+///   * the TRUST BADGE, rendered from the injected [trust] view-model (a
+///     package-pure [PeerTrust] the app resolves from `peer_trust_store` /
+///     `group_trust` and hands in; null means no badge), and
+///   * the GROUP COMPOSITE AVATAR ([GroupCompositeAvatar]) for a group row,
+///     falling back to the [SoulAvatar] with initials for a 1:1.
 ///
-/// TODO(skchat-ui-extraction): restore the two dropped affordances once their
-/// dependencies are extracted into this package:
-///   * the per-row / aggregate trust badge (needs `peer_trust_store`,
-///     `trust_badge`, `group_trust`, all Riverpod providers), and
-///   * the group composite avatar (needs `group_composite_avatar`).
-/// A group row currently falls back to a [SoulAvatar] with the group initials
-/// instead of the composite avatar.
+/// It stays a plain [StatelessWidget] with NO Riverpod, NO `peer_trust_store`
+/// provider graph and NO Hive: the trust standing is INJECTED as [trust]
+/// (resolved app-side), never imported, so the import gate (spec 3.2 step 4)
+/// still holds and a standalone / unwired mount renders cleanly with no badge.
 class ConversationListTile extends StatelessWidget {
   const ConversationListTile({
     super.key,
     required this.conversation,
     this.onTap,
+    this.trust,
   });
 
   final Conversation conversation;
   final VoidCallback? onTap;
+
+  /// Injected trust view-model for this row (resolved app-side from the real
+  /// trust store). Null renders no badge, so standalone / unwired still works.
+  final PeerTrust? trust;
 
   @override
   Widget build(BuildContext context) {
@@ -51,15 +58,22 @@ class ConversationListTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Faithful-subset avatar: the composite group avatar is a TODO, so
-            // a group row uses the same SoulAvatar with its group initials.
-            SoulAvatar(
-              soulColor: soul,
-              initials: conversation.resolvedInitials,
-              isOnline: conversation.isOnline,
-              isAgent: conversation.isAgent,
-              size: 48,
-            ),
+            // A group row renders the composite/stacked-member avatar; a 1:1
+            // row keeps the soul-color SoulAvatar with its initials.
+            if (conversation.isGroup)
+              GroupCompositeAvatar(
+                members: conversation.members,
+                fallbackColor: soul,
+                size: 48,
+              )
+            else
+              SoulAvatar(
+                soulColor: soul,
+                initials: conversation.resolvedInitials,
+                isOnline: conversation.isOnline,
+                isAgent: conversation.isAgent,
+                size: 48,
+              ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -78,6 +92,13 @@ class ConversationListTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      // Trust badge (injected). Renders only when the app fed
+                      // trust data for this row; mirrors the app tile placing
+                      // it right after the name, before the timestamp.
+                      if (trust != null) ...[
+                        const SizedBox(width: 6),
+                        TrustBadge(level: trust!.level, compact: true),
+                      ],
                       const SizedBox(width: 8),
                       Text(
                         _formatTime(conversation.lastMessageTime),
