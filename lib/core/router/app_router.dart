@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/shell/app_shell.dart';
 import '../../features/shell/module_host_screen.dart';
-import '../../features/chats/chats_screen.dart';
+import '../../features/chats/chats_tab.dart';
 import '../../features/activity/activity_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/conversation/conversation_screen.dart';
@@ -283,7 +283,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.chats,
             pageBuilder: (context, state) => _noTransitionPage(
               state,
-              const ChatsScreen(),
+              // The Chats tab body is chosen by a flag (default OFF -> native
+              // ChatsScreen). ON renders the mounted skchat_ui module via the
+              // shared SkchatModuleHostScreen mount path. See ChatsTab.
+              const ChatsTab(),
             ),
             routes: [
               GoRoute(
