@@ -38,11 +38,27 @@ class AgentModel {
 
   factory AgentModel.fromJson(Map<String, dynamic> j) => AgentModel(
         id: j['id'] as String? ?? '',
-        provider: j['provider'] as String? ?? '',
+        // The gateway `/v1/models` catalog labels the source as `provider`;
+        // some entries carry only OpenAI-style `owned_by`. Fall back to it so
+        // the picker still shows nvidia/openrouter/etc.
+        provider: (j['provider'] as String?)?.trim().isNotEmpty == true
+            ? (j['provider'] as String)
+            : (j['owned_by'] as String? ?? ''),
         label: j['label'] as String?,
         local: j['local'] as bool? ?? false,
         free: j['free'] as bool?,
       );
+}
+
+/// Filters [models] to only free-flagged entries when [freeOnly] is true;
+/// returns the list unchanged when false. Pure (no widget/Riverpod deps) so
+/// the picker's "Free only" toggle is unit-testable over a fake catalog.
+List<AgentModel> filterModelsByFree(
+  List<AgentModel> models, {
+  required bool freeOnly,
+}) {
+  if (!freeOnly) return models;
+  return models.where((m) => m.free == true).toList();
 }
 
 /// The roles and models an agent's selection can be set to.
