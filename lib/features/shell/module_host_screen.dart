@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../services/audience_token_service.dart';
 import '../../services/identity_service.dart';
 import '../chats/live_chats_surface.dart';
 import 'app_shell_context.dart';
@@ -71,14 +72,20 @@ class _SkchatModuleHostScreenState
 
   @override
   Widget build(BuildContext context) {
-    // The device PGP fingerprint stands in as the current agent subject until
-    // capauth audience minting lands (token stays stubbed either way).
+    // The device PGP fingerprint stands in as the current agent subject.
     final identity = ref.watch(identityKeyPairProvider).valueOrNull;
+
+    // The audience-token minter rides the app's authenticated client. It
+    // returns null (module runs tokenless) while the backend mint flag is off.
+    final audienceTokens = ref.watch(audienceTokenServiceProvider);
 
     final shell = AppShellContext(
       theme: Theme.of(context),
       bus: _bus,
-      auth: AppAuthContext(subjectFqid: identity?.fingerprint),
+      auth: AppAuthContext(
+        subjectFqid: identity?.fingerprint,
+        tokenMinter: audienceTokens.mint,
+      ),
     );
 
     // The whole point: render the LIVE module with a NON-NULL shell context.
