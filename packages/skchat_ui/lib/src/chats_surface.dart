@@ -1,24 +1,59 @@
 import 'package:flutter/material.dart';
 import 'package:skworld_module_api/skworld_module_api.dart';
 
+import 'chat_text.dart';
 import 'conversation_tile.dart';
 import 'models/conversation.dart';
 import 'theme/glass_widgets.dart';
 import 'theme/sovereign_colors.dart';
 import 'theme/sovereign_theme.dart';
 
+/// Pure local filter over an injected conversation list (reconciled spec 3.2).
+///
+/// A blank or whitespace-only [query] returns [conversations] unchanged (empty
+/// query shows all). Otherwise it matches the query case-insensitively against
+/// each conversation's peer display name, its normalized peer key (via
+/// [normalizePeerKey]), and its displayable preview text (via [displayTextFor],
+/// so transport envelopes / control sentinels never leak into a match). No
+/// matches yields an empty list, which the surface renders as its empty state.
+///
+/// This is deliberately a pure function over the ALREADY-injected list: search
+/// introduces no new data source, it only narrows what the app already fed in.
+List<Conversation> filterConversations(
+  List<Conversation> conversations,
+  String query,
+) {
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return conversations;
+  return conversations.where((c) {
+    final name = c.displayName.toLowerCase();
+    final key = normalizePeerKey(c.peerId);
+    final preview = (displayTextFor(c.lastMessage) ?? '').toLowerCase();
+    return name.contains(q) || key.contains(q) || preview.contains(q);
+  }).toList();
+}
+
 /// The body [SkchatModule.build] renders inside the shell (mounted) and under
 /// the standalone runner (reconciled spec 3.2).
 ///
-/// This is now the REAL chats surface, not the earlier placeholder Scaffold: it
-/// renders the extracted [Conversation] list through [ConversationListTile]
-/// (soul-color avatars, E2E badge, previews, delivery status, unread counts) on
-/// the extracted Sovereign Glass theme. It wires two shell surfaces for real:
+/// This is the REAL chats surface: it renders the extracted [Conversation] list
+/// through [ConversationListTile] (soul-color avatars, E2E badge, previews,
+/// delivery status, unread counts) on the extracted Sovereign Glass theme, and
+/// now carries the two ChatsScreen-parity pieces the prior increments deferred:
+///   * a COMPOSE FAB (Sovereign Glass styled) that, mounted, asks `shell.bus`
+///     to navigate the module's `skworld://skchat/compose` deep link; standalone
+///     (`shell == null`) it shows a local SnackBar (its own compose router lands
+///     with the standalone runner), mirroring how row-tap navigation degrades.
+///   * SEARCH, an AppBar action that filters the injected list LOCALLY via
+///     [filterConversations] (empty query shows all, no matches shows the empty
+///     state). No new data source: it only narrows the already-injected list.
+///
+/// It wires two shell surfaces for real:
 ///   * the THEME BRIDGE: mounted, it renders under `shell.theme`; standalone
 ///     (`shell == null`) it falls back to the extracted [SovereignTheme.dark].
-///   * NAVIGATION: mounted, a tapped row asks `shell.bus` to navigate the
-///     module's `skworld://skchat/thread/<peerId>` deep link; standalone it
-///     shows a local SnackBar (its own router lands with the standalone runner).
+///   * NAVIGATION: mounted, a tapped row (or the FAB) asks `shell.bus` to
+///     navigate the module's `skworld://skchat/...` deep link; standalone it
+///     shows a local SnackBar.
 ///
 /// DATA: the live list still comes from the app's `chatsProvider` (Riverpod +
 /// Hive + skcomms_client), which cannot move into this package yet without
@@ -27,12 +62,12 @@ import 'theme/sovereign_theme.dart';
 /// representative sample so the real list UI is exercised in both modes, and an
 /// explicitly empty list renders the empty state.
 ///
-/// TODO(skchat-ui-extraction): once `lib/services` (skcomms_client,
-/// peer_trust_store), `lib/data` (conversation_repository) and the Riverpod
-/// graph are extracted, feed the live `chatsProvider` list here and restore the
-/// full ConsumerWidget tile (trust badges, group composite avatar), plus the
-/// compose FAB and search that the app's `ChatsScreen` still owns.
-class ChatsSurface extends StatelessWidget {
+/// TODO(skchat-ui-extraction): trust badges + the group composite avatar remain
+/// the ONLY deferred ChatsScreen-parity pieces. They need `peer_trust_store` /
+/// `trust_badge`, which are still app-side and entangled with the service graph,
+/// so they stay behind until `lib/services` and the Riverpod graph are
+/// extracted. Everything else (real rows, navigation, compose, search) is wired.
+class ChatsSurface extends StatefulWidget {
   const ChatsSurface({super.key, this.shell, this.conversations});
 
   /// The shell surfaces when mounted, or null in standalone mode.
@@ -43,12 +78,57 @@ class ChatsSurface extends StatelessWidget {
   final List<Conversation>? conversations;
 
   @override
+  State<ChatsSurface> createState() => _ChatsSurfaceState();
+}
+
+class _ChatsSurfaceState extends State<ChatsSurface> {
+  final TextEditingController _searchCtl = TextEditingController();
+
+  /// Whether the AppBar is in search mode (title swapped for a search field).
+  bool _searching = false;
+
+  /// The current search query. Empty shows all; non-empty filters locally.
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtl.dispose();
+    super.dispose();
+  }
+
+  void _openSearch() => setState(() => _searching = true);
+
+  void _closeSearch() => setState(() {
+        _searching = false;
+        _query = '';
+        _searchCtl.clear();
+      });
+
+  /// Compose: mounted, hand the compose deep link to the shell to route (the
+  /// module's own `nav.deeplinkPrefix` authority, spec 3.1). Standalone, no
+  /// compose router yet (lands with apps/skchat_standalone), so mirror row-tap
+  /// and show a local SnackBar.
+  void _onCompose(BuildContext context) {
+    final bus = widget.shell?.bus;
+    if (bus != null) {
+      bus.navigate('skworld://skchat/compose');
+      return;
+    }
+    // TODO(skchat-standalone): route compose through the standalone runner's
+    // own router once it lands; for now degrade like row-tap navigation.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('New message')),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final mounted = shell != null;
+    final mounted = widget.shell != null;
     // Theme bridge: the shell's theme when mounted, the extracted Sovereign
     // Glass theme when standalone.
-    final theme = shell?.theme ?? SovereignTheme.dark();
-    final convos = conversations ?? _sampleConversations();
+    final theme = widget.shell?.theme ?? SovereignTheme.dark();
+    final all = widget.conversations ?? _sampleConversations();
+    final visible = filterConversations(all, _query);
 
     return Theme(
       data: theme,
@@ -56,29 +136,76 @@ class ChatsSurface extends StatelessWidget {
         backgroundColor: SovereignColors.surfaceBase,
         appBar: AppBar(
           backgroundColor: SovereignColors.surfaceBase,
-          title: const Text('Chats'),
+          title: _searching
+              ? TextField(
+                  controller: _searchCtl,
+                  autofocus: true,
+                  style: const TextStyle(color: SovereignColors.textPrimary),
+                  cursorColor: SovereignColors.soulLumina,
+                  decoration: const InputDecoration(
+                    hintText: 'Search chats',
+                    hintStyle:
+                        TextStyle(color: SovereignColors.textSecondary),
+                    border: InputBorder.none,
+                  ),
+                  onChanged: (value) => setState(() => _query = value),
+                )
+              : const Text('Chats'),
           // Mounted, the shell already frames the module, so no back arrow.
-          automaticallyImplyLeading: !mounted,
-        ),
-        body: convos.isEmpty
-            ? _EmptyChats()
-            : ListView.builder(
-                padding: const EdgeInsets.only(top: 8, bottom: 24),
-                itemCount: convos.length,
-                itemBuilder: (context, index) {
-                  final conv = convos[index];
-                  return ConversationListTile(
-                    conversation: conv,
-                    onTap: () => _openConversation(context, conv),
-                  );
-                },
+          automaticallyImplyLeading: !mounted && !_searching,
+          leading: _searching
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Close search',
+                  onPressed: _closeSearch,
+                )
+              : null,
+          actions: [
+            if (_searching)
+              IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: 'Clear search',
+                onPressed: _closeSearch,
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.search_rounded),
+                tooltip: 'Search',
+                onPressed: _openSearch,
               ),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () => _onCompose(context),
+          tooltip: 'New message',
+          backgroundColor: SovereignColors.soulLumina,
+          foregroundColor: SovereignColors.surfaceBase,
+          child: const Icon(Icons.edit_rounded),
+        ),
+        body: all.isEmpty
+            ? const _EmptyChats()
+            : visible.isEmpty
+                ? const _EmptyChats(
+                    title: 'No matches',
+                    subtitle: 'Try a different name or message.',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.only(top: 8, bottom: 96),
+                    itemCount: visible.length,
+                    itemBuilder: (context, index) {
+                      final conv = visible[index];
+                      return ConversationListTile(
+                        conversation: conv,
+                        onTap: () => _openConversation(context, conv),
+                      );
+                    },
+                  ),
       ),
     );
   }
 
   void _openConversation(BuildContext context, Conversation conv) {
-    final bus = shell?.bus;
+    final bus = widget.shell?.bus;
     if (bus != null) {
       // Mounted: hand the deep link back to the shell to route (the module's
       // own deeplink_prefix, spec 3.1).
@@ -93,7 +220,7 @@ class ChatsSurface extends StatelessWidget {
 
   /// A small representative sample so the real list UI renders when no live
   /// list is injected. NOT wired to any daemon; the live `chatsProvider` feeds
-  /// [conversations] once the service graph is extracted (see class TODO).
+  /// [ChatsSurface.conversations] once the service graph is extracted.
   static List<Conversation> _sampleConversations() {
     final now = DateTime.now();
     return [
@@ -130,8 +257,17 @@ class ChatsSurface extends StatelessWidget {
 }
 
 /// Empty state, mirrors the app ChatsScreen's empty view (glass encrypt badge
-/// plus a prompt) without its router dependency.
+/// plus a prompt) without its router dependency. Reused for the no-search-match
+/// case with a distinct title/subtitle.
 class _EmptyChats extends StatelessWidget {
+  const _EmptyChats({
+    this.title = 'No conversations yet',
+    this.subtitle = 'Start a new encrypted chat.',
+  });
+
+  final String title;
+  final String subtitle;
+
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
@@ -141,10 +277,10 @@ class _EmptyChats extends StatelessWidget {
         children: [
           const EncryptBadge(size: 40),
           const SizedBox(height: 20),
-          Text('No conversations yet', style: tt.titleLarge),
+          Text(title, style: tt.titleLarge),
           const SizedBox(height: 8),
           Text(
-            'Start a new encrypted chat.',
+            subtitle,
             style: tt.bodyMedium
                 ?.copyWith(color: SovereignColors.textSecondary),
           ),
