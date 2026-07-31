@@ -21,12 +21,19 @@ class AppNavTab {
     required this.icon,
     required this.activeIcon,
     required this.path,
+    this.available = true,
   });
 
   final String label;
   final IconData icon;
   final IconData activeIcon;
   final String path;
+
+  /// Whether the module backing this tab is currently available (its required
+  /// node capabilities resolve). Unavailable tabs are NOT hidden, they render
+  /// dimmed so the nav is honest ("grey with a reason, never hide"); the subapp
+  /// screen itself explains why. The Ops hub and core tabs are always true.
+  final bool available;
 }
 
 /// The presentational shell scaffold: given a fully-resolved navigation model
@@ -212,6 +219,10 @@ class AppShellScaffold extends StatelessWidget {
               final tab = tabs[i];
               final isActive = i == currentIndex;
               final accentColor = Theme.of(context).colorScheme.primary;
+              // Dim a capability-down tab (unless it's the current screen, where
+              // full contrast keeps the active highlight legible). Honest grey,
+              // never hidden.
+              final dimmed = !tab.available && !isActive;
 
               return Expanded(
                 child: InkWell(
@@ -221,34 +232,39 @@ class AppShellScaffold extends StatelessWidget {
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOutCubic,
                     padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: Icon(
-                            isActive ? tab.activeIcon : tab.icon,
-                            key: ValueKey(isActive),
-                            size: 24,
-                            color: isActive
-                                ? accentColor
-                                : SovereignColors.textSecondary,
+                    child: Opacity(
+                      opacity: dimmed ? 0.45 : 1.0,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(
+                              isActive ? tab.activeIcon : tab.icon,
+                              key: ValueKey(isActive),
+                              size: 24,
+                              color: isActive
+                                  ? accentColor
+                                  : SovereignColors.textSecondary,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          tab.label,
-                          style:
-                              Theme.of(context).textTheme.labelSmall?.copyWith(
-                                    color: isActive
-                                        ? accentColor
-                                        : SovereignColors.textSecondary,
-                                    fontWeight: isActive
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
-                        ),
-                      ],
+                          const SizedBox(height: 4),
+                          Text(
+                            tab.label,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: isActive
+                                      ? accentColor
+                                      : SovereignColors.textSecondary,
+                                  fontWeight: isActive
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -322,7 +338,11 @@ class _SovereignNavRailState extends State<_SovereignNavRail> {
       destinations: [
         for (var i = 0; i < widget.tabs.length; i++)
           NavigationRailDestination(
-            icon: _railIcon(widget.tabs[i].icon, widget.badgeCounts[i]),
+            icon: _railIcon(
+              widget.tabs[i].icon,
+              widget.badgeCounts[i],
+              dimmed: !widget.tabs[i].available,
+            ),
             selectedIcon:
                 _railIcon(widget.tabs[i].activeIcon, widget.badgeCounts[i]),
             label: Text(widget.tabs[i].label),
@@ -351,15 +371,21 @@ class _SovereignNavRailState extends State<_SovereignNavRail> {
     );
   }
 
-  /// Wraps a destination icon in a [Badge] when its count is non-zero.
-  Widget _railIcon(IconData icon, int count) {
-    final iconWidget = Icon(icon);
-    if (count <= 0) return iconWidget;
-    return Badge(
-      label: Text(count > 99 ? '99+' : '$count'),
-      backgroundColor: SovereignColors.accentDanger,
-      child: iconWidget,
-    );
+  /// Wraps a destination icon in a [Badge] when its count is non-zero, and dims
+  /// it when the backing module is capability-down (honest grey, never hidden).
+  Widget _railIcon(IconData icon, int count, {bool dimmed = false}) {
+    Widget iconWidget = Icon(icon);
+    if (count > 0) {
+      iconWidget = Badge(
+        label: Text(count > 99 ? '99+' : '$count'),
+        backgroundColor: SovereignColors.accentDanger,
+        child: iconWidget,
+      );
+    }
+    if (dimmed) {
+      iconWidget = Opacity(opacity: 0.45, child: iconWidget);
+    }
+    return iconWidget;
   }
 }
 

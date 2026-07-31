@@ -147,6 +147,47 @@ const List<ModuleManifest> kBuiltinModules = [
   ),
 ];
 
+// ── Seed-version migration ────────────────────────────────────────────────────
+//
+// New modules must default-ON for EXISTING users whose persisted [ModulePrefs]
+// predate them, WITHOUT re-enabling modules those users deliberately turned off.
+// A monotonic seed version solves this: each user's prefs carry the version they
+// were last seeded/migrated at; on load we additively union the ids introduced
+// at every version above theirs, then bump their stored version. Because a module
+// introduced at version N is only ever toggleable by a user already at version
+// >= N, unioning version-N ids for a user below N can never resurrect a choice
+// they made (they never saw that module), so the union is always safe.
+
+/// The current module seed version. BUMP THIS whenever a new default-on module
+/// is added, and list the new id(s) under the new version key in
+/// [kModulesIntroducedAtVersion]. Fresh installs seed every module at this
+/// version; existing users additively pick up only the ids above their stored
+/// version.
+const int kCurrentSeedVersion = 1;
+
+/// Module ids first shipped as default-on at each seed version (> 0). Version 1
+/// introduces `skcode`, folded in as the "Code" nav subapp (R4.1). Versions are
+/// cumulative via [modulesIntroducedAfter]; only add ids here, never remove
+/// (removing an id would silently strip it from upgrading users on the next
+/// migration pass).
+const Map<int, List<String>> kModulesIntroducedAtVersion = {
+  1: ['skcode'],
+};
+
+/// Ids introduced strictly AFTER [fromVersion] and up to [kCurrentSeedVersion].
+/// The prefs seed-version migration unions these into an upgrading user's
+/// enabled set so newly-added modules default on without disturbing prior
+/// choices. Returns empty when the user is already current.
+Set<String> modulesIntroducedAfter(int fromVersion) {
+  final out = <String>{};
+  for (final entry in kModulesIntroducedAtVersion.entries) {
+    if (entry.key > fromVersion && entry.key <= kCurrentSeedVersion) {
+      out.addAll(entry.value);
+    }
+  }
+  return out;
+}
+
 // ── Providers ───────────────────────────────────────────────────────────────
 
 /// All declared module manifests (the static registry).

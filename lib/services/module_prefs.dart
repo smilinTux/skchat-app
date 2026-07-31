@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../core/modules/module_manifest.dart';
+import '../core/modules/module_registry.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 /// Module preferences, the *settings* half of the availability/placement
@@ -24,6 +25,7 @@ const _kModulePrefsBox = 'module_prefs';
 const _kEnabledKey = 'enabled_ids';
 const _kPlacementKey = 'placement'; // Map<id, slotWire>
 const _kOrderKey = 'order'; // Map<id, int>
+const _kSeedVersionKey = 'seed_version'; // int, monotonic seed/migration marker
 
 /// Immutable snapshot of the user's module preferences.
 class ModulePrefs {
@@ -31,6 +33,7 @@ class ModulePrefs {
     this.enabledIds = const {},
     this.placement = const {},
     this.order = const {},
+    this.seedVersion = 0,
     this.initialized = false,
   });
 
@@ -44,6 +47,11 @@ class ModulePrefs {
 
   /// Per-module order override. Absent → use the manifest order.
   final Map<String, int> order;
+
+  /// The module seed version this snapshot was last seeded/migrated at (see
+  /// [kCurrentSeedVersion]). Newly-introduced default-on modules are unioned in
+  /// on load whenever this trails the current version, then this is bumped.
+  final int seedVersion;
 
   /// Whether prefs have been loaded/seeded from storage at least once.
   final bool initialized;
@@ -61,12 +69,14 @@ class ModulePrefs {
     Set<String>? enabledIds,
     Map<String, ModulePlacement>? placement,
     Map<String, int>? order,
+    int? seedVersion,
     bool? initialized,
   }) {
     return ModulePrefs(
       enabledIds: enabledIds ?? this.enabledIds,
       placement: placement ?? this.placement,
       order: order ?? this.order,
+      seedVersion: seedVersion ?? this.seedVersion,
       initialized: initialized ?? this.initialized,
     );
   }
@@ -94,6 +104,7 @@ class ModulePrefsNotifier extends Notifier<ModulePrefs> {
       final enabledRaw = box.get(_kEnabledKey);
       final placementRaw = box.get(_kPlacementKey);
       final orderRaw = box.get(_kOrderKey);
+      final seedVersionRaw = box.get(_kSeedVersionKey);
 
       // Nothing persisted yet → leave uninitialized so seedFrom() runs.
       if (enabledRaw == null && placementRaw == null && orderRaw == null) {
@@ -118,12 +129,39 @@ class ModulePrefsNotifier extends Notifier<ModulePrefs> {
         });
       }
 
+      final persistedSeedVersion = seedVersionRaw is int
+          ? seedVersionRaw
+          : int.tryParse(seedVersionRaw?.toString() ?? '') ?? 0;
+
+      // Seed-version migration: additively union the ids introduced above the
+      // user's stored version (new default-on modules), then bump the version.
+      // Never removes ids and never re-enables ones the user explicitly turned
+      // off (an id introduced at version N is only reachable once the user is
+      // already at version >= N, so a below-N user never had the chance to
+      // disable it). See [kCurrentSeedVersion] / [modulesIntroducedAfter].
+      var effectiveEnabled = enabled;
+      var effectiveSeedVersion = persistedSeedVersion;
+      var migrated = false;
+      if (persistedSeedVersion < kCurrentSeedVersion) {
+        effectiveEnabled = {
+          ...enabled,
+          ...modulesIntroducedAfter(persistedSeedVersion),
+        };
+        effectiveSeedVersion = kCurrentSeedVersion;
+        migrated = true;
+      }
+
       state = ModulePrefs(
-        enabledIds: enabled,
+        enabledIds: effectiveEnabled,
         placement: placement,
         order: order,
+        seedVersion: effectiveSeedVersion,
         initialized: true,
       );
+
+      // Persist the migrated set so the union + bump is durable (and the
+      // migration doesn't re-run every launch).
+      if (migrated) await _persist();
     } catch (_) {
       // Hive unavailable, leave defaults; seedFrom() will populate in-memory.
     }
@@ -135,7 +173,13 @@ class ModulePrefsNotifier extends Notifier<ModulePrefs> {
   void seedFrom(List<ModuleManifest> modules) {
     if (state.initialized) return;
     final enabled = {for (final m in modules) m.id};
-    state = state.copyWith(enabledIds: enabled, initialized: true);
+    // First run seeds every module AND stamps the current seed version, so the
+    // additive migration in _loadPersisted is a no-op on the next launch.
+    state = state.copyWith(
+      enabledIds: enabled,
+      seedVersion: kCurrentSeedVersion,
+      initialized: true,
+    );
     // Persist the seed so subsequent launches load it instead of re-seeding.
     _persist();
   }
@@ -174,6 +218,7 @@ class ModulePrefsNotifier extends Notifier<ModulePrefs> {
       await box.delete(_kEnabledKey);
       await box.delete(_kPlacementKey);
       await box.delete(_kOrderKey);
+      await box.delete(_kSeedVersionKey);
     } catch (_) {
       // best-effort
     }
@@ -188,6 +233,7 @@ class ModulePrefsNotifier extends Notifier<ModulePrefs> {
         {for (final e in state.placement.entries) e.key: e.value.wire},
       );
       await box.put(_kOrderKey, Map<String, int>.from(state.order));
+      await box.put(_kSeedVersionKey, state.seedVersion);
     } catch (_) {
       // best-effort persistence; in-memory state already updated.
     }
