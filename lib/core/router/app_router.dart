@@ -26,6 +26,7 @@ import '../../features/facetime/facetime_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
+import '../../features/skcode/skcode_pane.dart';
 import '../../features/skmap/skmap_screen.dart';
 import '../../features/skos/skos_files_screen.dart';
 import '../../features/skos/skos_control_screen.dart';
@@ -48,6 +49,9 @@ class AppRoutes {
 
   /// SK Spaces directory (live audio rooms): /spaces
   static const spaces = '/spaces';
+
+  /// Code (skcode remote agent sessions), the skcode subapp pane: /code
+  static const code = '/code';
 
   /// Operator hub ("Ops" tab), links the operator control surfaces: /hub
   static const hub = '/hub';
@@ -332,6 +336,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const SpacesDirectoryScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.code,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const SkcodePane(),
             ),
           ),
           GoRoute(

@@ -44,6 +44,21 @@ const List<ModuleManifest> kBuiltinModules = [
     order: 10,
     description: 'Live audio rooms',
   ),
+  // skcode: remote agent coding sessions, folded in as the "Code" subapp
+  // (reconciled spec R4.1/R4.7). Grade B today: the pane embeds the
+  // skcode-hostd web client over the 443 funnel. No `requires` yet (there is no
+  // node-capability id for skcode), so it is always placed; the pane itself
+  // shows a paired/unpaired state honestly rather than greying the tab.
+  ModuleManifest(
+    id: 'skcode',
+    title: 'Code',
+    icon: Icons.terminal_outlined,
+    activeIcon: Icons.terminal_rounded,
+    route: AppRoutes.code,
+    defaultPlacement: ModulePlacement.nav,
+    order: 15,
+    description: 'Remote agent coding sessions',
+  ),
   ModuleManifest(
     id: 'activity',
     title: 'Activity',

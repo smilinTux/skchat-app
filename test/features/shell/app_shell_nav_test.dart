@@ -4,7 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skchat/core/router/app_router.dart';
 import 'package:skchat/core/theme/glass_widgets.dart';
+import 'package:skchat/features/chats/chats_provider.dart';
 import 'package:skchat/features/shell/app_shell.dart';
+import 'package:skchat/models/conversation.dart';
+import 'package:skchat/services/consent_service.dart';
 import 'package:skchat/services/skcomms_sync.dart';
 
 /// Stub the daemon sync notifier so tests never start the real 5s/15s poll
@@ -14,10 +17,18 @@ class _StubSync extends SKCommsSyncNotifier {
   DaemonState build() => const DaemonState(status: DaemonStatus.connecting);
 }
 
+/// Stub the chats notifier so the shell's unread badge does not touch Hive /
+/// the daemon in a widget test. Empty list = zero unread.
+class _StubChats extends ChatsNotifier {
+  @override
+  List<Conversation> build() => const [];
+}
+
 /// Active (filled) icon shown for the currently selected tab.
 const _activeIcons = <String, IconData>{
   'chats': Icons.chat_bubble_rounded,
   'spaces': Icons.podcasts_rounded,
+  'skcode': Icons.terminal_rounded,
   'activity': Icons.notifications_rounded,
   'ops': Icons.grid_view_rounded,
   'me': Icons.person_rounded,
@@ -52,6 +63,7 @@ Widget _app(String initialLocation, {Widget child = const _FabChild()}) {
           for (final path in const [
             AppRoutes.chats,
             AppRoutes.spaces,
+            AppRoutes.code,
             AppRoutes.activity,
             AppRoutes.hub,
             AppRoutes.profile,
@@ -68,6 +80,8 @@ Widget _app(String initialLocation, {Widget child = const _FabChild()}) {
   return ProviderScope(
     overrides: [
       skcommsSyncProvider.overrideWith(_StubSync.new),
+      chatsProvider.overrideWith(_StubChats.new),
+      consentPendingCountProvider.overrideWith((ref) => 0),
     ],
     child: MaterialApp.router(routerConfig: router),
   );
@@ -95,6 +109,7 @@ void main() {
   const cases = <String, String>{
     AppRoutes.chats: 'chats',
     AppRoutes.spaces: 'spaces',
+    AppRoutes.code: 'skcode',
     AppRoutes.activity: 'activity',
     AppRoutes.hub: 'ops',
     AppRoutes.profile: 'me',

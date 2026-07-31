@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/modules/module_manifest.dart';
+import '../../core/modules/module_registry.dart';
 import '../../core/router/app_router.dart';
 import '../../features/calls/incoming_call_watcher.dart';
 import '../../features/calls/widgets/incoming_call_banner.dart';
@@ -58,85 +60,95 @@ class AppShell extends ConsumerWidget {
 
   final Widget child;
 
-  static const _tabs = <AppNavTab>[
-    AppNavTab(
-      label: 'Chats',
-      icon: Icons.chat_bubble_outline_rounded,
-      activeIcon: Icons.chat_bubble_rounded,
-      path: AppRoutes.chats,
-    ),
-    AppNavTab(
-      label: 'Spaces',
-      icon: Icons.podcasts_outlined,
-      activeIcon: Icons.podcasts_rounded,
-      path: AppRoutes.spaces,
-    ),
-    AppNavTab(
-      label: 'Activity',
-      icon: Icons.notifications_outlined,
-      activeIcon: Icons.notifications_rounded,
-      path: AppRoutes.activity,
-    ),
-    // Ops hub, gateway to the operator control surfaces (Cluster, Coord,
-    // Recordings, Conferences, Groups). Keeps the bottom bar at 5 items while
-    // making every operator route reachable in <= 2 taps.
-    AppNavTab(
-      label: 'Ops',
-      icon: Icons.grid_view_outlined,
-      activeIcon: Icons.grid_view_rounded,
-      path: AppRoutes.hub,
-    ),
-    AppNavTab(
-      label: 'Me',
-      icon: Icons.person_outline_rounded,
-      activeIcon: Icons.person_rounded,
-      path: AppRoutes.profile,
-    ),
-  ];
+  /// The operator "Ops" hub is a gateway to the operator control surfaces
+  /// (Cluster, Coord, Recordings, SkMap), not a registry subapp module, so it
+  /// is inserted as a fixed destination just before "Me". It stays highlighted
+  /// while on the hub or any surface it gates.
+  static const _opsTab = AppNavTab(
+    label: 'Ops',
+    icon: Icons.grid_view_outlined,
+    activeIcon: Icons.grid_view_rounded,
+    path: AppRoutes.hub,
+  );
 
-  int _indexFor(BuildContext context, WidgetRef _) {
-    final location = GoRouterState.of(context).matchedLocation;
-    if (location.startsWith(AppRoutes.spaces)) return 1;
-    if (location.startsWith(AppRoutes.activity)) return 2;
-    // "Ops" stays highlighted while on the hub or any operator surface it
-    // gates (cluster / coord / recordings).
-    if (location.startsWith(AppRoutes.hub) ||
-        location.startsWith(AppRoutes.cluster) ||
-        location.startsWith(AppRoutes.skmap) ||
-        location.startsWith(AppRoutes.coord) ||
-        location.startsWith(AppRoutes.recordings)) {
-      return 3;
-    }
-    if (location.startsWith(AppRoutes.profile)) return 4;
-    return 0; // chats
-  }
+  static bool _isOpsLocation(String location) =>
+      location.startsWith(AppRoutes.hub) ||
+      location.startsWith(AppRoutes.cluster) ||
+      location.startsWith(AppRoutes.skmap) ||
+      location.startsWith(AppRoutes.coord) ||
+      location.startsWith(AppRoutes.recordings);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final currentIndex = _indexFor(context, ref);
     final daemonState = ref.watch(skcommsSyncProvider);
     final isOffline = daemonState.status == DaemonStatus.offline;
 
-    // Badge counts are derived from the SAME existing providers, so both the
-    // bottom bar and the wide left rail render one model. Chats shows total
-    // unread across conversations; Ops shows pending consent requests. Other
-    // tabs carry no badge. The list aligns 1:1 with [_tabs].
+    // The primary destinations are derived from the module registry: every
+    // nav-placed subapp module becomes a tab, in manifest order, with the
+    // special Ops hub inserted before "Me". This is the R4.1 nav migration:
+    // the registry is the source of truth and the shell renders from it
+    // instead of a hand-maintained const list. We read the raw registry (the
+    // const manifest list), NOT capability/availability or per-user placement
+    // prefs, so the core nav is always present and deterministic, exactly as
+    // the old static tab list was, and a newly-added module (skcode) shows for
+    // every user. Wiring capability-gating and the user's nav placement prefs
+    // into the primary nav is a follow-up (the latter needs a prefs
+    // seed-version migration so new modules default-on without re-enabling ones
+    // the user disabled).
+    final navModules = ref
+        .watch(moduleRegistryProvider)
+        .where((m) => m.defaultPlacement == ModulePlacement.nav)
+        .toList()
+      ..sort((a, b) => a.order.compareTo(b.order));
+
+    // Badge counts come from the SAME providers as before, so both the bottom
+    // bar and the wide left rail render one model. Chats shows total unread;
+    // Ops shows pending consent. Every list stays aligned 1:1 with [tabs].
     final unreadTotal = ref
         .watch(chatsProvider)
         .fold<int>(0, (sum, c) => sum + c.unreadCount);
     final pendingConsent = ref.watch(consentPendingCountProvider);
-    final badgeCounts = <int>[
-      unreadTotal, // Chats
-      0, // Spaces
-      0, // Activity
-      pendingConsent, // Ops
-      0, // Me
-    ];
+
+    final tabs = <AppNavTab>[];
+    final badgeCounts = <int>[];
+    var opsInserted = false;
+    void addOps() {
+      tabs.add(_opsTab);
+      badgeCounts.add(pendingConsent);
+      opsInserted = true;
+    }
+
+    for (final m in navModules) {
+      if (!opsInserted && m.id == 'profile') addOps();
+      tabs.add(AppNavTab(
+        label: m.title,
+        icon: m.icon,
+        activeIcon: m.effectiveActiveIcon,
+        path: m.route,
+      ));
+      badgeCounts.add(m.id == 'chats' ? unreadTotal : 0);
+    }
+    if (!opsInserted) addOps(); // no profile module (defensive): Ops goes last.
+
+    final location = GoRouterState.of(context).matchedLocation;
+    var currentIndex = 0;
+    for (var i = 0; i < tabs.length; i++) {
+      final path = tabs[i].path;
+      if (path == AppRoutes.hub) {
+        if (_isOpsLocation(location)) {
+          currentIndex = i;
+          break;
+        }
+      } else if (location.startsWith(path)) {
+        currentIndex = i;
+        break;
+      }
+    }
 
     return _IncomingCallPoller(
       child: PiPOverlay(
         child: AppShellScaffold(
-          tabs: _tabs,
+          tabs: tabs,
           currentIndex: currentIndex,
           isOffline: isOffline,
           badgeCounts: badgeCounts,
