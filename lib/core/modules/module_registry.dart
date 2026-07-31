@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/capabilities_service.dart';
 import '../../services/module_prefs.dart';
 import '../router/app_router.dart';
+import 'external_modules.dart';
 import 'module_manifest.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -190,9 +191,18 @@ Set<String> modulesIntroducedAfter(int fromVersion) {
 
 // ── Providers ───────────────────────────────────────────────────────────────
 
-/// All declared module manifests (the static registry).
+/// All module manifests the shell knows about: the static [kBuiltinModules]
+/// registry AUGMENTED with any subapp manifests discovered at runtime
+/// ([externalModulesProvider]). Discovery is gated by [kUseShellDynamicModules]
+/// (default OFF), and external manifests only ADD genuinely-new ids (a builtin
+/// wins any id collision), so with the flag off, or discovery failing, this is
+/// exactly [kBuiltinModules]. See [mergeModules].
 final moduleRegistryProvider = Provider<List<ModuleManifest>>((ref) {
-  return kBuiltinModules;
+  final external = kUseShellDynamicModules
+      ? (ref.watch(externalModulesProvider).asData?.value ?? const [])
+      : const <ModuleManifest>[];
+  if (external.isEmpty) return kBuiltinModules;
+  return mergeModules(kBuiltinModules, external);
 });
 
 /// Registry ∩ node capabilities, each module paired with its resolved
@@ -211,9 +221,12 @@ final moduleAvailabilityProvider =
   final caps = capsAsync.asData?.value;
 
   final hints = caps?.moduleHints ?? const <String>[];
+  // The node `modules` hint block is an operator "ship these builtins" filter.
+  // Discovered (external) modules are NOT subject to it: they were explicitly
+  // served by this node's shell-modules endpoint, which IS the operator intent.
   final filtered = hints.isEmpty
       ? modules
-      : modules.where((m) => hints.contains(m.id)).toList();
+      : modules.where((m) => m.external || hints.contains(m.id)).toList();
 
   return [
     for (final m in filtered)
@@ -265,7 +278,13 @@ final enabledModulesProvider = Provider<List<PlacedModule>>((ref) {
 
   final out = <PlacedModule>[];
   for (final a in availability) {
-    if (!prefs.isEnabled(a.manifest.id)) continue;
+    // External (discovered) modules are treated as always-enabled: the prefs
+    // seed-version migration is keyed to compile-time builtin ids and cannot
+    // know a runtime-discovered id, so gating them on `isEnabled` would hide a
+    // freshly-discovered subapp from every existing user. They still honour a
+    // user placement/order override; per-user disable of external modules is a
+    // later-phase follow-up.
+    if (!a.manifest.external && !prefs.isEnabled(a.manifest.id)) continue;
     out.add(PlacedModule(
       availability: a,
       placement: prefs.placementFor(a.manifest),

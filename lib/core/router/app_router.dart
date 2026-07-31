@@ -27,6 +27,7 @@ import '../../features/coord/coord_board_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
 import '../../features/skcode/skcode_pane.dart';
+import '../../features/shell/external_module_pane.dart';
 import '../../features/skmap/skmap_screen.dart';
 import '../../features/skos/skos_files_screen.dart';
 import '../../features/skos/skos_control_screen.dart';
@@ -58,6 +59,15 @@ class AppRoutes {
 
   /// Recordings browser (call/space recordings): /recordings
   static const recordings = '/recordings';
+
+  /// Host route for a DISCOVERED external subapp module (card e378d895). A
+  /// single parametric route so the router never has to rebuild when runtime
+  /// discovery resolves: the `:moduleId` segment is looked up against the
+  /// discovered set and rendered via the embed host. `/x/<id>`
+  static const externalModule = '/x/:moduleId';
+
+  /// Build the host route for a discovered external module [id].
+  static String externalModulePath(String id) => '/x/$id';
 
   /// Contact Requests, first-contact consent review (gate 5): /requests
   static const requests = '/requests';
@@ -406,6 +416,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const ModulesSettingsScreen(),
+            ),
+          ),
+          // Host for DISCOVERED external subapp modules (card e378d895). One
+          // static parametric route inside the shell so a discovered subapp is
+          // reachable without rebuilding the router; the pane resolves the
+          // manifest by id and embeds its Grade B web surface over the funnel.
+          GoRoute(
+            path: AppRoutes.externalModule,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              ExternalModulePane(
+                moduleId: state.pathParameters['moduleId'] ?? '',
+              ),
             ),
           ),
         ],
