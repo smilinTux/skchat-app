@@ -156,14 +156,16 @@ class AgentModelService {
   }
 
   /// Set [agent]'s selection to a role name or a concrete model id.
-  /// Posts `selection` (the current daemon key); the daemon also still
-  /// accepts the old `model` key, but a fresh client always writes the
-  /// current one.
+  /// Posts BOTH keys: `model` (the key the shipped daemon actually reads, see
+  /// daemon.py: `data.get("model")`) and `selection` (forward-compat for a
+  /// daemon that adopts the catalog shape). Sending only `selection` lands as
+  /// `None` on the current daemon -> 400 "unknown model" (the failed-to-set
+  /// error the picker showed).
   Future<AgentModelState?> setSelection(String agent, String selection) async {
     try {
       final resp = await _dio.post<Map<String, dynamic>>(
         '$_baseUrl/api/v1/agent/model',
-        data: {'agent': agent, 'selection': selection},
+        data: {'agent': agent, 'model': selection, 'selection': selection},
       );
       final d = resp.data;
       if (d == null) return null;
