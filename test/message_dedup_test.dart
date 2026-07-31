@@ -12,33 +12,79 @@ ChatMessage m(String id, String content, {required bool out, DateTime? ts}) =>
     );
 
 void main() {
-  test('optimistic + history copy of same outbound message collapse to one outbound', () {
-    // Optimistic: client temp id + local time. History: server id + UTC time.
+  test(
+    'optimistic + history copy of same outbound message collapse to one outbound',
+    () {
+      // The optimistic (client temp id + local now) and the daemon `history` copy
+      // (server id + UTC) of the SAME send are the same instant, so their absolute
+      // difference is only the send-to-persist latency (a second or two). They
+      // must still reconcile to a single outbound bubble.
+      final result = dedupForDisplay([
+        m(
+          '1718400000000',
+          'hello lumina',
+          out: true,
+          ts: DateTime.utc(2026, 1, 1, 12, 0, 0),
+        ),
+        m(
+          'chef@skworld.io_1718400000111',
+          'hello lumina',
+          out: true,
+          ts: DateTime.utc(2026, 1, 1, 12, 0, 1),
+        ),
+      ]);
+      expect(result.length, 1);
+      expect(result.first.isOutbound, isTrue);
+    },
+  );
+
+  test('identical text sent far apart in time stays as TWO distinct bubbles', () {
+    // Regression: Chef re-tests with the same word ("hello5") weeks apart. The
+    // just-sent copy must NOT collapse into the days-old copy of the same text —
+    // that erased the newest message from the thread while the conversation-list
+    // overview (updated directly) still showed it. Two real messages -> two
+    // bubbles, both outbound.
     final result = dedupForDisplay([
-      m('1718400000000', 'hello lumina', out: true, ts: DateTime(2026, 1, 1, 8)),
-      m('chef@skworld.io_1718400000111', 'hello lumina', out: true, ts: DateTime.utc(2026, 1, 1, 12)),
+      m('old', 'hello5', out: true, ts: DateTime.utc(2026, 7, 5, 13, 52)),
+      m('new', 'hello5', out: true, ts: DateTime.utc(2026, 7, 31, 20, 44)),
     ]);
-    expect(result.length, 1);
-    expect(result.first.isOutbound, isTrue);
+    expect(result.length, 2, reason: 'a 26-day-apart re-send is a new message');
+    expect(result.every((x) => x.isOutbound), isTrue);
   });
 
-  test('operator message wrongly rendered inbound collapses, keeping outbound', () {
+  test('same content just outside the reconcile window is not collapsed', () {
+    // A genuine re-send minutes later is a distinct message, not the
+    // optimistic/server pair of one send (which is seconds apart).
     final result = dedupForDisplay([
-      m('a', 'on the right please', out: false), // legacy green inbound copy
-      m('b', 'on the right please', out: true), // correct outbound
+      m('a', 'ok', out: true, ts: DateTime.utc(2026, 1, 1, 12, 0, 0)),
+      m('b', 'ok', out: true, ts: DateTime.utc(2026, 1, 1, 12, 5, 0)),
     ]);
-    expect(result.length, 1);
-    expect(result.first.isOutbound, isTrue, reason: 'outbound copy must win');
+    expect(result.length, 2);
   });
 
-  test('duplicate agent reply (two ids, same text) collapses to one inbound', () {
-    final result = dedupForDisplay([
-      m('lumina_1', 'Got it, single bubble.', out: false),
-      m('lumina_2', 'Got it, single bubble.', out: false),
-    ]);
-    expect(result.length, 1);
-    expect(result.first.isOutbound, isFalse);
-  });
+  test(
+    'operator message wrongly rendered inbound collapses, keeping outbound',
+    () {
+      final result = dedupForDisplay([
+        m('a', 'on the right please', out: false), // legacy green inbound copy
+        m('b', 'on the right please', out: true), // correct outbound
+      ]);
+      expect(result.length, 1);
+      expect(result.first.isOutbound, isTrue, reason: 'outbound copy must win');
+    },
+  );
+
+  test(
+    'duplicate agent reply (two ids, same text) collapses to one inbound',
+    () {
+      final result = dedupForDisplay([
+        m('lumina_1', 'Got it, single bubble.', out: false),
+        m('lumina_2', 'Got it, single bubble.', out: false),
+      ]);
+      expect(result.length, 1);
+      expect(result.first.isOutbound, isFalse);
+    },
+  );
 
   test('distinct replies are preserved', () {
     final result = dedupForDisplay([
@@ -48,7 +94,10 @@ void main() {
     ]);
     // The two inbound distinct texts stay; the outbound "hi there" collapses
     // with the inbound "hi there" (content match) and outbound wins.
-    expect(result.map((x) => x.content).toList(), ['hi there', 'how can I help?']);
+    expect(result.map((x) => x.content).toList(), [
+      'hi there',
+      'how can I help?',
+    ]);
     expect(result.first.isOutbound, isTrue);
   });
 }
