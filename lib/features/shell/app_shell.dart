@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../core/modules/module_manifest.dart';
 import '../../core/modules/module_registry.dart';
 import '../../core/router/app_router.dart';
 import '../../features/calls/incoming_call_watcher.dart';
@@ -83,23 +82,19 @@ class AppShell extends ConsumerWidget {
     final daemonState = ref.watch(skcommsSyncProvider);
     final isOffline = daemonState.status == DaemonStatus.offline;
 
-    // The primary destinations are derived from the module registry: every
-    // nav-placed subapp module becomes a tab, in manifest order, with the
-    // special Ops hub inserted before "Me". This is the R4.1 nav migration:
-    // the registry is the source of truth and the shell renders from it
-    // instead of a hand-maintained const list. We read the raw registry (the
-    // const manifest list), NOT capability/availability or per-user placement
-    // prefs, so the core nav is always present and deterministic, exactly as
-    // the old static tab list was, and a newly-added module (skcode) shows for
-    // every user. Wiring capability-gating and the user's nav placement prefs
-    // into the primary nav is a follow-up (the latter needs a prefs
-    // seed-version migration so new modules default-on without re-enabling ones
-    // the user disabled).
-    final navModules = ref
-        .watch(moduleRegistryProvider)
-        .where((m) => m.defaultPlacement == ModulePlacement.nav)
-        .toList()
-      ..sort((a, b) => a.order.compareTo(b.order));
+    // The primary destinations are derived from the FULL module pipeline:
+    // registry ∩ node capabilities ∩ the user's per-user enable/placement/order
+    // prefs (navModulesProvider). Every module the user has placed in the nav
+    // slot becomes a tab, in the user's effective order, with the special Ops
+    // hub inserted before "Me". This is the production-correct form of the R4.1
+    // nav migration: the registry stays the source of truth, but placement and
+    // capability-gating now flow through honestly. A newly-added default-on
+    // module (skcode) still shows for existing users because the prefs
+    // seed-version migration additively enables it without re-enabling modules
+    // the user turned off. Capability-down modules are NOT hidden: they stay in
+    // the nav rendered greyed-with-a-reason (registry honesty principle), the
+    // subapp screen itself explains why.
+    final navModules = ref.watch(navModulesProvider);
 
     // Badge counts come from the SAME providers as before, so both the bottom
     // bar and the wide left rail render one model. Chats shows total unread;
@@ -118,13 +113,15 @@ class AppShell extends ConsumerWidget {
       opsInserted = true;
     }
 
-    for (final m in navModules) {
+    for (final p in navModules) {
+      final m = p.manifest;
       if (!opsInserted && m.id == 'profile') addOps();
       tabs.add(AppNavTab(
         label: m.title,
         icon: m.icon,
         activeIcon: m.effectiveActiveIcon,
         path: m.route,
+        available: p.available,
       ));
       badgeCounts.add(m.id == 'chats' ? unreadTotal : 0);
     }
