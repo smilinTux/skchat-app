@@ -126,6 +126,58 @@ void main() {
     });
   });
 
+  group('signature gate (Fable A2, client-side belt)', () {
+    test('kUseShellRequireSigned defaults to false (behavior unchanged)', () {
+      expect(kUseShellRequireSigned, isFalse);
+    });
+
+    test('gate off: every manifest passes, verified marker irrelevant', () {
+      expect(
+        manifestPassesSignatureGate(_dashManifest(), requireSigned: false),
+        isTrue,
+      );
+      expect(
+        manifestPassesSignatureGate(
+          {..._dashManifest(), 'verified': true},
+          requireSigned: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('gate on: only manifests marked verified:true pass', () {
+      // Unverified (no marker) -> rejected.
+      expect(
+        manifestPassesSignatureGate(_dashManifest(), requireSigned: true),
+        isFalse,
+      );
+      // Explicit non-true marker -> rejected (no truthy coercion).
+      expect(
+        manifestPassesSignatureGate(
+          {..._dashManifest(), 'verified': 'true'},
+          requireSigned: true,
+        ),
+        isFalse,
+      );
+      // Verified by the enforcing aggregator -> accepted.
+      expect(
+        manifestPassesSignatureGate(
+          {..._dashManifest(), 'verified': true},
+          requireSigned: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('parseShellModules default (gate off) keeps unverified entries', () {
+      // Default build: no filtering, an unverified manifest still parses.
+      final list = parseShellModules({
+        'modules': [_dashManifest()],
+      });
+      expect(list.single.id, 'skdashboard');
+    });
+  });
+
   group('SAFETY: flag gates discovery (default OFF)', () {
     test('kUseShellDynamicModules defaults to false', () {
       expect(kUseShellDynamicModules, isFalse);

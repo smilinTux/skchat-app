@@ -28,6 +28,25 @@ import 'module_manifest.dart';
 const bool kUseShellDynamicModules =
     bool.fromEnvironment('USE_SHELL_DYNAMIC_MODULES', defaultValue: false);
 
+/// Compile-time gate for CLIENT-SIDE signature enforcement (Fable review A2, the
+/// suspenders to the aggregator's belt). Flip on with:
+///   flutter build web --dart-define=USE_SHELL_REQUIRE_SIGNED=true
+///
+/// DEFAULT FALSE, so today's build is byte-for-byte unchanged. When true, the
+/// loader refuses any discovered manifest that does NOT carry `verified: true`.
+///
+/// TRUST MODEL. The browser cannot run capauth (no gpg, no operator keyring), so
+/// it cannot verify a detached signature itself. Verification is DELEGATED to the
+/// aggregator: when the server has `SKCHAT_SHELL_REQUIRE_SIGNED=1`, it emits ONLY
+/// registry-verified modules and tags each `verified: true`. This client flag is
+/// therefore only meaningful once the server-side flag is on; it hardens the
+/// contract so a downgraded / spoofed aggregate (one that dropped enforcement and
+/// stopped tagging) cannot slip unverified modules into a client that was built
+/// expecting them. Flip this ON in the same rebuild that turns the server flag
+/// on, never before.
+const bool kUseShellRequireSigned =
+    bool.fromEnvironment('USE_SHELL_REQUIRE_SIGNED', defaultValue: false);
+
 /// The shell manifest-discovery endpoint, served by the skchat webui behind the
 /// same 443 funnel as `/api/v1/capabilities`. Returns
 /// `{"modules": [ <skworld.module.json>, ... ]}`.
@@ -151,11 +170,30 @@ List<ModuleManifest> parseShellModules(dynamic payload) {
   final out = <ModuleManifest>[];
   for (final item in raw) {
     if (item is Map) {
-      final m = externalManifestFromJson(item.cast<String, dynamic>());
+      final map = item.cast<String, dynamic>();
+      // A2 client-side belt: when require-signed is compiled in, refuse any
+      // manifest the enforcing aggregator did not mark `verified: true`. With
+      // the flag off (default) this is a no-op and behavior is unchanged.
+      if (!manifestPassesSignatureGate(map, requireSigned: kUseShellRequireSigned)) {
+        continue;
+      }
+      final m = externalManifestFromJson(map);
       if (m != null) out.add(m);
     }
   }
   return out;
+}
+
+/// Client-side signature gate (Fable A2). A manifest passes when EITHER the
+/// require-signed flag is off (no gate, default), OR the aggregator marked it
+/// `verified: true`. Pure and flag-parameterized so both branches are testable
+/// without a recompile. See [kUseShellRequireSigned] for the trust model.
+bool manifestPassesSignatureGate(
+  Map<String, dynamic> manifest, {
+  required bool requireSigned,
+}) {
+  if (!requireSigned) return true;
+  return manifest['verified'] == true;
 }
 
 /// Thin best-effort client for the shell manifest-discovery endpoint. Mirrors
