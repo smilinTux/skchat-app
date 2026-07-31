@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/modules/external_modules.dart';
 import '../../services/daemon_config.dart';
+import '../../services/embed_token_service.dart';
 // Reuse the exact conditional-import embed the Code pane uses: an iframe on
 // web, a host-URL fallback on native. One URL in, one embed out.
 import '../skcode/skcode_web_embed_stub.dart'
@@ -15,9 +16,19 @@ import '../skcode/skcode_web_embed_stub.dart'
 /// as [SkcodePane]). Grade A native panes are NOT built here (that is a later
 /// phase); every discovered subapp is embedded.
 ///
-/// It degrades honestly: while discovery is still resolving it shows a spinner,
-/// and if the id is unknown (discovery off, failed, or a stale deep link) it
-/// shows a plain "not available" message rather than crashing.
+/// EMBED AUTH (leak fix A1/A4). The `skdashboard` / `skos` panes ride GATED
+/// same-origin proxies that require operator auth, but an iframe cannot set an
+/// `Authorization` header. For those modules this pane first fetches a
+/// short-lived, module-scoped, READ-ONLY embed token from the authenticated
+/// backend ([embedTokenForModuleProvider]) and appends it to the iframe `src` as
+/// `?embed_token=...`, so the pane loads for the authenticated user only. skcode
+/// needs no token (public client shell). The iframe sandbox from the containment
+/// work (opaque origin, no `allow-same-origin`) is unchanged.
+///
+/// It degrades honestly: while discovery (or the token fetch) is still resolving
+/// it shows a spinner; if the id is unknown it shows a plain "not available"
+/// message; if the token mint is off/failed the pane still loads (tokenless) and
+/// shows the upstream's own gated response rather than crashing.
 class ExternalModulePane extends ConsumerWidget {
   const ExternalModulePane({super.key, required this.moduleId});
 
@@ -34,6 +45,13 @@ class ExternalModulePane extends ConsumerWidget {
     final origin = daemonOrigin.replaceAll(RegExp(r'/+$'), '');
     final path = trimmed.startsWith('/') ? trimmed : '/$trimmed';
     return '$origin$path';
+  }
+
+  /// Append a module-scoped embed token to the iframe URL as a query param,
+  /// preserving any existing query string.
+  String _appendEmbedToken(String url, String token) {
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}embed_token=${Uri.encodeQueryComponent(token)}';
   }
 
   @override
@@ -69,6 +87,24 @@ class ExternalModulePane extends ConsumerWidget {
     final origin = ref.watch(daemonUrlProvider);
     final url = _resolveUrl(manifest.externalEntryUrl ?? '', origin);
 
+    // For a gated module (skdashboard / skos) fetch a scoped embed token first,
+    // then frame `url?embed_token=...`. A null token (mint off / failed) loads
+    // the pane tokenless. Non-gated modules frame the URL directly.
+    final Widget embedArea;
+    if (moduleRequiresEmbedToken(moduleId)) {
+      final tokenAsync = ref.watch(embedTokenForModuleProvider(moduleId));
+      embedArea = tokenAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        // Any fetch error still frames the pane tokenless (honest degrade).
+        error: (_, _) => skcodeEmbed(url),
+        data: (token) => skcodeEmbed(
+          token == null ? url : _appendEmbedToken(url, token),
+        ),
+      );
+    } else {
+      embedArea = skcodeEmbed(url);
+    }
+
     return Column(
       children: [
         Padding(
@@ -93,7 +129,7 @@ class ExternalModulePane extends ConsumerWidget {
           ),
         ),
         const Divider(height: 1),
-        Expanded(child: skcodeEmbed(url)),
+        Expanded(child: embedArea),
       ],
     );
   }

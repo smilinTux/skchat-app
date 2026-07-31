@@ -374,6 +374,32 @@ class SKCommsClient {
     }
   }
 
+  /// POST /api/v1/embed-token, mint a short-lived, module-scoped, READ-ONLY
+  /// embed token for a gated iframe pane (`skdashboard` / `skos`).
+  ///
+  /// An iframe cannot set an `Authorization` header, so the gated proxies would
+  /// otherwise 401. This mints a token the pane appends to its `src` as
+  /// `?embed_token=...`; the proxy accepts it (read-only, scoped to that exact
+  /// module) for its short life. Reuses THIS client's authenticated Dio, so the
+  /// operator-session Bearer is attached by the auth interceptor.
+  ///
+  /// The backend guards the route behind the `SKCHAT_EMBED_TOKENS` flag (OFF by
+  /// default -> 404). On a 404 (inert), a 401, or any network error this returns
+  /// null rather than throwing, so a caller degrades to running tokenless.
+  Future<Map<String, dynamic>?> mintEmbedToken(String module) async {
+    try {
+      final resp = await _dio.post<dynamic>(
+        '/api/v1/embed-token',
+        data: {'module': module},
+      );
+      final data = resp.data;
+      return data is Map ? Map<String, dynamic>.from(data) : null;
+    } catch (_) {
+      // 404 (flag off / inert), 401, network error: no token available.
+      return null;
+    }
+  }
+
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
   /// GET /api/v1/webrtc/ice-config, ICE server list with TURN credentials.

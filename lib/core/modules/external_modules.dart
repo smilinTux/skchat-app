@@ -52,6 +52,20 @@ const bool kUseShellRequireSigned =
 /// `{"modules": [ <skworld.module.json>, ... ]}`.
 const String kShellModulesPath = '/api/v1/shell/modules';
 
+/// Discovered subapp module ids whose Grade B iframe pane rides a GATED
+/// same-origin proxy (`/skdashboard`, `/skos`). Those proxies require operator
+/// auth (leak fix A1/A4), but an iframe cannot set an `Authorization` header, so
+/// the pane must fetch a short-lived, module-scoped embed token and append it to
+/// the iframe `src` (`?embed_token=...`). Mirrors the server's `EMBED_MODULES`
+/// allowlist. skcode is NOT here: it runs its own deny-all gate and its public
+/// client shell is safe to expose, so it needs no token.
+const Set<String> kEmbedGatedModuleIds = {'skdashboard', 'skos'};
+
+/// True iff [moduleId]'s pane must fetch an embed token before it can frame the
+/// gated proxy surface.
+bool moduleRequiresEmbedToken(String moduleId) =>
+    kEmbedGatedModuleIds.contains(moduleId.trim().toLowerCase());
+
 /// Map a manifest `nav.icon` TOKEN (never a URL, per spec 5.2) to a Material
 /// [IconData]. Unknown tokens fall back to a generic module glyph, so an
 /// unrecognised icon degrades gracefully instead of failing discovery.
