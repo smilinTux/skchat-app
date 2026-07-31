@@ -173,6 +173,9 @@ class ModuleManifest {
     this.order = 0,
     this.description,
     this.onActivate,
+    this.external = false,
+    this.externalEntryUrl,
+    this.grade = 'A',
   });
 
   /// Stable identifier, e.g. `'skmap'`, `'chats'`, `'cluster'`.
@@ -215,6 +218,24 @@ class ModuleManifest {
 
   /// Optional lazy-activation hook (reserved, not invoked in Phase 0).
   final Future<void> Function(ModuleContext)? onActivate;
+
+  /// True when this manifest was DISCOVERED at runtime from a subapp's
+  /// `skworld.module.json` (Level 2, section 5.2) rather than declared in the
+  /// const [kBuiltinModules] list. External modules carry no capability
+  /// `requires` (they are treated as always-available) and render through a
+  /// generic embed/host pane instead of a hand-wired native screen.
+  final bool external;
+
+  /// For an [external] Grade B module: the `entry.url` to embed (iframe on web,
+  /// host-URL fallback on native). Absolute URLs are used as-is; a relative
+  /// path is resolved against the daemon origin so the embed rides the same
+  /// 443 funnel the rest of the app uses. Null for builtin/native modules.
+  final String? externalEntryUrl;
+
+  /// Composition grade from the manifest (`"A"` native package, `"B"` embedded
+  /// web surface). Builtins default to `"A"`; discovered subapps are rendered
+  /// at Grade B here (native Grade A panes are not built by the shell).
+  final String grade;
 
   /// Icon shown when this module's nav tab is active.
   IconData get effectiveActiveIcon => activeIcon ?? icon;
