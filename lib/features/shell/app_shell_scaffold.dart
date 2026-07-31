@@ -10,6 +10,23 @@ import 'app_drawer_sheet.dart';
 /// bar is rendered exactly as before (untouched).
 const double kRailBreakpoint = 900;
 
+/// Number of primary destinations kept directly on the narrow bottom
+/// [GlassNavBar] before the rest collapse behind a trailing "More" item.
+///
+/// The dynamic-modules pipeline can now hand the shell up to ~8 destinations
+/// (Chats, Spaces, Code, Activity, Ops, Me + discovered Board/OS), which is far
+/// too many for a phone-width bottom bar. So the bar shows at most the first
+/// [kPrimaryBottomNavCount] tabs **in nav order**, and every tab past that folds
+/// into a single "More" item that opens an overflow sheet. This is a pure
+/// renderer split over the SAME [AppNavTab] model the shell already builds, keyed
+/// only on nav order, it never forks or re-curates the destination list.
+///
+/// When the shell supplies few enough tabs that overflow would leave a lone item
+/// behind "More" (i.e. `tabs.length <= kPrimaryBottomNavCount + 1`), the bar
+/// renders every tab directly instead, so the common fleet (6 tabs) is unchanged
+/// and "More" only ever appears once it holds two or more destinations.
+const int kPrimaryBottomNavCount = 5;
+
 /// A single primary navigation destination.
 ///
 /// This is the ONE model both renderers (the bottom [GlassNavBar] and the wide
@@ -183,8 +200,31 @@ class AppShellScaffold extends StatelessWidget {
     );
   }
 
-  /// The unchanged frosted bottom navigation bar (narrow layout only).
+  /// The frosted bottom navigation bar (narrow layout only).
+  ///
+  /// When the shell hands us more than [kPrimaryBottomNavCount] (+1) tabs, the
+  /// first [kPrimaryBottomNavCount] render directly and the rest collapse into a
+  /// trailing "More" item that opens [_NavOverflowSheet]. The active highlight,
+  /// the Ops-hub gating, and every badge are preserved: an overflowed selection
+  /// lights the "More" item, and any badge counts on overflowed tabs are summed
+  /// onto it so a pending count is never silently hidden behind the fold.
   Widget _buildBottomNav(BuildContext context) {
+    // Split by nav order. Only fold into "More" once it would hold >= 2 tabs;
+    // otherwise show everything directly (keeps the common fleet unchanged).
+    final bool hasOverflow = tabs.length > kPrimaryBottomNavCount + 1;
+    final int primaryCount = hasOverflow ? kPrimaryBottomNavCount : tabs.length;
+
+    // Overflow slice (empty when there is no overflow) and its aggregate badge.
+    final overflowTabs = hasOverflow ? tabs.sublist(primaryCount) : const <AppNavTab>[];
+    final overflowBadges =
+        hasOverflow ? badgeCounts.sublist(primaryCount) : const <int>[];
+    final overflowBadgeTotal = overflowBadges.fold<int>(0, (a, b) => a + b);
+    // The selected tab is inside the overflow => the "More" item is the active
+    // one, and the sheet should mark that destination.
+    final bool overflowActive = hasOverflow && currentIndex >= primaryCount;
+    final String? activeOverflowPath =
+        overflowActive ? tabs[currentIndex].path : null;
+
     return GlassNavBar(
       key: const Key('glass-nav-bar'),
       child: Column(
@@ -215,63 +255,229 @@ class AppShellScaffold extends StatelessWidget {
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(tabs.length, (i) {
-              final tab = tabs[i];
-              final isActive = i == currentIndex;
-              final accentColor = Theme.of(context).colorScheme.primary;
-              // Dim a capability-down tab (unless it's the current screen, where
-              // full contrast keeps the active highlight legible). Honest grey,
-              // never hidden.
-              final dimmed = !tab.available && !isActive;
-
-              return Expanded(
-                child: InkWell(
-                  onTap: () => onSelect(tab.path),
-                  borderRadius: BorderRadius.circular(12),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Opacity(
-                      opacity: dimmed ? 0.45 : 1.0,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(
-                              isActive ? tab.activeIcon : tab.icon,
-                              key: ValueKey(isActive),
-                              size: 24,
-                              color: isActive
-                                  ? accentColor
-                                  : SovereignColors.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            tab.label,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(
-                                  color: isActive
-                                      ? accentColor
-                                      : SovereignColors.textSecondary,
-                                  fontWeight: isActive
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
+            children: [
+              for (var i = 0; i < primaryCount; i++)
+                _bottomNavItem(
+                  context,
+                  icon: tabs[i].icon,
+                  activeIcon: tabs[i].activeIcon,
+                  label: tabs[i].label,
+                  isActive: i == currentIndex,
+                  available: tabs[i].available,
+                  badgeCount: badgeCounts[i],
+                  onTap: () => onSelect(tabs[i].path),
+                ),
+              if (hasOverflow)
+                _bottomNavItem(
+                  context,
+                  key: const Key('nav-more-item'),
+                  icon: Icons.more_horiz_rounded,
+                  activeIcon: Icons.more_horiz_rounded,
+                  label: 'More',
+                  isActive: overflowActive,
+                  available: true,
+                  badgeCount: overflowBadgeTotal,
+                  onTap: () => _NavOverflowSheet.show(
+                    context,
+                    tabs: overflowTabs,
+                    badgeCounts: overflowBadges,
+                    activePath: activeOverflowPath,
+                    onSelect: onSelect,
                   ),
                 ),
-              );
-            }),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// One bottom-bar cell: icon (badged when [badgeCount] > 0), label, active
+  /// highlight, and honest dimming for a capability-down destination. Shared by
+  /// the primary tabs and the trailing "More" item so they render identically.
+  Widget _bottomNavItem(
+    BuildContext context, {
+    required IconData icon,
+    required IconData activeIcon,
+    required String label,
+    required bool isActive,
+    required bool available,
+    required int badgeCount,
+    required VoidCallback onTap,
+    Key? key,
+  }) {
+    final accentColor = Theme.of(context).colorScheme.primary;
+    // Dim a capability-down tab (unless it's the current screen, where full
+    // contrast keeps the active highlight legible). Honest grey, never hidden.
+    final dimmed = !available && !isActive;
+
+    Widget iconWidget = Icon(
+      isActive ? activeIcon : icon,
+      key: ValueKey(isActive),
+      size: 24,
+      color: isActive ? accentColor : SovereignColors.textSecondary,
+    );
+    if (badgeCount > 0) {
+      iconWidget = Badge(
+        label: Text(badgeCount > 99 ? '99+' : '$badgeCount'),
+        backgroundColor: SovereignColors.accentDanger,
+        child: iconWidget,
+      );
+    }
+
+    return Expanded(
+      child: InkWell(
+        key: key,
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Opacity(
+            opacity: dimmed ? 0.45 : 1.0,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: iconWidget,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: isActive
+                            ? accentColor
+                            : SovereignColors.textSecondary,
+                        fontWeight:
+                            isActive ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The overflow sheet behind the narrow bottom bar's "More" item: a modal
+/// bottom sheet listing every destination that did not fit as a primary tab.
+/// Tapping a row navigates via the same [onSelect] (`context.go`) the bar uses
+/// and closes the sheet, so an overflowed destination is reached in one gesture.
+/// The currently-active overflowed destination (if any) is highlighted, and each
+/// row carries its own badge + honest capability dimming.
+class _NavOverflowSheet extends StatelessWidget {
+  const _NavOverflowSheet({
+    required this.tabs,
+    required this.badgeCounts,
+    required this.activePath,
+    required this.onSelect,
+  });
+
+  final List<AppNavTab> tabs;
+  final List<int> badgeCounts;
+  final String? activePath;
+  final void Function(String path) onSelect;
+
+  static Future<void> show(
+    BuildContext context, {
+    required List<AppNavTab> tabs,
+    required List<int> badgeCounts,
+    required String? activePath,
+    required void Function(String path) onSelect,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _NavOverflowSheet(
+        tabs: tabs,
+        badgeCounts: badgeCounts,
+        activePath: activePath,
+        onSelect: onSelect,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+
+    return Material(
+      key: const Key('nav-overflow-sheet'),
+      color: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: SovereignColors.textTertiary.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 8),
+            for (var i = 0; i < tabs.length; i++)
+              _overflowRow(context, tabs[i], badgeCounts[i], accent),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _overflowRow(
+    BuildContext context,
+    AppNavTab tab,
+    int badgeCount,
+    Color accent,
+  ) {
+    final isActive = tab.path == activePath;
+    final dimmed = !tab.available && !isActive;
+    final color = isActive ? accent : SovereignColors.textPrimary;
+
+    Widget leading = Icon(
+      isActive ? tab.activeIcon : tab.icon,
+      color: isActive ? accent : SovereignColors.textSecondary,
+    );
+    if (badgeCount > 0) {
+      leading = Badge(
+        label: Text(badgeCount > 99 ? '99+' : '$badgeCount'),
+        backgroundColor: SovereignColors.accentDanger,
+        child: leading,
+      );
+    }
+
+    return Opacity(
+      opacity: dimmed ? 0.45 : 1.0,
+      child: ListTile(
+        key: Key('nav-overflow-item-${tab.path}'),
+        selected: isActive,
+        selectedTileColor: accent.withValues(alpha: 0.10),
+        leading: leading,
+        title: Text(
+          tab.label,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: color,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+              ),
+        ),
+        onTap: () {
+          Navigator.of(context).pop();
+          onSelect(tab.path);
+        },
       ),
     );
   }
@@ -310,6 +516,10 @@ class _SovereignNavRailState extends State<_SovereignNavRail> {
     final rail = NavigationRail(
       key: const Key('sovereign-nav-rail'),
       backgroundColor: Colors.transparent,
+      // With the dynamic-modules pipeline the rail can carry 8+ destinations;
+      // on a short viewport that would overflow a fixed Column. `scrollable`
+      // wraps the destinations so the rail scrolls instead of overflowing.
+      scrollable: true,
       extended: _extended,
       // NavigationRail forbids an explicit labelType while extended; when
       // collapsed we show labels under each icon.

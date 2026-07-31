@@ -40,6 +40,23 @@ class _StubPrefs extends ModulePrefsNotifier {
       );
 }
 
+/// Prefs that additionally promote two normally-drawer operator modules
+/// (`cluster`, `coord`) into the nav slot, so the shell builds 8 primary tabs
+/// (chats, spaces, skcode, activity, Ops, Me, Cluster, Coord Board) and the
+/// narrow bottom bar's overflow ("More") path is exercised end-to-end.
+class _OverflowPrefs extends ModulePrefsNotifier {
+  @override
+  ModulePrefs build() => ModulePrefs(
+        enabledIds: {for (final m in kBuiltinModules) m.id},
+        placement: const {
+          'cluster': ModulePlacement.nav,
+          'coord': ModulePlacement.nav,
+        },
+        seedVersion: kCurrentSeedVersion,
+        initialized: true,
+      );
+}
+
 /// A fixed node-capability document. The primary nav now flows through the
 /// availability pipeline (registry ∩ caps ∩ prefs), so tests must pin caps,
 /// otherwise [nodeCapabilitiesProvider] would spin its real fetch timer + touch
@@ -92,6 +109,7 @@ Widget _app(
   String initialLocation, {
   Widget child = const _FabChild(),
   NodeCapabilities? caps,
+  ModulePrefsNotifier Function()? prefs,
 }) {
   final resolvedCaps = caps ?? _caps();
   final router = GoRouter(
@@ -125,7 +143,7 @@ Widget _app(
       // The nav pipeline reads caps + prefs; pin both so no fetch timer starts
       // and Hive is never touched in these widget tests.
       nodeCapabilitiesProvider.overrideWith((ref) async => resolvedCaps),
-      modulePrefsProvider.overrideWith(_StubPrefs.new),
+      modulePrefsProvider.overrideWith(prefs ?? _StubPrefs.new),
     ],
     child: MaterialApp.router(routerConfig: router),
   );
@@ -235,5 +253,55 @@ void main() {
           'behind the GlassNavBar BackdropFilter and blurs into a false '
           'selection highlight',
     );
+  });
+
+  // ── Narrow-screen overflow, driven through the real shell ────────────────
+
+  testWidgets('with 8 nav tabs the bottom bar folds the tail into "More"',
+      (tester) async {
+    await tester.pumpWidget(_app(AppRoutes.chats, prefs: _OverflowPrefs.new));
+    await tester.pump();
+
+    // 8 tabs: chats, spaces, skcode, activity, Ops, Me, Cluster, Coord Board.
+    // First 5 (kPrimaryBottomNavCount) stay on the bar; the rest fold.
+    for (final label in const ['Chats', 'Spaces', 'Code', 'Activity', 'Ops']) {
+      expect(find.text(label), findsOneWidget, reason: '$label is primary');
+    }
+    expect(find.text('More'), findsOneWidget);
+    expect(find.byKey(const Key('nav-more-item')), findsOneWidget);
+    // Folded tabs are not on the bar until "More" is opened.
+    expect(find.text('Me'), findsNothing);
+    expect(find.text('Cluster'), findsNothing);
+    expect(find.text('Coord Board'), findsNothing);
+  });
+
+  testWidgets('opening a folded destination from the "More" sheet navigates '
+      'the shell (context.go)', (tester) async {
+    // Coord Board is folded behind "More"; selecting it must drive context.go.
+    // Coord is an Ops-gated operator surface, so once routed the shell relights
+    // the Ops hub (its special highlight logic is preserved end-to-end).
+    await tester.pumpWidget(_app(AppRoutes.chats, prefs: _OverflowPrefs.new));
+    await tester.pump();
+
+    // Chats is the active tab before navigation.
+    expect(find.byIcon(Icons.chat_bubble_rounded), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('nav-more-item')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('nav-overflow-sheet')), findsOneWidget);
+    expect(find.text('Cluster'), findsOneWidget);
+    expect(find.text('Coord Board'), findsOneWidget);
+
+    await tester.tap(find.byKey(Key('nav-overflow-item-${AppRoutes.coord}')));
+    await tester.pumpAndSettle();
+
+    // Navigated: the sheet closed and the Ops hub is now the active tab (Coord
+    // is an Ops-gated surface), proving the sheet tap ran context.go.
+    expect(find.byKey(const Key('nav-overflow-sheet')), findsNothing);
+    expect(find.byIcon(Icons.grid_view_rounded), findsOneWidget,
+        reason: 'routing to the Ops-gated Coord surface relights the Ops hub');
+    expect(find.byIcon(Icons.chat_bubble_rounded), findsNothing,
+        reason: 'Chats is no longer active after navigation');
   });
 }
