@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'daemon_config.dart';
@@ -204,9 +205,26 @@ final agentModelServiceProvider = Provider<AgentModelService>((ref) {
   return AgentModelService(baseUrl: _modelBaseFromDaemonUrl(daemonUrl));
 });
 
-/// `http://host:9384` → `http://host:9385` (the skchat daemon API port).
+/// Resolve the base URL for the skchat daemon model API (`/api/v1/agent/model`,
+/// served by the skchat daemon on port 9385).
+///
+/// The daemon port differs from the SKComms daemon that [daemonUrlProvider]
+/// points at, and how it is reached depends on the platform:
+///
+///   * NATIVE: the daemon runs locally on a distinct port, so swap to 9385
+///     (`http://host:9384` -> `http://host:9385`).
+///   * WEB: the app is served same-origin behind the reverse proxy / tailnet
+///     funnel. The daemon port (9385) is bound to 127.0.0.1 and is NOT
+///     reachable from the browser, and `daemon_proxy.py` (the same-origin
+///     `/api/v1` proxy) carries no `agent/model` route. The funnel DOES expose
+///     the daemon at the `/daemon` path (it strips the prefix and forwards to
+///     :9385), so route the model API through it: `<origin>/daemon`.
+///     A bare `uri.replace(port: 9385)` would produce `<origin>:9385`, which the
+///     funnel does not serve (the daemon offline error the picker showed).
 String _modelBaseFromDaemonUrl(String daemonUrl) {
-  final uri = Uri.tryParse(normalizeDaemonUrl(daemonUrl));
+  final normalized = normalizeDaemonUrl(daemonUrl);
+  final uri = Uri.tryParse(normalized);
   if (uri == null || uri.host.isEmpty) return 'http://127.0.0.1:9385';
+  if (kIsWeb) return '$normalized/daemon';
   return uri.replace(port: 9385).toString();
 }
