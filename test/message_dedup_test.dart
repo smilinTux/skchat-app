@@ -2,13 +2,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:skchat/features/conversation/message_dedup.dart';
 import 'package:skchat/models/chat_message.dart';
 
-ChatMessage m(String id, String content, {required bool out, DateTime? ts}) =>
+ChatMessage m(
+  String id,
+  String content, {
+  required bool out,
+  DateTime? ts,
+  bool locked = false,
+}) =>
     ChatMessage(
       id: id,
       peerId: 'lumina',
       content: content,
       timestamp: ts ?? DateTime(2026, 1, 1, 12),
       isOutbound: out,
+      pqLocked: locked,
     );
 
 void main() {
@@ -85,6 +92,33 @@ void main() {
       expect(result.first.isOutbound, isFalse);
     },
   );
+
+  test(
+    'CARD E: two distinct LOCKED replies (same placeholder) both render',
+    () {
+      // On the web/PWA leg, a hybrid-sealed reply this device can't open renders
+      // as a locked placeholder with IDENTICAL text for every such reply. They
+      // MUST NOT collapse (they are distinct replies from Lumina); otherwise she
+      // looks silent even though she replied N times.
+      const locked = "🔐 Encrypted message (can't be opened on this device)";
+      final result = dedupForDisplay([
+        m('r1', locked, out: false, ts: DateTime.utc(2026, 1, 1, 12, 0, 0),
+            locked: true),
+        m('r2', locked, out: false, ts: DateTime.utc(2026, 1, 1, 12, 0, 5),
+            locked: true),
+      ]);
+      expect(result.length, 2, reason: 'two distinct sealed replies, by id');
+    },
+  );
+
+  test('CARD E: the same locked reply id still folds (idempotent re-poll)', () {
+    const locked = "🔐 Encrypted message (can't be opened on this device)";
+    final result = dedupForDisplay([
+      m('r1', locked, out: false, locked: true),
+      m('r1', locked, out: false, locked: true),
+    ]);
+    expect(result.length, 1, reason: 'same id → one bubble');
+  });
 
   test('distinct replies are preserved', () {
     final result = dedupForDisplay([

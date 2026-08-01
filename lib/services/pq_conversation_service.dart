@@ -244,6 +244,18 @@ class PqConversationService {
     }
   }
 
+  /// Placeholder rendered for a hybrid-sealed message this device cannot open
+  /// because it holds no PQ key at all (no backend / never generated one).
+  static const String lockedNoKeyText =
+      '🔐 Encrypted message (no key on this device)';
+
+  /// Placeholder rendered for a hybrid-sealed message this device cannot open
+  /// because the AEAD open failed, most commonly the message was sealed to a
+  /// DIFFERENT device's prekey (the operator has one published prekey; the
+  /// active device is not the one Lumina sealed to).
+  static const String lockedCantOpenText =
+      "🔐 Encrypted message (can't be opened on this device)";
+
   /// Open an incoming [body] from [peer]. If it's a `pqdm1:` token, FIRST check
   /// whether it's one WE sealed (own outbound echoed back from history), if so
   /// return the remembered plaintext (it can't be decapsulated with our key, it
@@ -251,8 +263,29 @@ class PqConversationService {
   /// private key and flip the convo `hybrid-pq`. Non-token bodies are returned
   /// unchanged. A failed open returns a visible placeholder so the render loop
   /// never throws.
-  Future<String> openIncoming(String peer, String body) async {
-    if (!PqDmCodec.isHybridToken(body)) return body;
+  Future<String> openIncoming(String peer, String body) async =>
+      (await openIncomingDetailed(peer, body)).text;
+
+  /// Like [openIncoming], but reports WHETHER the body was actually opened.
+  ///
+  /// Returns `(text, opened, mine)`:
+  /// - `opened == true`  → [text] is the real plaintext (a peer message we
+  ///   decrypted, our own recalled outbound, or a non-token passthrough).
+  /// - `opened == false` → [text] is a visible LOCKED placeholder; this device
+  ///   could not open the sealed token (no key, or the AEAD open failed because
+  ///   it was sealed to another device's prekey / a browser without PQC).
+  /// - `mine == true`    → it is our own outbound echoed back (render outbound).
+  ///
+  /// The caller renders a not-opened result as a per-message locked bubble
+  /// (deduped by id only) so the sender is never silently dropped. CARD E, the
+  /// reduced-assurance web/PWA leg.
+  Future<({String text, bool opened, bool mine})> openIncomingDetailed(
+    String peer,
+    String body,
+  ) async {
+    if (!PqDmCodec.isHybridToken(body)) {
+      return (text: body, opened: true, mine: false);
+    }
     final peerShort = _short(peer);
 
     // Own-outbound? (sealed to the peer's key, not openable here). Render the
@@ -260,13 +293,16 @@ class PqConversationService {
     final mine = await recallOutbound(body);
     if (mine != null) {
       _state[peerShort] = PqConversationState.hybridPq;
-      return mine;
+      return (text: mine, opened: true, mine: true);
     }
 
     final haveKey = await _prekeys.ensureKeyPair();
+    if (!haveKey) {
+      return (text: lockedNoKeyText, opened: false, mine: false);
+    }
     final priv = _prekeys.privateKey;
-    if (!haveKey || priv == null) {
-      return '🔐 [post-quantum message, no key on this device]';
+    if (priv == null) {
+      return (text: lockedNoKeyText, opened: false, mine: false);
     }
     try {
       // The sender bound (sender=them, recipient=us). The token's expected suite
@@ -278,10 +314,10 @@ class PqConversationService {
         recipient: _localShort,
       );
       _state[peerShort] = PqConversationState.hybridPq;
-      return utf8.decode(clear);
+      return (text: utf8.decode(clear), opened: true, mine: false);
     } catch (_) {
-      // DowngradeDetected / malformed, surface, don't crash.
-      return '🔐 [post-quantum message, could not decrypt]';
+      // DowngradeDetected / malformed / wrong-device key, surface, don't crash.
+      return (text: lockedCantOpenText, opened: false, mine: false);
     }
   }
 

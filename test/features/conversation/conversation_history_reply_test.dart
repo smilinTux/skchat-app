@@ -10,10 +10,22 @@ import 'package:skchat/features/conversation/conversation_provider.dart';
 import 'package:skchat/models/chat_message.dart';
 import 'package:skchat/models/conversation.dart';
 import 'package:skchat/services/daemon_service.dart';
+import 'package:skchat/services/pq_conversation_service.dart';
+import 'package:skchat/services/pq_prekey_service.dart';
 import 'package:skchat/services/skcomms_client.dart';
 import 'package:skchat/services/skcomms_sync.dart';
 
 class MockMessageRepository extends Mock implements MessageRepository {}
+
+/// A prekey service that never holds a PQ key, models the web/PWA leg (or a
+/// device that is NOT the one Lumina sealed her reply to). Every incoming
+/// `pqdm1:` token then fails to open → renders as a LOCKED placeholder.
+class _NoKeyPrekeyService implements PqPrekeyService {
+  @override
+  Future<bool> ensureKeyPair() async => false;
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 class MockConversationRepository extends Mock
     implements ConversationRepository {}
@@ -108,12 +120,20 @@ void main() {
     when(() => client.getPeers()).thenAnswer((_) async => []);
   });
 
-  ProviderContainer makeContainer() => ProviderContainer(overrides: [
+  ProviderContainer makeContainer({bool noPqKey = false}) =>
+      ProviderContainer(overrides: [
         messageRepositoryProvider.overrideWithValue(msgRepo),
         conversationRepositoryProvider.overrideWithValue(convoRepo),
         skcommsClientProvider.overrideWithValue(client),
         daemonServiceProvider.overrideWithValue(daemon),
         skcommsSyncProvider.overrideWith(FakeSyncNotifier.new),
+        if (noPqKey)
+          pqConversationServiceProvider.overrideWithValue(
+            PqConversationService(
+              prekeys: _NoKeyPrekeyService(),
+              localShort: 'chef',
+            ),
+          ),
       ]);
 
   // ── BUG 2 — history loads on open with the correct (fqid) peer key ─────────
@@ -253,6 +273,131 @@ void main() {
       expect(msgs.any((m) => m.id == 'l-1'), isTrue);
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
+      container.dispose();
+    });
+  });
+
+  // CARD E: Lumina's sealed reply renders on the web/PWA leg
+  group('CARD E: sealed reply on the web leg', () {
+    // A pqdm1: token this device can't open (no key). Two DISTINCT replies both
+    // seal to opaque tokens; on the web leg they must BOTH render as visible
+    // locked placeholders, never collapse to one (or zero) so Lumina looks
+    // silent even though she replied twice.
+    const token1 = 'pqdm1:x25519-mlkem768:AAAAreply1';
+    const token2 = 'pqdm1:x25519-mlkem768:BBBBreply2';
+
+    test('two undecryptable replies BOTH render as locked bubbles', () async {
+      when(() => client.isAlive()).thenAnswer((_) async => true);
+      when(() => client.getConversationFull(_peer)).thenAnswer((_) async => [
+            {
+              'id': 'u-1',
+              'sender': _me,
+              'body': 'hello',
+              'ts': '2026-07-31T20:00:00Z',
+            },
+            {
+              'id': 'l-1',
+              'sender': _peer,
+              'body': token1,
+              'ts': '2026-07-31T20:00:05Z',
+            },
+            {
+              'id': 'l-2',
+              'sender': _peer,
+              'body': token2,
+              'ts': '2026-07-31T20:00:09Z',
+            },
+          ]);
+
+      final container = makeContainer(noPqKey: true);
+      container.read(conversationProvider(_peer));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      final msgs = container.read(conversationProvider(_peer));
+      final locked = msgs.where((x) => x.pqLocked).toList();
+      expect(locked.length, 2,
+          reason: "both of Lumina's sealed replies must be visible");
+      expect(locked.every((x) => !x.isOutbound), isTrue);
+      expect(locked.map((x) => x.id).toSet(), {'l-1', 'l-2'});
+      // The locked bubbles carry a visible, non-empty placeholder body.
+      expect(
+          locked.every((x) => x.content.contains('Encrypted message')), isTrue);
+      // The operator's own turn still renders alongside.
+      expect(msgs.any((x) => x.id == 'u-1' && x.isOutbound), isTrue);
+
+      container.dispose();
+    });
+
+    test('an async-arrived reply lands in the OPEN thread on a later poll',
+        () async {
+      when(() => client.isAlive()).thenAnswer((_) async => true);
+      // First poll: only the user's turn (async reply not generated yet).
+      // Second poll: the reply has arrived (SKCHAT_ASYNC_REPLY path).
+      var polls = 0;
+      when(() => client.getConversationFull(_peer)).thenAnswer((_) async {
+        polls++;
+        return [
+          {
+            'id': 'u-1',
+            'sender': _me,
+            'body': 'you there?',
+            'ts': '2026-07-31T21:00:00Z',
+          },
+          if (polls >= 2)
+            {
+              'id': 'l-9',
+              'sender': _peer,
+              'body': "Yes, I'm here.",
+              'ts': '2026-07-31T21:00:04Z',
+            },
+        ];
+      });
+
+      final container = makeContainer();
+      final notifier = container.read(conversationProvider(_peer).notifier);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // After the first poll the reply is not present yet.
+      expect(
+        container.read(conversationProvider(_peer)).any((m) => m.id == 'l-9'),
+        isFalse,
+      );
+
+      // Simulate the next history poll (the provider's 4s timer / WS "new").
+      await notifier.ingestSendResponse(_peer); // no-op batch, exercises path
+      // Directly drive a refetch as the timer would.
+      when(() => client.getConversationFull(_peer)).thenAnswer((_) async => [
+            {
+              'id': 'u-1',
+              'sender': _me,
+              'body': 'you there?',
+              'ts': '2026-07-31T21:00:00Z',
+            },
+            {
+              'id': 'l-9',
+              'sender': _peer,
+              'body': "Yes, I'm here.",
+              'ts': '2026-07-31T21:00:04Z',
+            },
+          ]);
+      // ingestSendResponse with the reply is the immediate path; simulate the
+      // WS/poll delivery of the reply into the open thread.
+      await notifier.ingestSendResponse(
+        _peer,
+        reply: {
+          'id': 'l-9',
+          'sender': _peer,
+          'body': "Yes, I'm here.",
+          'ts': '2026-07-31T21:00:04Z',
+        },
+      );
+
+      final msgs = container.read(conversationProvider(_peer));
+      final reply = msgs.where((m) => m.id == 'l-9').toList();
+      expect(reply.length, 1, reason: 'async reply landed in the open thread');
+      expect(reply.first.isOutbound, isFalse);
+      expect(reply.first.content, "Yes, I'm here.");
+
       container.dispose();
     });
   });

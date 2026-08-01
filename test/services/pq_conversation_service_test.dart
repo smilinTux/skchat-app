@@ -102,6 +102,44 @@ void main() {
     });
   });
 
+  // CARD E: a sealed reply this device can't open reports opened=false
+  group('openIncomingDetailed (CARD E, web/PWA locked placeholder)', () {
+    test('own outbound → opened=true, mine=true, real plaintext', () async {
+      final svc = PqConversationService(
+        prekeys: _FakePrekeyService(hybrid: true),
+        localShort: 'chef',
+      );
+      const token = 'pqdm1:x25519-mlkem768:MINE';
+      await svc.recordOutbound(token, 'my own text');
+      final r = await svc.openIncomingDetailed('lumina', token);
+      expect(r.opened, isTrue);
+      expect(r.mine, isTrue);
+      expect(r.text, 'my own text');
+    });
+
+    test('non-token body → opened=true, passthrough', () async {
+      final svc = PqConversationService(
+        prekeys: _FakePrekeyService(hybrid: true),
+        localShort: 'chef',
+      );
+      final r = await svc.openIncomingDetailed('lumina', 'plain hello');
+      expect(r.opened, isTrue);
+      expect(r.mine, isFalse);
+      expect(r.text, 'plain hello');
+    });
+
+    test('sealed peer token with NO key → opened=false, locked placeholder',
+        () async {
+      final fake = _FakePrekeyService(hybrid: true)..hasKey = false;
+      final svc = PqConversationService(prekeys: fake, localShort: 'chef');
+      final r = await svc
+          .openIncomingDetailed('lumina', 'pqdm1:x25519-mlkem768:NOTOURS');
+      expect(r.opened, isFalse, reason: 'no key on this device → cannot open');
+      expect(r.mine, isFalse);
+      expect(r.text, PqConversationService.lockedNoKeyText);
+    });
+  });
+
   group('no silent downgrade (BUG 2)', () {
     test('prefetchPeer records hybrid for a hybrid peer', () async {
       final svc = PqConversationService(

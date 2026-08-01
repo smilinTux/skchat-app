@@ -82,15 +82,22 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
   /// Remove duplicates: same id, or same content+direction within 10s.
   /// (The local Hive cache can accumulate dup saves from the two load paths.)
+  ///
+  /// A [ChatMessage.pqLocked] placeholder is deduped by id ONLY: every locked
+  /// copy shares the same placeholder content, so the content+direction branch
+  /// would wrongly collapse two genuinely distinct unopenable replies into one
+  /// (CARD E, the sender would look silent on the web/PWA leg).
   static List<ChatMessage> _dedup(List<ChatMessage> msgs) {
     final ids = <String>{};
     final out = <ChatMessage>[];
     for (final m in msgs) {
       if (!ids.add(m.id)) continue;
-      final near = out.any((o) =>
-          o.content == m.content &&
-          o.isOutbound == m.isOutbound &&
-          (o.timestamp.difference(m.timestamp).inSeconds).abs() < 10);
+      final near = !m.pqLocked &&
+          out.any((o) =>
+              !o.pqLocked &&
+              o.content == m.content &&
+              o.isOutbound == m.isOutbound &&
+              (o.timestamp.difference(m.timestamp).inSeconds).abs() < 10);
       if (near) continue;
       out.add(m);
     }
@@ -119,20 +126,21 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   /// directionality was computed (which is unreliable when the local identity
   /// hasn't resolved yet). Only a miss is treated as a peer message to open with
   /// our private key. Returns `(text, isOutbound)`; `text == null` means drop.
-  Future<({String? text, bool isOutbound})> _resolvePqToken(
+  /// Returns `(text, isOutbound, locked)`. `text == null` means drop; `locked`
+  /// marks a sealed reply this device could NOT open; it still renders (as a
+  /// visible placeholder) but MUST be deduped by id only (see [ChatMessage.pqLocked]).
+  Future<({String? text, bool isOutbound, bool locked})> _resolvePqToken(
     String token,
     String peerShort, {
     required bool isOutboundGuess,
   }) async {
     final pq = ref.read(pqConversationServiceProvider);
-    final mine = await pq.recallOutbound(token);
-    if (mine != null) {
-      ref.invalidate(conversationPqStateProvider(peerShort));
-      return (text: mine, isOutbound: true);
-    }
-    final opened = await pq.openIncoming(peerShort, token);
+    final r = await pq.openIncomingDetailed(peerShort, token);
     ref.invalidate(conversationPqStateProvider(peerShort));
-    return (text: opened, isOutbound: isOutboundGuess);
+    if (r.mine) {
+      return (text: r.text, isOutbound: true, locked: false);
+    }
+    return (text: r.text, isOutbound: isOutboundGuess, locked: !r.opened);
   }
 
   /// Fetch conversation history from the skchat local store via CLI.
@@ -172,8 +180,10 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
           // PQC Q5: resolve a `pqdm1:` token. Own-outbound (sealed to the peer)
           // renders the remembered plaintext as OUTBOUND; an inbound token is
-          // opened with our key. Never shown as ciphertext.
+          // opened with our key. Never shown as ciphertext. A token this device
+          // can't open renders as a locked placeholder (CARD E), deduped by id.
           var cliBody = m.content;
+          var pqLocked = false;
           if (PqDmCodec.isHybridToken(cliBody)) {
             final r = await _resolvePqToken(
               cliBody,
@@ -183,6 +193,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             if (r.text == null) continue;
             cliBody = r.text!;
             isOutbound = r.isOutbound;
+            pqLocked = r.locked;
           }
 
           // Reaction sentinel (__REACT__), fold into the target message's
@@ -227,8 +238,10 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           // delivery-receipt UUIDs) so the thread stays clean.
           if (displayTextFor(cliBody) == null) continue;
 
+          // Content dedup is bypassed for locked placeholders: they all share
+          // the same text, so dedup them by id (already guarded above) only.
           final sig = '$isOutbound|$cliBody';
-          if (!seenSig.add(sig)) continue; // duplicate content+direction
+          if (!pqLocked && !seenSig.add(sig)) continue;
 
           fresh.add(ChatMessage(
             id: m.id,
@@ -240,6 +253,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             sender: m.sender,
             threadId: m.threadId,
             deliveryStatus: isOutbound ? 'sent' : 'delivered',
+            pqLocked: pqLocked,
           ));
         }
 
@@ -248,7 +262,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           merged.sort((a, b) => a.timestamp.compareTo(b.timestamp));
           state = merged;
           for (final msg in fresh) {
-            await repo.saveMessage(msg);
+            // Don't persist locked placeholders: this device never opened them,
+            // so a future session that HAS the key can re-fetch and open fresh.
+            if (!msg.pqLocked) await repo.saveMessage(msg);
           }
           // Mark freshly-arrived inbound messages as read (best-effort).
           _sendReadReceiptsFor(peerId, fresh);
@@ -308,12 +324,15 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       // Outbound iff WE authored it; otherwise it's the peer's (inbound).
       var isOutbound = localShort != null && senderShort == localShort;
       var body = parsed.content;
+      var pqLocked = false;
 
       // PQC Q5: an inbound `pqdm1:` token is a hybrid-sealed DM, open it with
       // this device's hybrid private key (flips the convo `hybrid-pq`). Our own
       // OUTBOUND copy is stored sealed to the PEER's key (not decapsulatable
       // here), so we first ask `recallOutbound` for the remembered plaintext and
-      // render it as outbound, never as ciphertext, deduped by content.
+      // render it as outbound, never as ciphertext, deduped by content. A token
+      // this device cannot open renders as a locked placeholder (CARD E, the
+      // web/PWA reduced-assurance leg), deduped by id so it is never silent.
       if (PqDmCodec.isHybridToken(body)) {
         final r = await _resolvePqToken(
           body,
@@ -323,6 +342,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         if (r.text == null) continue;
         body = r.text!;
         isOutbound = r.isOutbound;
+        pqLocked = r.locked;
       }
 
       // Control sentinels, fold into target state instead of rendering.
@@ -355,8 +375,10 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
       if (existing.contains(parsed.id)) continue;
       if (displayTextFor(body) == null) continue;
+      // Content dedup is bypassed for locked placeholders: they all share the
+      // same text, so dedup them by id (already guarded above) only.
       final sig = '$isOutbound|$body';
-      if (!seenSig.add(sig)) continue;
+      if (!pqLocked && !seenSig.add(sig)) continue;
 
       fresh.add(parsed.copyWith(
         peerId: peerShort,
@@ -364,6 +386,7 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         isOutbound: isOutbound,
         conversationId: peerShort,
         deliveryStatus: isOutbound ? 'sent' : 'delivered',
+        pqLocked: pqLocked,
       ));
     }
 
@@ -372,7 +395,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     merged.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     state = merged;
     for (final msg in fresh) {
-      await repo.saveMessage(msg);
+      // Don't persist locked placeholders: this device never opened them, so a
+      // future session that HAS the key can re-fetch and open fresh.
+      if (!msg.pqLocked) await repo.saveMessage(msg);
     }
     _sendReadReceiptsFor(peerId, fresh);
   }

@@ -32,10 +32,16 @@ List<ChatMessage> dedupForDisplay(List<ChatMessage> msgs) {
   final out = <ChatMessage>[];
   for (final m in msgs) {
     final content = m.content.trim();
+    // A locked PQC placeholder ([ChatMessage.pqLocked]) is deduped by id ONLY:
+    // every locked copy shares the same placeholder text, so the content branch
+    // would collapse two genuinely distinct unopenable replies into one (CARD E,
+    // the sender would look silent on the web/PWA leg).
     final idx = out.indexWhere(
       (o) =>
           o.id == m.id ||
-          (o.content.trim() == content &&
+          (!m.pqLocked &&
+              !o.pqLocked &&
+              o.content.trim() == content &&
               o.timestamp.difference(m.timestamp).abs() <= kReconcileWindow),
     );
     if (idx >= 0) {
