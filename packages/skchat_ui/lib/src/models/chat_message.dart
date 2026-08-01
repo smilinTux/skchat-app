@@ -32,6 +32,7 @@ class ChatMessage {
     this.receiptsRead = const [],
     this.isAgent = false,
     this.senderName,
+    this.pqLocked = false,
   });
 
   final String id;
@@ -85,6 +86,18 @@ class ChatMessage {
   final bool isAgent;
   final String? senderName;
 
+  /// A post-quantum (`pqdm1:`) sealed message that THIS device could not open
+  /// (no matching private key, or the AEAD open failed, e.g. the reply was
+  /// sealed to another device's prekey, or the browser has no PQC backend).
+  ///
+  /// Such a message still renders, as a visible "locked" placeholder, so the
+  /// sender never appears silent on the reduced-assurance web/PWA leg. Because
+  /// every locked copy carries the SAME placeholder [content], it must be
+  /// deduplicated by [id] ONLY: content-based dedup would otherwise collapse two
+  /// genuinely distinct locked replies into one, hiding all but the first. See
+  /// `message_dedup.dart` and `conversation_provider.dart`.
+  final bool pqLocked;
+
   // -- Derived helpers --------------------------------------------------------
 
   /// Whether this message has been edited (carries an `edited_at`).
@@ -122,6 +135,7 @@ class ChatMessage {
     List<String>? receiptsRead,
     bool? isAgent,
     String? senderName,
+    bool? pqLocked,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -144,6 +158,7 @@ class ChatMessage {
       receiptsRead: receiptsRead ?? this.receiptsRead,
       isAgent: isAgent ?? this.isAgent,
       senderName: senderName ?? this.senderName,
+      pqLocked: pqLocked ?? this.pqLocked,
     );
   }
 
@@ -197,6 +212,7 @@ class ChatMessage {
       receiptsRead: receipts is Map ? _strList(receipts['read']) : const [],
       isAgent: json['is_agent'] as bool? ?? false,
       senderName: json['sender_name'] as String?,
+      pqLocked: json['pq_locked'] as bool? ?? false,
     );
   }
 
@@ -220,5 +236,6 @@ class ChatMessage {
         'receipts': {'delivered': receiptsDelivered, 'read': receiptsRead},
         'is_agent': isAgent,
         'sender_name': senderName,
+        'pq_locked': pqLocked,
       };
 }
