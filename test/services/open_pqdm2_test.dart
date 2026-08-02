@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:skchat/services/pq_conversation_service.dart';
 import 'package:skchat/services/pq_dm_codec.dart';
 import 'package:skchat/services/pq_prekey_service.dart';
@@ -60,19 +58,6 @@ void main() {
       return false;
     }
   }
-
-  // recallOutbound is Hive-backed; init it on a temp dir so the recall miss
-  // (a peer's inbound is never in our own-outbound box) exercises the real path.
-  late Directory tmp;
-  setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('skchat_open_pqdm2');
-    Hive.init(tmp.path);
-  });
-  tearDown(() async {
-    await Hive.close();
-    await Hive.deleteFromDisk();
-    if (tmp.existsSync()) tmp.deleteSync(recursive: true);
-  });
 
   group('openIncomingDetailed pqdm2 (Task 10, needs liboqs)', () {
     test('selects this device OWN slot from a fanout token and opens it',

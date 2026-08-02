@@ -57,9 +57,10 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     return [];
   }
 
-  /// Prefetch the peer's prekey bundle + hydrate the own-outbound plaintext
-  /// cache on conversation open, then invalidate the PQ badge so the header
-  /// re-reads the (possibly now hybrid) self-report.
+  /// Prefetch the peer's prekey bundle on conversation open, then invalidate the
+  /// PQ badge so the header re-reads the (possibly now hybrid) self-report. (Own
+  /// outbound now renders from our own `pqdm2:` slot, so there is no plaintext
+  /// cache to hydrate.)
   Future<void> _primePqForConversation(String peerId) async {
     // PQC is a best-effort DM feature: on a device where the PQC backend is
     // unavailable (e.g. liboqs is not installed, which throws
@@ -72,7 +73,6 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     try {
       final pq = ref.read(pqConversationServiceProvider);
       final peerShort = normalizePeerKey(peerId);
-      await pq.primeOutboundCache();
       await pq.prefetchPeer(peerShort);
       ref.invalidate(conversationPqStateProvider(peerShort));
     } catch (_) {
@@ -117,15 +117,15 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     await _fetchFromDaemon(peerId);
   }
 
-  /// Resolve a `pqdm1:` token to display text + the direction it should render.
+  /// Resolve a hybrid-sealed (`pqdm1:` / `pqdm2:`) token to display text + the
+  /// direction it should render.
   ///
-  /// PQC Q5 (BUG 1): an own-outbound hybrid DM is sealed to the PEER's key, so
-  /// this device cannot decapsulate it. We therefore FIRST ask the PQ service
-  /// whether this exact token is one WE sealed (`recallOutbound`), a hit means
-  /// "render the remembered plaintext as OUTBOUND", regardless of how
-  /// directionality was computed (which is unreliable when the local identity
-  /// hasn't resolved yet). Only a miss is treated as a peer message to open with
-  /// our private key. Returns `(text, isOutbound)`; `text == null` means drop.
+  /// PQC Q5: with multi-device fanout an own-outbound `pqdm2:` DM carries THIS
+  /// device's own slot, so [PqConversationService.openIncomingDetailed] opens it
+  /// straight from our key and reports `mine == true` (render as OUTBOUND),
+  /// independent of the unreliable directionality guess. A genuine inbound is
+  /// opened with our private key. A token this device cannot open reports
+  /// `opened == false` and renders as a locked placeholder.
   /// Returns `(text, isOutbound, locked)`. `text == null` means drop; `locked`
   /// marks a sealed reply this device could NOT open; it still renders (as a
   /// visible placeholder) but MUST be deduped by id only (see [ChatMessage.pqLocked]).
@@ -178,13 +178,15 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           // Only include messages that belong to this conversation.
           if (msgPeerId != peerShort) continue;
 
-          // PQC Q5: resolve a `pqdm1:` token. Own-outbound (sealed to the peer)
-          // renders the remembered plaintext as OUTBOUND; an inbound token is
-          // opened with our key. Never shown as ciphertext. A token this device
-          // can't open renders as a locked placeholder (CARD E), deduped by id.
+          // PQC Q5: resolve a hybrid-sealed token (`pqdm1:` single-recipient or
+          // `pqdm2:` multi-device fanout). Own-outbound opens from our OWN slot
+          // (pqdm2) and renders as OUTBOUND; an inbound token is opened with our
+          // key. Never shown as ciphertext. A token this device can't open
+          // renders as a locked placeholder (CARD E), deduped by id.
           var cliBody = m.content;
           var pqLocked = false;
-          if (PqDmCodec.isHybridToken(cliBody)) {
+          if (PqDmCodec.isHybridToken(cliBody) ||
+              cliBody.startsWith(PqDmCodec.pqdm2Prefix)) {
             final r = await _resolvePqToken(
               cliBody,
               peerShort,
@@ -326,14 +328,15 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       var body = parsed.content;
       var pqLocked = false;
 
-      // PQC Q5: an inbound `pqdm1:` token is a hybrid-sealed DM, open it with
-      // this device's hybrid private key (flips the convo `hybrid-pq`). Our own
-      // OUTBOUND copy is stored sealed to the PEER's key (not decapsulatable
-      // here), so we first ask `recallOutbound` for the remembered plaintext and
-      // render it as outbound, never as ciphertext, deduped by content. A token
-      // this device cannot open renders as a locked placeholder (CARD E, the
-      // web/PWA reduced-assurance leg), deduped by id so it is never silent.
-      if (PqDmCodec.isHybridToken(body)) {
+      // PQC Q5: an inbound `pqdm1:` / `pqdm2:` token is a hybrid-sealed DM, open
+      // it with this device's hybrid private key (flips the convo `hybrid-pq`).
+      // Our own OUTBOUND pqdm2 copy carries our own device slot, so it opens
+      // straight from our key and renders as outbound, never as ciphertext,
+      // deduped by content. A token this device cannot open renders as a locked
+      // placeholder (CARD E, the web/PWA reduced-assurance leg), deduped by id so
+      // it is never silent.
+      if (PqDmCodec.isHybridToken(body) ||
+          body.startsWith(PqDmCodec.pqdm2Prefix)) {
         final r = await _resolvePqToken(
           body,
           peerShort,

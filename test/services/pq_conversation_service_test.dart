@@ -1,16 +1,15 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:skchat/services/pq_conversation_service.dart';
 import 'package:skchat/services/pq_dm_codec.dart';
 import 'package:skchat/services/pq_prekey_service.dart';
 
-/// Unit tests for the BUG-1 own-outbound rendering + BUG-2 no-downgrade logic.
+/// Unit tests for the no-downgrade (BUG 2) logic and the CARD E locked
+/// placeholder. Own-outbound rendering moved to the `pqdm2:` fanout path (a
+/// device is its own recipient slot), proven in `seal_outgoing_fanout_test.dart`;
+/// the retired Hive `recordOutbound`/`recallOutbound` recall path is gone.
 ///
-/// These do NOT need liboqs: the own-outbound recall path short-circuits before
-/// any KEM op, and the no-downgrade-on-fetch-failure path only exercises state
-/// bookkeeping. A fake [PqPrekeyService] feeds a hybrid / classical bundle.
+/// These do NOT need liboqs: the classical / no-downgrade paths only exercise
+/// state bookkeeping. A fake [PqPrekeyService] feeds a hybrid / classical bundle.
 class _FakePrekeyService implements PqPrekeyService {
   _FakePrekeyService({required this.hybrid});
 
@@ -18,19 +17,20 @@ class _FakePrekeyService implements PqPrekeyService {
   bool hasKey = true;
   int fetchCalls = 0;
 
-  @override
-  Future<bool> ensureKeyPair() async => hasKey;
-
   PrekeyBundle _bundle() {
     if (!hybrid) return const PrekeyBundle();
     // A syntactically-valid hybrid bundle (1216-byte all-zero public key). We
-    // never actually seal in these tests (the fake codec does), so the bytes
-    // only need to satisfy isHybrid + the length check at use sites we hit.
+    // never actually seal in these tests, so the bytes only need to satisfy
+    // isHybrid + the length check at use sites we hit. No `codec: pqdm2` advert,
+    // so sealOutgoing stays on the (non-sealing) pqdm1 fallback branch here.
     return PrekeyBundle(
       suite: PqDmCodec.hybridSuite,
       hybridPublicHex: '00' * 1216,
     );
   }
+
+  @override
+  Future<bool> ensureKeyPair() async => hasKey;
 
   @override
   Future<List<PrekeyBundle>> fetchPeer(String peer, {bool force = false}) async {
@@ -53,57 +53,7 @@ class _FakePrekeyService implements PqPrekeyService {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  // The own-outbound map is backed by a Hive box; init Hive on a temp dir so
-  // recordOutbound/recallOutbound exercise the real persistence path (and the
-  // openBox call doesn't raise an unhandled async HiveError).
-  late Directory tmp;
-  setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('skchat_pq_convo_test');
-    Hive.init(tmp.path);
-  });
-  tearDown(() async {
-    await Hive.close();
-    await Hive.deleteFromDisk();
-    if (tmp.existsSync()) tmp.deleteSync(recursive: true);
-  });
-
-  group('own-outbound recall (BUG 1)', () {
-    test('recordOutbound → recallOutbound returns the plaintext', () async {
-      final svc = PqConversationService(
-        prekeys: _FakePrekeyService(hybrid: true),
-        localShort: 'chef',
-      );
-      const token = 'pqdm1:x25519-mlkem768:AAAA';
-      const plain = 'hello lumina';
-      await svc.recordOutbound(token, plain);
-      expect(await svc.recallOutbound(token), plain);
-      expect(svc.recallOutboundSync(token), plain);
-    });
-
-    test('openIncoming on our OWN token returns plaintext, flips hybrid',
-        () async {
-      final svc = PqConversationService(
-        prekeys: _FakePrekeyService(hybrid: true),
-        localShort: 'chef',
-      );
-      const token = 'pqdm1:x25519-mlkem768:BBBB';
-      const plain = 'my own outbound 🔐';
-      await svc.recordOutbound(token, plain);
-      // openIncoming must return the remembered plaintext WITHOUT attempting to
-      // decapsulate (it was sealed to the peer, not us) — never ciphertext.
-      final shown = await svc.openIncoming('lumina', token);
-      expect(shown, plain);
-      expect(svc.isHybrid('lumina'), isTrue);
-    });
-
-    test('a non-own token is NOT recalled (miss → null)', () async {
-      final svc = PqConversationService(
-        prekeys: _FakePrekeyService(hybrid: true),
-        localShort: 'chef',
-      );
-      expect(await svc.recallOutbound('pqdm1:x25519-mlkem768:NOTOURS'), isNull);
-    });
-
+  group('openIncoming passthrough', () {
     test('non-token body passes through openIncoming unchanged', () async {
       final svc = PqConversationService(
         prekeys: _FakePrekeyService(hybrid: true),
@@ -115,19 +65,6 @@ void main() {
 
   // CARD E: a sealed reply this device can't open reports opened=false
   group('openIncomingDetailed (CARD E, web/PWA locked placeholder)', () {
-    test('own outbound → opened=true, mine=true, real plaintext', () async {
-      final svc = PqConversationService(
-        prekeys: _FakePrekeyService(hybrid: true),
-        localShort: 'chef',
-      );
-      const token = 'pqdm1:x25519-mlkem768:MINE';
-      await svc.recordOutbound(token, 'my own text');
-      final r = await svc.openIncomingDetailed('lumina', token);
-      expect(r.opened, isTrue);
-      expect(r.mine, isTrue);
-      expect(r.text, 'my own text');
-    });
-
     test('non-token body → opened=true, passthrough', () async {
       final svc = PqConversationService(
         prekeys: _FakePrekeyService(hybrid: true),

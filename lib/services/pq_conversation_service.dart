@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
 import 'pq_backend.dart';
 import 'pq_dm_codec.dart';
@@ -35,19 +34,17 @@ enum PqConversationState {
 ///   through unchanged. A failed open returns a visible placeholder (never
 ///   throws into the render loop).
 ///
-/// Own-outbound problem (the BUG 1 fix): a hybrid DM is sealed to the PEER's
-/// public key, so when the history poll returns our OWN sent `pqdm1:` token this
-/// device cannot decapsulate it (it was sealed to the peer, not to us). We must
-/// NEVER render an own-outbound token as ciphertext. The robust fix is a
-/// persisted **token → plaintext** map ([recordOutbound]/[recallOutbound]):
-/// every token this device seals is remembered (in-memory + Hive, so it
-/// survives a page reload), keyed by the exact token string. When a `pqdm1:`
-/// token arrives from history, the render path FIRST asks [recallOutbound], a
-/// hit means "this is our own sent message; show this plaintext as outbound,
-/// deduped", and only a miss is treated as a peer message to [openIncoming].
-/// This removes the dependency on (often-wrong) directionality detection for our
-/// own messages: an own-outbound sealed token always renders as its original
-/// plaintext, deduped against the optimistic bubble.
+/// Own-outbound rendering (multi-device fanout, Task 11): [sealOutgoing] fans a
+/// DM out to EVERY recipient device slot: the peer's devices AND the sender's
+/// OWN devices, sealed once as a `pqdm2:` multi-recipient envelope (via
+/// [PqDmCodec.buildPqdm2]). Because this device is itself a recipient slot, when
+/// the history poll echoes our own sent token back we open it straight from our
+/// OWN slot (the token's header binds `sender == localShort`), so it renders as
+/// the original plaintext with NO persisted token->plaintext cache. The old Hive
+/// `recordOutbound`/`recallOutbound` recall path is retired. A pqdm1-only peer
+/// (no `codec: pqdm2` advert) still gets the single-recipient `pqdm1:` seal; our
+/// own pqdm1 outbound has no own slot and renders as the locked placeholder,
+/// which is fine now that live peers advertise pqdm2.
 ///
 /// The (sender, recipient) bound into the downgrade-lock AAD are the SHORT names
 /// (e.g. `chef`, `lumina`) so they match what the Python daemon binds. Both
@@ -67,105 +64,12 @@ class PqConversationService {
 
   final Map<String, PqConversationState> _state = {};
 
-  /// In-memory token → plaintext map for THIS device's own outbound sealed DMs
-  /// (so we can render our own sent ciphertext as the original plaintext when it
-  /// echoes back from history). Backed by a Hive box for reload survival.
-  final Map<String, String> _outboundPlain = {};
-  Box<String>? _outboundBox;
-  bool _outboundLoaded = false;
-
-  /// Hive box that persists the own-outbound token → plaintext map across page
-  /// reloads (web). Bounded by a coarse cap so it can't grow without limit.
-  static const String _outboundBoxName = 'pq_outbound_plain';
-  static const int _outboundCap = 500;
-
   /// The per-conversation hybrid self-report (defaults to [unknown]).
   PqConversationState stateFor(String peer) =>
       _state[_short(peer)] ?? PqConversationState.unknown;
 
   bool isHybrid(String peer) =>
       stateFor(peer) == PqConversationState.hybridPq;
-
-  /// Open (lazily) the persisted own-outbound plaintext box and hydrate the
-  /// in-memory map. Best-effort: if Hive isn't initialized the cache stays
-  /// in-memory only (still fixes the live session; reload falls back to the
-  /// optimistic-bubble skip).
-  Future<void> _ensureOutboundBox() async {
-    if (_outboundLoaded) return;
-    _outboundLoaded = true;
-    try {
-      _outboundBox = Hive.isBoxOpen(_outboundBoxName)
-          ? Hive.box<String>(_outboundBoxName)
-          : await _safeOpenBox();
-      if (_outboundBox != null) {
-        for (final key in _outboundBox!.keys) {
-          final v = _outboundBox!.get(key);
-          if (v != null) _outboundPlain['$key'] = v;
-        }
-      }
-    } catch (_) {
-      _outboundBox = null; // in-memory only
-    }
-  }
-
-  /// Open the Hive box, fully containing the case where Hive isn't initialized
-  /// (e.g. web before `Hive.initFlutter`, or a unit test that never inits Hive).
-  /// `Hive.openBox` throws synchronously AND rejects an internal future in a
-  /// separate microtask; the sync throw is caught by the caller, but the stray
-  /// async rejection would otherwise surface as an unhandled error. A guarded
-  /// zone swallows it and we stay in-memory only, best-effort persistence.
-  Future<Box<String>?> _safeOpenBox() async {
-    final completer = Completer<Box<String>?>();
-    runZonedGuarded(() async {
-      try {
-        completer.complete(await Hive.openBox<String>(_outboundBoxName));
-      } catch (_) {
-        if (!completer.isCompleted) completer.complete(null);
-      }
-    }, (error, stack) {
-      if (!completer.isCompleted) completer.complete(null);
-    });
-    return completer.future;
-  }
-
-  /// Remember the plaintext for an own-outbound sealed [token] so a later
-  /// history echo of that exact token renders as plaintext (not ciphertext).
-  Future<void> recordOutbound(String token, String plaintext) async {
-    _outboundPlain[token] = plaintext;
-    await _ensureOutboundBox();
-    final box = _outboundBox;
-    if (box == null) return;
-    try {
-      await box.put(token, plaintext);
-      // Coarse FIFO trim so the box can't grow unbounded over a long session.
-      if (box.length > _outboundCap) {
-        final overflow = box.length - _outboundCap;
-        final victims = box.keys.take(overflow).toList();
-        await box.deleteAll(victims);
-        for (final k in victims) {
-          _outboundPlain.remove('$k');
-        }
-      }
-    } catch (_) {
-      // Persistence is best-effort; the in-memory map still covers the session.
-    }
-  }
-
-  /// If [token] is one THIS device sealed (an own outbound), return its original
-  /// plaintext; otherwise null. Hydrates the persisted map on first use so the
-  /// lookup works after a page reload.
-  Future<String?> recallOutbound(String token) async {
-    if (_outboundPlain.containsKey(token)) return _outboundPlain[token];
-    await _ensureOutboundBox();
-    return _outboundPlain[token];
-  }
-
-  /// Synchronous fast-path for [recallOutbound] once the box has been hydrated.
-  String? recallOutboundSync(String token) => _outboundPlain[token];
-
-  /// Eagerly hydrate the persisted own-outbound cache (call on conversation open
-  /// so the very first history poll can resolve own tokens).
-  Future<void> primeOutboundCache() => _ensureOutboundBox();
 
   /// Prefetch + cache the peer's prekey bundle when a conversation OPENS, so the
   /// seal at send time uses the cached bundle and doesn't race a busy webui
@@ -188,17 +92,25 @@ class PqConversationService {
     }
   }
 
-  /// Seal [content] to [peer] if a hybrid prekey is advertised. Returns the
-  /// `pqdm1:` token (hybrid) or the original [content] (classical). Records the
-  /// negotiated suite so the UI indicator is honest, and remembers the token →
-  /// plaintext so our own echoed-back token renders as plaintext.
+  /// Seal [content] to [peer]. When the peer advertises the `pqdm2` fanout
+  /// capability, seal ONE `pqdm2:` multi-recipient envelope wrapped per device
+  /// slot: every peer device slot AND every sender-own device slot (so all of
+  /// our own devices can also open our sent message straight from their slot).
+  /// A peer that only advertises the legacy single slot gets the `pqdm1:` seal
+  /// against its newest slot. A classical (no hybrid prekey) peer gets [content]
+  /// unchanged. Records the negotiated suite so the UI 🔐 indicator is honest,
+  /// and NEVER silently downgrades a previously-hybrid conversation on a
+  /// transient fetch miss.
   Future<String> sealOutgoing(String peer, String content) async {
     final peerShort = _short(peer);
     // Control sentinels (__REACT__/__TYPING__/… and __CALL_REQUEST__) must stay
     // cleartext so the existing dispatch keeps working, never seal them.
     if (content.startsWith('__')) return content;
     // Already a token (re-send), pass through.
-    if (PqDmCodec.isHybridToken(content)) return content;
+    if (PqDmCodec.isHybridToken(content) ||
+        content.startsWith(PqDmCodec.pqdm2Prefix)) {
+      return content;
+    }
 
     final haveKey = await _prekeys.ensureKeyPair();
     if (!haveKey) {
@@ -207,12 +119,13 @@ class PqConversationService {
       _state[peerShort] = PqConversationState.classical;
       return content;
     }
-    // Uses the cached bundle (prefetched on conversation open) when present;
-    // fetchPeerNewest only hits the network on a cache miss.
-    final bundle = await _prekeys.fetchPeerNewest(peerShort);
+    // The full peer slot LIST (multi-device). Uses the in-process cache when the
+    // conversation was prefetched; only hits the network on a cache miss.
+    final peerSlots = await _prekeys.fetchPeer(peerShort);
+    final peerIsHybrid = peerSlots.any((b) => b.isHybrid);
     final suite = PqDmCodec.negotiateSuite(
       localSupportsHybrid: true,
-      peerIsHybrid: bundle.isHybrid,
+      peerIsHybrid: peerIsHybrid,
     );
     if (suite != PqDmCodec.hybridSuite) {
       // Don't clobber a previously-negotiated hybrid state on a transient miss:
@@ -223,16 +136,45 @@ class PqConversationService {
       }
       return content;
     }
+
+    final body = Uint8List.fromList(utf8.encode(content));
+
+    // Fanout when ANY peer slot advertises the pqdm2 capability (mirrors the
+    // daemon's `_seal_hybrid_outbound` gate). Seal to every peer device slot AND
+    // every sender-own device slot in a single envelope.
+    final fanout = peerSlots.any((b) => b.codec == PrekeyBundle.pqdm2Codec);
+    if (fanout) {
+      try {
+        final recipients = await _fanoutRecipients(peerShort, peerSlots);
+        if (recipients.isNotEmpty) {
+          final token = await _codec.buildPqdm2(
+            body,
+            recipients,
+            sender: _localShort,
+            recipientId: peerShort,
+          );
+          _state[peerShort] = PqConversationState.hybridPq;
+          return token;
+        }
+        // No sealable slot: fall through to the pqdm1 path below.
+      } catch (_) {
+        // Fanout failed (malformed slot / no backend): fall back to pqdm1 so a
+        // single bad device never sinks the send. Don't downgrade if hybrid.
+      }
+    }
+
+    // pqdm1 single-recipient fallback (peer has no pqdm2 advert): seal to the
+    // newest peer slot. Our own pqdm1 outbound has no own slot to open, so it
+    // renders as the locked placeholder on echo (acceptable now peers are pqdm2).
     try {
+      final newest = peerSlots.isNotEmpty ? peerSlots.first : const PrekeyBundle();
       final token = await _codec.sealToken(
-        Uint8List.fromList(utf8.encode(content)),
-        bundle.hybridPublic(),
+        body,
+        newest.hybridPublic(),
         sender: _localShort,
         recipient: peerShort,
       );
       _state[peerShort] = PqConversationState.hybridPq;
-      // Remember our own outbound so the history echo renders as plaintext.
-      await recordOutbound(token, content);
       return token;
     } catch (_) {
       // Sealing failed (bad bundle / no backend) → keep msg, don't downgrade a
@@ -242,6 +184,41 @@ class PqConversationService {
       }
       return content;
     }
+  }
+
+  /// Build the deduped recipient device slot list for a `pqdm2:` fanout: every
+  /// peer device slot in [peerSlots] PLUS every sender-own device slot (this
+  /// device from [PqPrekeyService.myBundle], and any other own devices published
+  /// under the local short name). Malformed / classical / key-less slots are
+  /// skipped so one bad device never sinks the fanout; deduped by `key_id`.
+  Future<List<Pqdm2Recipient>> _fanoutRecipients(
+    String peerShort,
+    List<PrekeyBundle> peerSlots,
+  ) async {
+    // Own slots: guarantee THIS device (so our own echo always opens locally),
+    // then merge any other own devices the daemon has published for us.
+    final ownSlots = <PrekeyBundle>[await _prekeys.myBundle()];
+    try {
+      ownSlots.addAll(await _prekeys.fetchPeer(_localShort));
+    } catch (_) {
+      // Best-effort: the guaranteed local slot still covers own-device render.
+    }
+
+    final recipients = <Pqdm2Recipient>[];
+    final seen = <String>{};
+    for (final b in [...peerSlots, ...ownSlots]) {
+      final kid = b.keyId;
+      if (kid == null || kid.isEmpty || !b.isHybrid) continue;
+      if (!seen.add(kid)) continue;
+      final Uint8List pub;
+      try {
+        pub = b.hybridPublic();
+      } catch (_) {
+        continue; // malformed hex, skip this slot
+      }
+      recipients.add(Pqdm2Recipient(keyId: kid, hybridPublicKey: pub));
+    }
+    return recipients;
   }
 
   /// Placeholder rendered for a hybrid-sealed message this device cannot open
@@ -256,13 +233,12 @@ class PqConversationService {
   static const String lockedCantOpenText =
       "🔐 Encrypted message (can't be opened on this device)";
 
-  /// Open an incoming [body] from [peer]. If it's a `pqdm1:` token, FIRST check
-  /// whether it's one WE sealed (own outbound echoed back from history), if so
-  /// return the remembered plaintext (it can't be decapsulated with our key, it
-  /// was sealed to the peer). Otherwise decapsulate + decrypt with this device's
-  /// private key and flip the convo `hybrid-pq`. Non-token bodies are returned
-  /// unchanged. A failed open returns a visible placeholder so the render loop
-  /// never throws.
+  /// Open an incoming [body] from [peer]. A `pqdm2:` token whose header binds
+  /// `sender == localShort` is OUR OWN outbound echoed back from history: we open
+  /// it straight from this device's own slot (no plaintext cache) and render it
+  /// as outbound. Otherwise decapsulate + decrypt with this device's private key
+  /// and flip the convo `hybrid-pq`. Non-token bodies are returned unchanged. A
+  /// failed open returns a visible placeholder so the render loop never throws.
   Future<String> openIncoming(String peer, String body) async =>
       (await openIncomingDetailed(peer, body)).text;
 
@@ -270,7 +246,8 @@ class PqConversationService {
   ///
   /// Returns `(text, opened, mine)`:
   /// - `opened == true`  → [text] is the real plaintext (a peer message we
-  ///   decrypted, our own recalled outbound, or a non-token passthrough).
+  ///   decrypted, our own outbound opened from our slot, or a non-token
+  ///   passthrough).
   /// - `opened == false` → [text] is a visible LOCKED placeholder; this device
   ///   could not open the sealed token (no key, or the AEAD open failed because
   ///   it was sealed to another device's prekey / a browser without PQC).
@@ -289,14 +266,6 @@ class PqConversationService {
     }
     final peerShort = _short(peer);
 
-    // Own-outbound? (sealed to the peer's key, not openable here). Render the
-    // remembered plaintext and flip the convo hybrid (we DID seal hybrid).
-    final mine = await recallOutbound(body);
-    if (mine != null) {
-      _state[peerShort] = PqConversationState.hybridPq;
-      return (text: mine, opened: true, mine: true);
-    }
-
     final haveKey = await _prekeys.ensureKeyPair();
     if (!haveKey) {
       return (text: lockedNoKeyText, opened: false, mine: false);
@@ -307,26 +276,39 @@ class PqConversationService {
     }
 
     // pqdm2: multi-device fanout envelope. Select THIS device's own slot by its
-    // published key_id and open it. A token that carries no slot for this device
-    // (or any AEAD failure) returns null, surfaced as the graceful locked
-    // placeholder, never a crash. Mirrors the daemon's _open_pqdm2_inbound.
+    // published key_id and open it. When the header binds `sender == localShort`
+    // the token is OUR OWN outbound echoed back from history: open it with the
+    // token's own (sender, recipient) binding and render it as outbound (`mine`),
+    // which is how own-device rendering now works with NO plaintext cache. A
+    // token that carries no slot for this device (or any AEAD failure) returns
+    // null, surfaced as the graceful locked placeholder, never a crash. Mirrors
+    // the daemon's _open_pqdm2_inbound.
     if (isPqdm2) {
       final myKeyId = _prekeys.keyId;
       if (myKeyId == null) {
         return (text: lockedNoKeyText, opened: false, mine: false);
       }
+      final header = _pqdm2Header(body);
+      final headerSender = header?['sender'] as String?;
+      final headerRecipient = header?['recipient'] as String?;
+      final mineToken = headerSender == _localShort;
+      // Own outbound: the AAD was bound (sender=us, recipient=peer). A genuine
+      // inbound uses (sender=peer, recipient=us).
+      final openSender = mineToken ? _localShort : peerShort;
+      final openRecipient =
+          mineToken ? (headerRecipient ?? peerShort) : _localShort;
       final clear = await _codec.openPqdm2(
         body,
         myKeyId: myKeyId,
         myPrivate: priv,
-        sender: peerShort,
-        recipientId: _localShort,
+        sender: openSender,
+        recipientId: openRecipient,
       );
       if (clear == null) {
         return (text: lockedCantOpenText, opened: false, mine: false);
       }
       _state[peerShort] = PqConversationState.hybridPq;
-      return (text: utf8.decode(clear), opened: true, mine: false);
+      return (text: utf8.decode(clear), opened: true, mine: mineToken);
     }
 
     try {
@@ -349,6 +331,22 @@ class PqConversationService {
   String _short(String uri) {
     var s = uri.startsWith('capauth:') ? uri.substring('capauth:'.length) : uri;
     return s.split('@').first;
+  }
+
+  /// Decode the JSON header of a `pqdm2:` token (the `b64(header).b64(slots).
+  /// b64(body)` layout) so the render path can read its `sender`/`recipient`
+  /// binding. Returns null on any malformed token (the caller then treats it as
+  /// a normal inbound and lets the AEAD open fail gracefully).
+  static Map<String, dynamic>? _pqdm2Header(String token) {
+    try {
+      final rest = token.substring(PqDmCodec.pqdm2Prefix.length);
+      final parts = rest.split('.');
+      if (parts.length != 3) return null;
+      final decoded = jsonDecode(utf8.decode(base64.decode(parts[0])));
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
   }
 }
 
