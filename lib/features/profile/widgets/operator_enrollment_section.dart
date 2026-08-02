@@ -80,6 +80,12 @@ class _OperatorEnrollmentSectionState
   String? _errorMessage;
   late final TextEditingController _tokenController;
 
+  // Obscured by default (the token is a secret), but toggleable: Flutter web
+  // BLOCKS paste + the context menu on an obscured field, so a paste-only value
+  // like the operator token can't be entered while hidden. The reveal toggle
+  // lets the operator un-hide to paste, then re-hide.
+  bool _obscureToken = true;
+
   String? Function() get _readToken =>
       widget.tokenReader ?? op_token.operatorToken;
 
@@ -227,15 +233,29 @@ class _OperatorEnrollmentSectionState
                 child: TextField(
                   key: const Key("operator-token-field"),
                   controller: _tokenController,
-                  obscureText: true,
+                  obscureText: _obscureToken,
+                  enableInteractiveSelection: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
                   onChanged: (value) => _writeToken(value.trim()),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: "Operator token",
                     helperText:
                         "Paste your server's operator token "
                         "(SKCHAT_GUEST_OPERATOR_TOKEN) to authorize linking "
                         "this device.",
                     helperMaxLines: 2,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureToken
+                            ? Icons.visibility_rounded
+                            : Icons.visibility_off_rounded,
+                        size: 20,
+                      ),
+                      tooltip: _obscureToken ? "Show / paste" : "Hide",
+                      onPressed: () =>
+                          setState(() => _obscureToken = !_obscureToken),
+                    ),
                   ),
                 ),
               ),
