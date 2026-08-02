@@ -54,6 +54,26 @@ class PqDmCodec {
   static const int _tagLen = 16; // pqdm._AESGCM_TAG_LEN
   static const int _sealedMinLen = _ciphertextLen + _nonceLen + _tagLen;
 
+  // pqdm2 multi-recipient (fanout) constants, pinned to pqdm.py.
+
+  /// Token scheme prefix for the multi-recipient envelope (matches
+  /// `pqdm.PQDM2_PREFIX`).
+  static const String pqdm2Prefix = 'pqdm2:';
+
+  /// Header codec version (matches `pqdm.PQDM2_VERSION`).
+  static const int pqdm2Version = 2;
+
+  /// HKDF domain-separation label for the per-slot message-key wrap (matches
+  /// `pqdm._PQDM2_WRAP_INFO`). Distinct from `_infoWrap` (pqdm1).
+  static final Uint8List _pqdm2WrapInfo =
+      Uint8List.fromList(utf8.encode('pqdm2-wrap'));
+
+  /// Wrapped message key = 32-byte key + 16-byte GCM tag (matches
+  /// `pqdm._PQDM2_WRAPPED_K_LEN`).
+  static const int _pqdm2WrappedKLen = 32 + _tagLen;
+
+  static const int _messageKeyLen = 32;
+
   // ── AAD (downgrade-lock), mirrors pqdm.downgrade_lock_aad ─────────────────
 
   /// Canonical AEAD AAD binding the negotiated suite + parties into the
@@ -286,7 +306,240 @@ class PqDmCodec {
     return classicalSuite;
   }
 
+  // ── pqdm2: multi-recipient (fanout) envelope ─────────────────────────────
+  //
+  // One body is sealed ONCE under a random 32-byte message key `K`; `K` is then
+  // wrapped once per recipient device slot. Byte-for-byte interoperable with
+  // `pqdm.seal_multi`/`open_multi`. Token layout (interop contract):
+  //
+  //   pqdm2: + b64(header_json) + "." + b64(slots) + "." + b64(nonce || ct)
+  //   header = {"kids":[...],"recipient":r,"sender":s,"suite":suite,"v":2}
+  //   slot   = key_id_len(1) || key_id(utf8) || encap(1120) || wrappedK(48)
+  //
+  // b64 is STANDARD base64 WITH padding. The header is canonical JSON
+  // (sort_keys=True, separators=(",",":")): keys alphabetical -> kids,
+  // recipient, sender, suite, v. The body AAD binds
+  // `suite || sender || recipient || sha256("".join(sorted(kids)))`, and the
+  // SAME nonce is shared by the body and every slot wrap (safe: a distinct wrap
+  // key per slot).
+
+  /// Build the pqdm2 body AAD: `suite | sender | recipient | sha256(sorted kids)`
+  /// (raw 32-byte digest). Mirrors `pqdm._pqdm2_aad`.
+  Future<Uint8List> _pqdm2Aad(
+    String suite,
+    String sender,
+    String recipient,
+    List<String> kids,
+  ) async {
+    final sorted = List<String>.from(kids)..sort();
+    final joined = Uint8List.fromList(utf8.encode(sorted.join()));
+    final digest = (await Sha256().hash(joined)).bytes;
+    final out = BytesBuilder();
+    out.add(utf8.encode(suite));
+    out.addByte(0x7c); // '|'
+    out.add(utf8.encode(sender));
+    out.addByte(0x7c);
+    out.add(utf8.encode(recipient));
+    out.addByte(0x7c);
+    out.add(digest);
+    return out.toBytes();
+  }
+
+  /// Derive the AES-256 slot wrap key: `HKDF-SHA256(shared, salt=b"",
+  /// info="pqdm2-wrap", L=32)`. NO aad folded in (unlike pqdm1). Mirrors
+  /// `pqdm._pqdm2_wrap_key`.
+  Future<Uint8List> _pqdm2WrapKey(Uint8List shared) async {
+    final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
+    final key = await hkdf.deriveKey(
+      secretKey: SecretKey(shared),
+      nonce: Uint8List(0), // salt=b""
+      info: _pqdm2WrapInfo,
+    );
+    return Uint8List.fromList(await key.extractBytes());
+  }
+
+  /// AES-256-GCM encrypt returning `cipherText || 16-byte tag` (the pyca layout
+  /// `pqdm.py` uses). `aad` may be empty.
+  Future<Uint8List> _aesGcmSeal(
+    Uint8List key,
+    Uint8List nonce,
+    Uint8List plaintext,
+    Uint8List aad,
+  ) async {
+    final box = await AesGcm.with256bits().encrypt(
+      plaintext,
+      secretKey: SecretKey(key),
+      nonce: nonce,
+      aad: aad,
+    );
+    final out = Uint8List(box.cipherText.length + box.mac.bytes.length)
+      ..setAll(0, box.cipherText)
+      ..setAll(box.cipherText.length, box.mac.bytes);
+    return out;
+  }
+
+  /// AES-256-GCM decrypt of a `cipherText || 16-byte tag` blob. Throws on auth
+  /// failure.
+  Future<Uint8List> _aesGcmOpen(
+    Uint8List key,
+    Uint8List nonce,
+    Uint8List ctAndTag,
+    Uint8List aad,
+  ) async {
+    final cipherText =
+        Uint8List.sublistView(ctAndTag, 0, ctAndTag.length - _tagLen);
+    final mac = Mac(Uint8List.sublistView(ctAndTag, ctAndTag.length - _tagLen));
+    final clear = await AesGcm.with256bits().decrypt(
+      SecretBox(cipherText, nonce: nonce, mac: mac),
+      secretKey: SecretKey(key),
+      aad: aad,
+    );
+    return Uint8List.fromList(clear);
+  }
+
+  /// Canonical pqdm2 header JSON, key order matching Python's
+  /// `json.dumps(..., sort_keys=True, separators=(",",":"))`:
+  /// `{"kids":[...],"recipient":r,"sender":s,"suite":suite,"v":2}`.
+  static Uint8List _pqdm2Header(
+    List<String> kids,
+    String recipient,
+    String sender,
+    String suite,
+  ) {
+    final kidsJson = kids.map(_jsonStr).join(',');
+    final head = '{'
+        '"kids":[$kidsJson],'
+        '"recipient":${_jsonStr(recipient)},'
+        '"sender":${_jsonStr(sender)},'
+        '"suite":${_jsonStr(suite)},'
+        '"v":$pqdm2Version'
+        '}';
+    return Uint8List.fromList(utf8.encode(head));
+  }
+
+  /// Seal [body] once, wrapped per recipient device slot, into a `pqdm2:` token.
+  /// Mirrors `pqdm.seal_multi` byte-for-byte.
+  Future<String> buildPqdm2(
+    Uint8List body,
+    List<Pqdm2Recipient> recipients, {
+    required String sender,
+    required String recipientId,
+    Uint8List? nonceOverride, // tests only
+    Uint8List? messageKeyOverride, // tests only
+  }) async {
+    if (recipients.isEmpty) {
+      throw const SkPqcError('buildPqdm2 requires at least one recipient slot');
+    }
+    final kids = recipients.map((r) => r.keyId).toList();
+    final aad = await _pqdm2Aad(hybridSuite, sender, recipientId, kids);
+
+    final messageKey = messageKeyOverride ?? _randomBytes(_messageKeyLen);
+    final nonce = nonceOverride ?? _randomNonce();
+    final ct = await _aesGcmSeal(messageKey, nonce, body, aad);
+
+    final slots = BytesBuilder();
+    for (final r in recipients) {
+      final kidBytes = utf8.encode(r.keyId);
+      if (kidBytes.length > 255) {
+        throw SkPqcError('key_id too long (${kidBytes.length} bytes)');
+      }
+      if (r.hybridPublicKey.length != _publicKeyLen) {
+        throw SkPqcError(
+          'hybrid public key must be $_publicKeyLen bytes, '
+          'got ${r.hybridPublicKey.length}',
+        );
+      }
+      final enc = await _kem.encapsulate(r.hybridPublicKey);
+      if (enc.ciphertext.length != _ciphertextLen) {
+        throw SkPqcError(
+          'KEM ciphertext must be $_ciphertextLen bytes, '
+          'got ${enc.ciphertext.length}',
+        );
+      }
+      final wrapKey = await _pqdm2WrapKey(enc.sharedSecret);
+      // aad=None on the wrap: a distinct wrap key per slot makes the shared
+      // nonce safe.
+      final wrappedK =
+          await _aesGcmSeal(wrapKey, nonce, messageKey, Uint8List(0));
+      slots.addByte(kidBytes.length);
+      slots.add(kidBytes);
+      slots.add(enc.ciphertext);
+      slots.add(wrappedK);
+    }
+
+    final header = _pqdm2Header(kids, recipientId, sender, hybridSuite);
+    final bodyBlob = Uint8List(nonce.length + ct.length)
+      ..setAll(0, nonce)
+      ..setAll(nonce.length, ct);
+
+    return '$pqdm2Prefix'
+        '${base64.encode(header)}'
+        '.${base64.encode(slots.toBytes())}'
+        '.${base64.encode(bodyBlob)}';
+  }
+
+  /// Open a `pqdm2:` token by unwrapping this device's slot. Returns the
+  /// plaintext, or `null` if there is no matching slot / the token is malformed
+  /// / any AEAD open fails. NEVER throws on a bad token. Mirrors
+  /// `pqdm.open_multi`.
+  Future<Uint8List?> openPqdm2(
+    String token, {
+    required String myKeyId,
+    required Uint8List myPrivate,
+    required String sender,
+    required String recipientId,
+  }) async {
+    try {
+      if (!token.startsWith(pqdm2Prefix)) return null;
+      final rest = token.substring(pqdm2Prefix.length);
+      final parts = rest.split('.');
+      if (parts.length != 3) return null;
+      final header =
+          jsonDecode(utf8.decode(base64.decode(parts[0]))) as Map<String, dynamic>;
+      final slots = base64.decode(parts[1]);
+      final blob = base64.decode(parts[2]);
+
+      final kids = (header['kids'] as List).cast<String>();
+      final suite = (header['suite'] as String?) ?? hybridSuite;
+      final aad = await _pqdm2Aad(suite, sender, recipientId, kids);
+
+      final nonce = Uint8List.sublistView(blob, 0, _nonceLen);
+      final ct = Uint8List.sublistView(blob, _nonceLen);
+
+      var off = 0;
+      final n = slots.length;
+      while (off < n) {
+        final kidLen = slots[off];
+        off += 1;
+        final endKid = off + kidLen;
+        final endEncap = endKid + _ciphertextLen;
+        final endWrap = endEncap + _pqdm2WrappedKLen;
+        if (endWrap > n) return null; // truncated slot
+        final keyId = utf8.decode(Uint8List.sublistView(slots, off, endKid));
+        if (keyId != myKeyId) {
+          off = endWrap;
+          continue;
+        }
+        final encap = Uint8List.sublistView(slots, endKid, endEncap);
+        final wrappedK = Uint8List.sublistView(slots, endEncap, endWrap);
+        final shared = await _kem.decapsulate(encap, myPrivate);
+        final wrapKey = await _pqdm2WrapKey(shared);
+        final messageKey =
+            await _aesGcmOpen(wrapKey, nonce, wrappedK, Uint8List(0));
+        return await _aesGcmOpen(messageKey, nonce, ct, aad);
+      }
+      return null; // no matching slot
+    } catch (_) {
+      return null; // malformed / tamper / wrong key -> null (never raise)
+    }
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
+
+  Uint8List _randomBytes(int length) {
+    final r = SecretKeyData.random(length: length);
+    return Uint8List.fromList(r.bytes);
+  }
 
   Uint8List _randomNonce() {
     final r = SecretKeyData.random(length: _nonceLen);
@@ -301,4 +554,17 @@ class DowngradeDetected implements Exception {
   final String message;
   @override
   String toString() => 'DowngradeDetected: $message';
+}
+
+/// One recipient device slot for [PqDmCodec.buildPqdm2]: an opaque [keyId] and
+/// the 1216-byte hybrid public key to encapsulate to. Mirrors the Python
+/// `{"key_id": ..., "hybrid_public_hex": ...}` recipient dict.
+class Pqdm2Recipient {
+  const Pqdm2Recipient({required this.keyId, required this.hybridPublicKey});
+
+  /// Opaque device key id (bound into the header `kids` + the body AAD).
+  final String keyId;
+
+  /// The recipient device's 1216-byte hybrid public key.
+  final Uint8List hybridPublicKey;
 }
