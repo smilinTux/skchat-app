@@ -22,14 +22,19 @@ class _FakePrekeyService implements PqPrekeyService {
   @override
   Uint8List? get privateKey => null;
 
+  // Peer advertises hybrid; the point of the test is that OUR side has no key.
+  PrekeyBundle _peer() => PrekeyBundle(
+        suite: PqDmCodec.hybridSuite,
+        hybridPublicHex: '00' * 1216,
+      );
+
   @override
-  Future<PrekeyBundle> fetchPeer(String peer, {bool force = false}) async {
-    // Peer advertises hybrid; the point of the test is that OUR side has no key.
-    return PrekeyBundle(
-      suite: PqDmCodec.hybridSuite,
-      hybridPublicHex: '00' * 1216,
-    );
-  }
+  Future<List<PrekeyBundle>> fetchPeer(String peer, {bool force = false}) async =>
+      [_peer()];
+
+  @override
+  Future<PrekeyBundle> fetchPeerNewest(String peer, {bool force = false}) async =>
+      _peer();
 
   @override
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

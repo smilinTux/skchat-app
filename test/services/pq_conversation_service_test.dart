@@ -21,9 +21,7 @@ class _FakePrekeyService implements PqPrekeyService {
   @override
   Future<bool> ensureKeyPair() async => hasKey;
 
-  @override
-  Future<PrekeyBundle> fetchPeer(String peer, {bool force = false}) async {
-    fetchCalls++;
+  PrekeyBundle _bundle() {
     if (!hybrid) return const PrekeyBundle();
     // A syntactically-valid hybrid bundle (1216-byte all-zero public key). We
     // never actually seal in these tests (the fake codec does), so the bytes
@@ -32,6 +30,19 @@ class _FakePrekeyService implements PqPrekeyService {
       suite: PqDmCodec.hybridSuite,
       hybridPublicHex: '00' * 1216,
     );
+  }
+
+  @override
+  Future<List<PrekeyBundle>> fetchPeer(String peer, {bool force = false}) async {
+    fetchCalls++;
+    final b = _bundle();
+    return b.isHybrid ? [b] : const [];
+  }
+
+  @override
+  Future<PrekeyBundle> fetchPeerNewest(String peer, {bool force = false}) async {
+    fetchCalls++;
+    return _bundle();
   }
 
   // Unused in these tests.

@@ -179,7 +179,7 @@ class PqConversationService {
     final haveKey = await _prekeys.ensureKeyPair();
     if (!haveKey) return;
     try {
-      final bundle = await _prekeys.fetchPeer(peerShort);
+      final bundle = await _prekeys.fetchPeerNewest(peerShort);
       if (bundle.isHybrid) {
         _state[peerShort] = PqConversationState.hybridPq;
       }
@@ -208,8 +208,8 @@ class PqConversationService {
       return content;
     }
     // Uses the cached bundle (prefetched on conversation open) when present;
-    // fetchPeer only hits the network on a cache miss.
-    final bundle = await _prekeys.fetchPeer(peerShort);
+    // fetchPeerNewest only hits the network on a cache miss.
+    final bundle = await _prekeys.fetchPeerNewest(peerShort);
     final suite = PqDmCodec.negotiateSuite(
       localSupportsHybrid: true,
       peerIsHybrid: bundle.isHybrid,

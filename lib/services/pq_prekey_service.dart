@@ -97,7 +97,7 @@ class PqPrekeyService {
   HybridKeyPair? _keyPair;
   String? _keyId;
   bool _available = false;
-  final Map<String, PrekeyBundle> _peerCache = {};
+  final Map<String, List<PrekeyBundle>> _peerCache = {};
 
   /// Whether this device has a usable hybrid keypair (so it can do hybrid DMs).
   bool get hybridAvailable => _available;
@@ -175,9 +175,16 @@ class PqPrekeyService {
     }
   }
 
-  /// Fetch a peer's prekey bundle. Cached in-process; returns a classical
-  /// (non-hybrid) bundle on any error so the caller takes the classical path.
-  Future<PrekeyBundle> fetchPeer(String peer, {bool force = false}) async {
+  /// Fetch ALL of a peer's published device slots (multi-device DM fanout,
+  /// Phase 1). Returns the slot LIST newest-first so the sender can seal to
+  /// every device. Cached in-process; returns an EMPTY list on any error so a
+  /// transient timeout never permanently pins the conversation to classical
+  /// (the next send retries the fetch).
+  ///
+  /// Back-compat: a daemon that predates the multi-slot response returns either
+  /// `{prekey: {...}}` (single newest slot) or a bare bundle; both are folded
+  /// into a one-element list here.
+  Future<List<PrekeyBundle>> fetchPeer(String peer, {bool force = false}) async {
     final key = _peerShort(peer);
     if (!force && _peerCache.containsKey(key)) return _peerCache[key]!;
     try {
@@ -186,18 +193,42 @@ class PqPrekeyService {
       );
       final data = resp.data;
       final map = data is Map ? Map<String, dynamic>.from(data) : null;
-      // Tolerate `{prekey:{...}}` or a bare bundle.
-      final bundleMap = map != null && map['prekey'] is Map
-          ? Map<String, dynamic>.from(map['prekey'] as Map)
-          : map;
-      final bundle = PrekeyBundle.fromJson(bundleMap);
-      _peerCache[key] = bundle;
-      return bundle;
+      final bundles = _parseBundles(map, data);
+      _peerCache[key] = bundles;
+      return bundles;
     } catch (e) {
       // Do NOT cache a failed fetch, a transient timeout must not permanently
       // pin the conversation to classical. The next send retries the fetch.
-      return const PrekeyBundle();
+      return const [];
     }
+  }
+
+  /// Fetch the peer's NEWEST device slot as a single bundle (the pqdm1 fallback
+  /// path). Returns a classical (non-hybrid) bundle when the peer has published
+  /// nothing or on any error, so the caller takes the classical path.
+  Future<PrekeyBundle> fetchPeerNewest(String peer, {bool force = false}) async {
+    final bundles = await fetchPeer(peer, force: force);
+    return bundles.isNotEmpty ? bundles.first : const PrekeyBundle();
+  }
+
+  /// Normalize the GET /prekey response into a slot list. Prefers the new
+  /// `prekeys: [...]` list; otherwise tolerates the old `{prekey: {...}}` and
+  /// bare-bundle shapes as a single-element list.
+  static List<PrekeyBundle> _parseBundles(
+      Map<String, dynamic>? map, dynamic raw) {
+    if (map != null && map['prekeys'] is List) {
+      return [
+        for (final e in (map['prekeys'] as List))
+          if (e is Map)
+            PrekeyBundle.fromJson(Map<String, dynamic>.from(e)),
+      ];
+    }
+    // Old single-bundle shapes: `{prekey: {...}}` or a bare bundle map.
+    final bundleMap = map != null && map['prekey'] is Map
+        ? Map<String, dynamic>.from(map['prekey'] as Map)
+        : map;
+    if (bundleMap == null) return const [];
+    return [PrekeyBundle.fromJson(bundleMap)];
   }
 
   void invalidatePeer(String peer) => _peerCache.remove(_peerShort(peer));
