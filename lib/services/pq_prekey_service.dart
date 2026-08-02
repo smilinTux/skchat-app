@@ -7,10 +7,72 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sk_pqc/sk_pqc.dart';
 
 import 'daemon_config.dart';
-import 'join_service.dart' show SovereignSigner;
-import 'pgp_capauth_signer.dart' show sovereignSignerProvider;
 import 'pq_backend.dart';
 import 'pq_dm_codec.dart';
+
+/// Produces the ASCII-armored OpenPGP detached signature that authenticates a
+/// hybrid prekey bundle to the operator identity.
+///
+/// The signature MUST be made with the operator's PGP *identity* key (the same
+/// key the server verifier `skchat.prekey_sig.verify_prekey_bundle` loads via
+/// `_load_peer_public_key`). The app cannot hold that key and its local
+/// `PgpBridge` only emits raw RSA base64 (which pgpy rejects), so signing is
+/// delegated to the daemon, which owns the operator key.
+abstract class PrekeyArmorSigner {
+  /// Return an armored `-----BEGIN PGP SIGNATURE-----` block over the server's
+  /// canonical bytes for `{hybrid_public_hex, key_id, suite}`, or null if a
+  /// signature could not be produced (bundle then publishes unsigned).
+  Future<String?> sign({
+    required String hybridPublicHex,
+    required String keyId,
+    required String suite,
+  });
+}
+
+/// [PrekeyArmorSigner] that delegates to the daemon's operator sign endpoint
+/// (`POST /api/v1/prekey/sign`). The daemon reconstructs the canonical bytes
+/// from the same fields and signs them with the operator PGP key, returning the
+/// armored detached signature. Operator-gated server-side (loopback/tailnet or
+/// an operator token), so only the operator's own daemon session mints one.
+class DaemonPrekeyArmorSigner implements PrekeyArmorSigner {
+  DaemonPrekeyArmorSigner(this._dio, {String? operatorToken})
+      : _operatorToken = operatorToken;
+
+  final Dio _dio;
+  final String? _operatorToken;
+
+  @override
+  Future<String?> sign({
+    required String hybridPublicHex,
+    required String keyId,
+    required String suite,
+  }) async {
+    try {
+      final resp = await _dio.post<dynamic>(
+        '/api/v1/prekey/sign',
+        data: <String, dynamic>{
+          'hybrid_public_hex': hybridPublicHex,
+          'key_id': keyId,
+          'suite': suite,
+        },
+        options: _operatorToken == null
+            ? null
+            : Options(headers: {'X-Operator-Token': _operatorToken}),
+      );
+      final data = resp.data;
+      final map = data is Map ? Map<String, dynamic>.from(data) : null;
+      final sig = map?['signature'] as String?;
+      // Only accept a real armored OpenPGP block; anything else is unusable to
+      // the server verifier, so publish unsigned instead.
+      if (sig != null && sig.contains('-----BEGIN PGP SIGNATURE-----')) {
+        return sig;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+}
 
 /// A peer's published hybrid-KEM prekey (PQXDH-style). Mirrors
 /// `skcomms.pqdm.PrekeyBundle`. A peer that advertises a hybrid prekey
@@ -93,11 +155,11 @@ class PqPrekeyService {
     required String deviceId,
     HybridKem? kem,
     Dio? dio,
-    SovereignSigner? bundleSigner,
+    PrekeyArmorSigner? armorSigner,
   })  : _storage = storage,
         _deviceId = deviceId,
         _kem = kem ?? HybridKemImpl(),
-        _bundleSigner = bundleSigner,
+        _armorSignerOverride = armorSigner,
         _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl,
@@ -119,14 +181,17 @@ class PqPrekeyService {
   final HybridKem _kem;
   final Dio _dio;
 
-  /// Signs the canonical prekey payload with the enrolled device / operator
-  /// identity key. Null when no identity key is provisioned yet, in which case
-  /// the bundle is published unsigned (ANONYMOUS mode / `pqdm1` back-compat).
-  SovereignSigner? _bundleSigner;
+  /// Optional injected armor signer (tests). When null, [_armorSigner] lazily
+  /// defaults to a [DaemonPrekeyArmorSigner] over this service's [_dio], so the
+  /// bundle is signed by the operator PGP key held on the daemon.
+  final PrekeyArmorSigner? _armorSignerOverride;
+  PrekeyArmorSigner? _armorSignerCached;
 
-  /// Wire (or replace) the enrolled-device signer after construction. Used by
-  /// the bootstrap provider once the async identity keypair has resolved.
-  set bundleSigner(SovereignSigner? signer) => _bundleSigner = signer;
+  /// The armor signer used to sign the published bundle. Delegates to the
+  /// daemon operator-sign endpoint by default; overridable for tests.
+  PrekeyArmorSigner get _armorSigner =>
+      _armorSignerOverride ??
+      (_armorSignerCached ??= DaemonPrekeyArmorSigner(_dio));
 
   HybridKeyPair? _keyPair;
   String? _keyId;
@@ -199,24 +264,27 @@ class PqPrekeyService {
 
   /// This device's own [PrekeyBundle] (hybrid if available, else classical).
   ///
-  /// When a hybrid keypair AND an enrolled-device signer are present, the
-  /// bundle is SIGNED: it carries a detached PGP signature over
-  /// [canonicalSignedPayload] and advertises `codec: pqdm2` so senders fan out
-  /// to it. Without a signer it stays unsigned (ANONYMOUS / `pqdm1` back-compat).
+  /// When a hybrid keypair is present, the bundle is SIGNED: it carries an
+  /// ASCII-armored OpenPGP detached signature (from the daemon operator-sign
+  /// endpoint, via [PrekeyArmorSigner]) over the server's canonical bytes for
+  /// `{hybrid_public_hex, key_id, suite}`, and advertises `codec: pqdm2` so
+  /// senders fan out to it. If signing fails (daemon unreachable / operator key
+  /// unavailable) it stays unsigned (ANONYMOUS / `pqdm1` back-compat): the
+  /// daemon accepts unsigned bundles until SKCHAT_REQUIRE_SIGNED_PREKEYS is on.
   Future<PrekeyBundle> myBundle() async {
     if (_available && _keyPair != null) {
       final hybridPublicHex = _bytesToHex(_keyPair!.publicKey);
       final keyId = _keyId;
       String? sig;
-      if (_bundleSigner != null && keyId != null) {
+      if (keyId != null) {
         try {
-          sig = await _bundleSigner!.sign(canonicalSignedPayload(
+          sig = await _armorSigner.sign(
             hybridPublicHex: hybridPublicHex,
             keyId: keyId,
             suite: PqDmCodec.hybridSuite,
-          ));
+          );
         } catch (_) {
-          // Signing failed (no key unlocked / isolate error). Publish
+          // Signing failed (daemon unreachable / isolate error). Publish
           // unsigned rather than blocking the prekey advert. The daemon accepts
           // unsigned bundles until SKCHAT_REQUIRE_SIGNED_PREKEYS is flipped on.
           sig = null;
@@ -373,15 +441,11 @@ final pqBootstrapProvider = FutureProvider<bool>((ref) async {
   final svc = ref.watch(pqPrekeyServiceProvider);
   final ok = await svc.ensureKeyPair();
   if (ok) {
-    // Wire the enrolled-device signer (operator PGP identity) so the published
-    // bundle is SIGNED. Null until the user completes onboarding / QR login;
-    // in that case the bundle publishes unsigned (accepted while the daemon's
-    // SKCHAT_REQUIRE_SIGNED_PREKEYS flag is off).
-    try {
-      svc.bundleSigner = await ref.watch(sovereignSignerProvider.future);
-    } catch (_) {
-      svc.bundleSigner = null;
-    }
+    // The published bundle is signed by the operator PGP identity key held on
+    // the daemon: myBundle() fetches an armored detached signature from the
+    // daemon operator-sign endpoint (POST /api/v1/prekey/sign). If the daemon
+    // is unreachable or the operator key is unavailable, the bundle publishes
+    // unsigned (accepted while SKCHAT_REQUIRE_SIGNED_PREKEYS is off).
     await svc.publish();
   }
   return ok;
