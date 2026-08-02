@@ -110,7 +110,7 @@ void main() {
       );
       expect(await svc.ensureKeyPair(), isFalse);
       expect(svc.hybridAvailable, isFalse);
-      expect(svc.myBundle().isHybrid, isFalse);
+      expect((await svc.myBundle()).isHybrid, isFalse);
       expect(await svc.publish(), isFalse);
     });
   });

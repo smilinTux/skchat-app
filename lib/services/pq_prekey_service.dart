@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -6,6 +7,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sk_pqc/sk_pqc.dart';
 
 import 'daemon_config.dart';
+import 'join_service.dart' show SovereignSigner;
+import 'pgp_capauth_signer.dart' show sovereignSignerProvider;
 import 'pq_backend.dart';
 import 'pq_dm_codec.dart';
 
@@ -20,13 +23,26 @@ class PrekeyBundle {
     this.signature,
     this.keyId,
     this.deviceId,
+    this.codec,
   });
+
+  /// Capability advert for the multi-device fanout envelope. A bundle carrying
+  /// `codec == pqdm2Codec` tells senders this device can receive a `pqdm2:`
+  /// multi-recipient token; older `pqdm1`-only builds omit it.
+  static const String pqdm2Codec = 'pqdm2';
 
   final String suite;
   final String hybridPublicHex; // hex of the 1216-byte hybrid public key
-  final String? signature; // classical signature (Phase 2, opaque here)
+  /// Detached, ASCII-armored PGP signature over the canonical identity-binding
+  /// fields (`{hybrid_public_hex, key_id, suite}`), made with the enrolled
+  /// device key. Verified server-side by `skchat.prekey_sig.verify_prekey_bundle`.
+  /// Null on classical / unsigned (ANONYMOUS-mode) bundles.
+  final String? signature;
   final String? keyId;
   final String? deviceId;
+
+  /// Fanout capability advert (`pqdm2Codec`), or null for a `pqdm1`-only bundle.
+  final String? codec;
 
   bool get isHybrid =>
       suite == PqDmCodec.hybridSuite && hybridPublicHex.isNotEmpty;
@@ -37,8 +53,13 @@ class PrekeyBundle {
         'suite': suite,
         'hybrid_public_hex': hybridPublicHex,
         'signature': signature,
+        // The plan / app publish contract also advertises the same armored
+        // signature under `sig`; the server verifier reads `signature`, so we
+        // send both to stay robust to either field name.
+        'sig': signature,
         'key_id': keyId,
         'device_id': deviceId,
+        'codec': codec,
       };
 
   factory PrekeyBundle.fromJson(Map<String, dynamic>? data) {
@@ -46,9 +67,11 @@ class PrekeyBundle {
     return PrekeyBundle(
       suite: data['suite'] as String? ?? PqDmCodec.classicalSuite,
       hybridPublicHex: (data['hybrid_public_hex'] as String?) ?? '',
-      signature: data['signature'] as String?,
+      signature:
+          (data['signature'] as String?) ?? (data['sig'] as String?),
       keyId: data['key_id'] as String?,
       deviceId: data['device_id'] as String?,
+      codec: data['codec'] as String?,
     );
   }
 }
@@ -70,9 +93,11 @@ class PqPrekeyService {
     required String deviceId,
     HybridKem? kem,
     Dio? dio,
+    SovereignSigner? bundleSigner,
   })  : _storage = storage,
         _deviceId = deviceId,
         _kem = kem ?? HybridKemImpl(),
+        _bundleSigner = bundleSigner,
         _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl,
@@ -93,6 +118,15 @@ class PqPrekeyService {
   String _deviceId;
   final HybridKem _kem;
   final Dio _dio;
+
+  /// Signs the canonical prekey payload with the enrolled device / operator
+  /// identity key. Null when no identity key is provisioned yet, in which case
+  /// the bundle is published unsigned (ANONYMOUS mode / `pqdm1` back-compat).
+  SovereignSigner? _bundleSigner;
+
+  /// Wire (or replace) the enrolled-device signer after construction. Used by
+  /// the bootstrap provider once the async identity keypair has resolved.
+  set bundleSigner(SovereignSigner? signer) => _bundleSigner = signer;
 
   HybridKeyPair? _keyPair;
   String? _keyId;
@@ -146,17 +180,56 @@ class PqPrekeyService {
     }
   }
 
+  /// The canonical UTF-8 bytes the identity signature covers, byte-for-byte
+  /// identical to the server's
+  /// `json.dumps({hybrid_public_hex, key_id, suite}, sort_keys=True,
+  ///             separators=(",",":"))` (see `skchat.prekey_sig`). Dart's
+  /// [jsonEncode] emits the same compact separators (no spaces) and we insert
+  /// the keys in sorted (alphabetical) order to match `sort_keys=True`.
+  static String canonicalSignedPayload({
+    required String hybridPublicHex,
+    required String keyId,
+    required String suite,
+  }) =>
+      jsonEncode(<String, dynamic>{
+        'hybrid_public_hex': hybridPublicHex,
+        'key_id': keyId,
+        'suite': suite,
+      });
+
   /// This device's own [PrekeyBundle] (hybrid if available, else classical).
-  PrekeyBundle myBundle() {
+  ///
+  /// When a hybrid keypair AND an enrolled-device signer are present, the
+  /// bundle is SIGNED: it carries a detached PGP signature over
+  /// [canonicalSignedPayload] and advertises `codec: pqdm2` so senders fan out
+  /// to it. Without a signer it stays unsigned (ANONYMOUS / `pqdm1` back-compat).
+  Future<PrekeyBundle> myBundle() async {
     if (_available && _keyPair != null) {
+      final hybridPublicHex = _bytesToHex(_keyPair!.publicKey);
+      final keyId = _keyId;
+      String? sig;
+      if (_bundleSigner != null && keyId != null) {
+        try {
+          sig = await _bundleSigner!.sign(canonicalSignedPayload(
+            hybridPublicHex: hybridPublicHex,
+            keyId: keyId,
+            suite: PqDmCodec.hybridSuite,
+          ));
+        } catch (_) {
+          // Signing failed (no key unlocked / isolate error). Publish
+          // unsigned rather than blocking the prekey advert. The daemon accepts
+          // unsigned bundles until SKCHAT_REQUIRE_SIGNED_PREKEYS is flipped on.
+          sig = null;
+        }
+      }
       return PrekeyBundle(
         suite: PqDmCodec.hybridSuite,
-        hybridPublicHex: _bytesToHex(_keyPair!.publicKey),
-        // Signature stays classical (Phase 2 / Q7); left null until the daemon
-        // signs the prekey with the identity key.
-        signature: null,
-        keyId: _keyId,
+        hybridPublicHex: hybridPublicHex,
+        signature: sig,
+        keyId: keyId,
         deviceId: _deviceId,
+        // Advertise the multi-device fanout capability so senders emit pqdm2.
+        codec: PrekeyBundle.pqdm2Codec,
       );
     }
     return PrekeyBundle(deviceId: _deviceId);
@@ -167,7 +240,8 @@ class PqPrekeyService {
   Future<bool> publish() async {
     if (!_available) return false;
     try {
-      final resp = await _dio.post('/api/v1/prekey', data: myBundle().toJson());
+      final bundle = await myBundle();
+      final resp = await _dio.post('/api/v1/prekey', data: bundle.toJson());
       final code = resp.statusCode ?? 0;
       return code >= 200 && code < 300;
     } catch (_) {
@@ -299,6 +373,15 @@ final pqBootstrapProvider = FutureProvider<bool>((ref) async {
   final svc = ref.watch(pqPrekeyServiceProvider);
   final ok = await svc.ensureKeyPair();
   if (ok) {
+    // Wire the enrolled-device signer (operator PGP identity) so the published
+    // bundle is SIGNED. Null until the user completes onboarding / QR login;
+    // in that case the bundle publishes unsigned (accepted while the daemon's
+    // SKCHAT_REQUIRE_SIGNED_PREKEYS flag is off).
+    try {
+      svc.bundleSigner = await ref.watch(sovereignSignerProvider.future);
+    } catch (_) {
+      svc.bundleSigner = null;
+    }
     await svc.publish();
   }
   return ok;
