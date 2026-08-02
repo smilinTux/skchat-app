@@ -31,7 +31,10 @@ class _StubPrekeyService implements PqPrekeyService {
   @override
   Future<bool> ensureKeyPair() async => false;
   @override
-  Future<PrekeyBundle> fetchPeer(String peer, {bool force = false}) async =>
+  Future<List<PrekeyBundle>> fetchPeer(String peer, {bool force = false}) async =>
+      const [];
+  @override
+  Future<PrekeyBundle> fetchPeerNewest(String peer, {bool force = false}) async =>
       const PrekeyBundle();
   @override
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
