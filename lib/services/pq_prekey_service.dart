@@ -7,6 +7,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sk_pqc/sk_pqc.dart';
 
 import 'daemon_config.dart';
+import 'operator_auth_interceptor.dart';
+import 'operator_session_service.dart';
 import 'pq_backend.dart';
 import 'pq_dm_codec.dart';
 
@@ -156,6 +158,7 @@ class PqPrekeyService {
     HybridKem? kem,
     Dio? dio,
     PrekeyArmorSigner? armorSigner,
+    OperatorSessionService? sessionService,
   })  : _storage = storage,
         _deviceId = deviceId,
         _kem = kem ?? HybridKemImpl(),
@@ -169,7 +172,17 @@ class PqPrekeyService {
               connectTimeout: const Duration(seconds: 20),
               receiveTimeout: const Duration(seconds: 20),
               headers: {'Content-Type': 'application/json'},
-            ));
+            )) {
+    // Attach the operator-session Bearer to EVERY prekey call (publish, sign,
+    // peer-fetch, decrypt-failed NACK). Without this the prekey Dio sent each
+    // request unauthenticated, so the daemon dataplane gate 401'd the publish
+    // and NO device ever registered a pqdm2 slot (fanout had nothing to seal
+    // to). A null sessionService (tests, unenrolled) makes the interceptor a
+    // no-op passthrough, preserving the ship-dark, gate-off default.
+    _dio.interceptors.add(
+      buildOperatorAuthInterceptor(sessionService, () => _dio),
+    );
+  }
 
   static const _kPub = 'pqc_hybrid_public_hex';
   static const _kPriv = 'pqc_hybrid_private_hex';
@@ -473,6 +486,10 @@ final pqPrekeyServiceProvider = Provider<PqPrekeyService>((ref) {
     // stand-in that fails KEM ops cleanly instead of throwing at construction,
     // so ensureKeyPair() degrades to classical rather than crashing.
     kem: ref.watch(hybridKemProvider),
+    // The operator-session Bearer must ride on the prekey calls or the daemon
+    // dataplane gate 401s the publish (and sign/fetch/NACK). This is the same
+    // session the SKComms data client authenticates with.
+    sessionService: ref.watch(operatorSessionServiceProvider),
   );
 });
 

@@ -2,23 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'daemon_config.dart';
+import 'operator_auth_interceptor.dart';
 import 'operator_session_service.dart';
-
-/// Any request whose path falls under this prefix is the operator-auth
-/// handshake itself (`GET .../challenge`, `POST .../session`, run by
-/// [OperatorSessionService] on its OWN Dio instance, not this client's).
-/// The interceptor below exempts these paths so it never asks
-/// [OperatorSessionService.ensureSession] to authenticate the very requests
-/// that constitute the handshake, which would recurse.
-const _kAuthHandshakePathMarker = '/api/v1/auth/';
-
-/// Extra-map key the retry guard uses to mark a request that has already been
-/// retried once after a 401, so a daemon that keeps returning 401 (e.g. a
-/// re-auth that itself gets rejected) fails once instead of looping forever.
-const _kAuthRetriedExtraKey = 'skAuthRetried';
-
-bool _isAuthHandshakePath(String path) =>
-    path.startsWith(_kAuthHandshakePathMarker);
 
 /// Low-level HTTP client wrapping the SKComms daemon REST API.
 ///
@@ -55,73 +40,13 @@ class SKCommsClient {
     if (dio != null && baseUrl != null) {
       _dio.options.baseUrl = baseUrl;
     }
-    _dio.interceptors.add(_buildAuthInterceptor());
+    _dio.interceptors.add(
+      buildOperatorAuthInterceptor(_sessionService, () => _dio),
+    );
   }
 
   final Dio _dio;
   final OperatorSessionService? _sessionService;
-
-  /// Attaches `Authorization: Bearer <session>` to every request (best
-  /// effort) and retries once on a 401 after clearing the cached session and
-  /// re-running the handshake.
-  ///
-  /// Ship-dark contract: the skchat server gate that checks this header is
-  /// OFF by default, so this interceptor must NEVER block or fail a request
-  /// just because a session could not be minted (e.g. a fresh, unenrolled
-  /// device). Any [OperatorSessionService.ensureSession] failure is swallowed
-  /// and the request proceeds without the header.
-  InterceptorsWrapper _buildAuthInterceptor() {
-    return InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        final session = _sessionService;
-        if (session == null || _isAuthHandshakePath(options.path)) {
-          return handler.next(options);
-        }
-        try {
-          final token = await session.ensureSession();
-          options.headers['Authorization'] = 'Bearer $token';
-        } catch (_) {
-          // No session available yet (not enrolled, daemon unreachable,
-          // etc). Proceed unauthenticated, the server gate is off by
-          // default, so this must not block the request.
-        }
-        return handler.next(options);
-      },
-      onError: (err, handler) async {
-        final session = _sessionService;
-        final options = err.requestOptions;
-        final alreadyRetried = options.extra[_kAuthRetriedExtraKey] == true;
-        final isAuthPath = _isAuthHandshakePath(options.path);
-        if (session == null ||
-            err.response?.statusCode != 401 ||
-            alreadyRetried ||
-            isAuthPath) {
-          return handler.next(err);
-        }
-
-        session.clearSession();
-        try {
-          final freshToken = await session.ensureSession();
-          final retryOptions = options.copyWith(
-            headers: {
-              ...options.headers,
-              'Authorization': 'Bearer $freshToken',
-            },
-            extra: {
-              ...options.extra,
-              _kAuthRetriedExtraKey: true,
-            },
-          );
-          final retryResponse = await _dio.fetch(retryOptions);
-          return handler.resolve(retryResponse);
-        } catch (_) {
-          // Re-auth itself failed (or the retried request failed again);
-          // surface the ORIGINAL error rather than a re-auth exception.
-          return handler.next(err);
-        }
-      },
-    );
-  }
 
   // ── Health ────────────────────────────────────────────────────────────────
 
