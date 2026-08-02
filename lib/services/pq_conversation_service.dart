@@ -305,6 +305,15 @@ class PqConversationService {
         recipientId: openRecipient,
       );
       if (clear == null) {
+        // A genuine inbound we could not open (no slot for our key_id, or the
+        // AEAD open failed) means the sender sealed to a STALE copy of our
+        // bundle. NACK the daemon so the sender re-pulls our fresh slot NOW
+        // (coord 4c054eab, criterion 1) instead of waiting for the 6h TTL. Do
+        // NOT NACK our OWN echoed outbound (mineToken): re-pulling our own
+        // bundle would fix nothing. Fire-and-forget; never blocks this render.
+        if (!mineToken) {
+          _reportDecryptFailure();
+        }
         return (text: lockedCantOpenText, opened: false, mine: false);
       }
       _state[peerShort] = PqConversationState.hybridPq;
@@ -324,8 +333,20 @@ class PqConversationService {
       return (text: utf8.decode(clear), opened: true, mine: false);
     } catch (_) {
       // DowngradeDetected / malformed / wrong-device key, surface, don't crash.
+      // A sealed inbound we could not open: NACK so the sender re-pulls our
+      // fresh bundle now (coord 4c054eab, criterion 1). Fire-and-forget.
+      _reportDecryptFailure();
       return (text: lockedCantOpenText, opened: false, mine: false);
     }
+  }
+
+  /// Fire-and-forget the decrypt-failure NACK for THIS device (the reporting
+  /// recipient). The sender's daemon then re-pulls our freshly-republished
+  /// bundle immediately (coord 4c054eab, criterion 1). Throttled + fully
+  /// swallowed inside [PqPrekeyService.reportDecryptFailure], so this never
+  /// blocks or crashes the locked-bubble render.
+  void _reportDecryptFailure() {
+    unawaited(_prekeys.reportDecryptFailure(_localShort));
   }
 
   String _short(String uri) {
