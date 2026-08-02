@@ -283,7 +283,8 @@ class PqConversationService {
     String peer,
     String body,
   ) async {
-    if (!PqDmCodec.isHybridToken(body)) {
+    final isPqdm2 = body.startsWith(PqDmCodec.pqdm2Prefix);
+    if (!PqDmCodec.isHybridToken(body) && !isPqdm2) {
       return (text: body, opened: true, mine: false);
     }
     final peerShort = _short(peer);
@@ -304,6 +305,30 @@ class PqConversationService {
     if (priv == null) {
       return (text: lockedNoKeyText, opened: false, mine: false);
     }
+
+    // pqdm2: multi-device fanout envelope. Select THIS device's own slot by its
+    // published key_id and open it. A token that carries no slot for this device
+    // (or any AEAD failure) returns null, surfaced as the graceful locked
+    // placeholder, never a crash. Mirrors the daemon's _open_pqdm2_inbound.
+    if (isPqdm2) {
+      final myKeyId = _prekeys.keyId;
+      if (myKeyId == null) {
+        return (text: lockedNoKeyText, opened: false, mine: false);
+      }
+      final clear = await _codec.openPqdm2(
+        body,
+        myKeyId: myKeyId,
+        myPrivate: priv,
+        sender: peerShort,
+        recipientId: _localShort,
+      );
+      if (clear == null) {
+        return (text: lockedCantOpenText, opened: false, mine: false);
+      }
+      _state[peerShort] = PqConversationState.hybridPq;
+      return (text: utf8.decode(clear), opened: true, mine: false);
+    }
+
     try {
       // The sender bound (sender=them, recipient=us). The token's expected suite
       // is read from the token itself by the codec.
