@@ -2,7 +2,7 @@ name: skchat
 description: "SKChat — Sovereign Encrypted P2P Communication"
 publish_to: 'none'
 
-version: 1.4.0+10
+version: 1.4.0+11
 
 # Dart workspace root. Member packages resolve together under one shared
 # lockfile (Dart >= 3.6; this repo is on 3.12). Step 1 of the workspace split
