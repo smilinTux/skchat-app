@@ -305,6 +305,50 @@ class PqPrekeyService {
     return [PrekeyBundle.fromJson(bundleMap)];
   }
 
+  /// Per-peer throttle for the decrypt-failure NACK (coord 4c054eab, crit 1).
+  /// A locked message re-renders repeatedly, so [reportDecryptFailure] can be
+  /// called on every render; this collapses a burst for the same peer to one
+  /// POST per [_decryptFailureThrottle] window.
+  final Map<String, DateTime> _lastDecryptFailureReport = {};
+
+  /// Minimum spacing between decrypt-failure NACKs for the same peer.
+  static const Duration _decryptFailureThrottle = Duration(seconds: 30);
+
+  /// Signal the daemon that a sealed DM could NOT be opened so the sender
+  /// re-pulls the reporting device's freshly-republished prekey bundle NOW,
+  /// instead of waiting for the 6h TTL re-pull (coord 4c054eab, criterion 1: the
+  /// fast-recovery trigger for stale peer keys).
+  ///
+  /// Direction: the RECIPIENT (this device) failed to open a message from the
+  /// SENDER (the daemon we are talking to). It reports so the SENDER re-pulls the
+  /// RECIPIENT's own bundle, so [peerShort] is THIS device's own short name and
+  /// the daemon re-pulls that peer (the recipient just republished a fresh slot
+  /// the sender's cache is missing).
+  ///
+  /// Best-effort, fire-and-forget: swallows ALL errors (a failed NACK simply
+  /// falls back to the TTL re-pull) and NEVER throws, so a locked-bubble render
+  /// is never blocked or crashed. Throttled per [peerShort] so a re-render loop
+  /// cannot spam the daemon. Returns true only when a POST was actually sent.
+  Future<bool> reportDecryptFailure(String peerShort, {String? messageId}) async {
+    final key = _peerShort(peerShort);
+    final now = DateTime.now();
+    final last = _lastDecryptFailureReport[key];
+    if (last != null && now.difference(last) < _decryptFailureThrottle) {
+      return false;
+    }
+    _lastDecryptFailureReport[key] = now;
+    try {
+      await _dio.post('/api/v1/dm/decrypt-failed', data: {
+        'peer': key,
+        'message_id': ?messageId,
+      });
+      return true;
+    } catch (_) {
+      // Best-effort: a failed NACK falls back to the TTL re-pull. Never rethrow.
+      return false;
+    }
+  }
+
   void invalidatePeer(String peer) => _peerCache.remove(_peerShort(peer));
 
   static String _peerShort(String uri) {
