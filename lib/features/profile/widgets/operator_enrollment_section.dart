@@ -1,5 +1,6 @@
 import "package:dio/dio.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../core/theme/theme.dart";
@@ -80,6 +81,11 @@ class _OperatorEnrollmentSectionState
   String? _errorMessage;
   late final TextEditingController _tokenController;
 
+  // Obscured by default (the token is a secret); the eye unmasks it. The
+  // dedicated paste button reads the clipboard on tap so the operator can paste
+  // WITHOUT unmasking (Flutter web blocks paste on an obscured field).
+  bool _obscureToken = true;
+
   String? Function() get _readToken =>
       widget.tokenReader ?? op_token.operatorToken;
 
@@ -97,6 +103,20 @@ class _OperatorEnrollmentSectionState
   void dispose() {
     _tokenController.dispose();
     super.dispose();
+  }
+
+  /// One-tap paste from the clipboard into the (obscured) token field. Flutter
+  /// web blocks paste on an obscured TextField, so reading the clipboard on this
+  /// button's tap (a user gesture) is what lets the operator paste without first
+  /// unmasking. No-op on empty/unavailable clipboard.
+  Future<void> _pasteToken() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) return;
+    _tokenController.text = text;
+    _tokenController.selection =
+        TextSelection.collapsed(offset: _tokenController.text.length);
+    _writeToken(text);
   }
 
   /// Best-effort, side-effect-free check for an already-live session (e.g.
@@ -227,15 +247,40 @@ class _OperatorEnrollmentSectionState
                 child: TextField(
                   key: const Key("operator-token-field"),
                   controller: _tokenController,
-                  obscureText: true,
+                  obscureText: _obscureToken,
+                  enableInteractiveSelection: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
                   onChanged: (value) => _writeToken(value.trim()),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: "Operator token",
                     helperText:
                         "Paste your server's operator token "
                         "(SKCHAT_GUEST_OPERATOR_TOKEN) to authorize linking "
                         "this device.",
                     helperMaxLines: 2,
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.content_paste_rounded,
+                              size: 20),
+                          tooltip: "Paste token",
+                          onPressed: _pasteToken,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _obscureToken
+                                ? Icons.visibility_rounded
+                                : Icons.visibility_off_rounded,
+                            size: 20,
+                          ),
+                          tooltip: _obscureToken ? "Show" : "Hide",
+                          onPressed: () =>
+                              setState(() => _obscureToken = !_obscureToken),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
