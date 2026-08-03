@@ -1,5 +1,6 @@
 import "package:dio/dio.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../core/theme/theme.dart";
@@ -103,6 +104,20 @@ class _OperatorEnrollmentSectionState
   void dispose() {
     _tokenController.dispose();
     super.dispose();
+  }
+
+  /// One-tap paste from the clipboard into the (obscured) token field. Flutter
+  /// web blocks paste on an obscured TextField, so reading the clipboard on this
+  /// button's tap (a user gesture) is what lets the operator paste without first
+  /// unmasking. No-op on empty/unavailable clipboard.
+  Future<void> _pasteToken() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) return;
+    _tokenController.text = text;
+    _tokenController.selection =
+        TextSelection.collapsed(offset: _tokenController.text.length);
+    _writeToken(text);
   }
 
   /// Best-effort, side-effect-free check for an already-live session (e.g.
@@ -245,16 +260,31 @@ class _OperatorEnrollmentSectionState
                         "(SKCHAT_GUEST_OPERATOR_TOKEN) to authorize linking "
                         "this device.",
                     helperMaxLines: 2,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscureToken
-                            ? Icons.visibility_rounded
-                            : Icons.visibility_off_rounded,
-                        size: 20,
-                      ),
-                      tooltip: _obscureToken ? "Show / paste" : "Hide",
-                      onPressed: () =>
-                          setState(() => _obscureToken = !_obscureToken),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Dedicated paste: fills the field from the clipboard
+                        // WITHOUT unmasking (web blocks paste on an obscured
+                        // field, so a button that reads the clipboard on tap is
+                        // the intuitive one-tap paste).
+                        IconButton(
+                          icon: const Icon(Icons.content_paste_rounded,
+                              size: 20),
+                          tooltip: "Paste token",
+                          onPressed: _pasteToken,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _obscureToken
+                                ? Icons.visibility_rounded
+                                : Icons.visibility_off_rounded,
+                            size: 20,
+                          ),
+                          tooltip: _obscureToken ? "Show" : "Hide",
+                          onPressed: () =>
+                              setState(() => _obscureToken = !_obscureToken),
+                        ),
+                      ],
                     ),
                   ),
                 ),
