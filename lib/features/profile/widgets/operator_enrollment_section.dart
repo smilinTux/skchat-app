@@ -80,11 +80,12 @@ class _OperatorEnrollmentSectionState
   String? _errorMessage;
   late final TextEditingController _tokenController;
 
-  // Obscured by default (the token is a secret), but toggleable: Flutter web
-  // BLOCKS paste + the context menu on an obscured field, so a paste-only value
-  // like the operator token can't be entered while hidden. The reveal toggle
-  // lets the operator un-hide to paste, then re-hide.
-  bool _obscureToken = true;
+  // Visible (cleartext) by DEFAULT: this is the operator's own token on their own
+  // device, and obscuring a web TextField BLOCKS paste + the context menu (which
+  // is what stopped the token being pasted at all). The eye toggle can re-hide it
+  // if the operator ever wants to (shoulder-surfing), but default-visible keeps
+  // paste working and lets the operator confirm the value they entered.
+  bool _obscureToken = false;
 
   String? Function() get _readToken =>
       widget.tokenReader ?? op_token.operatorToken;
