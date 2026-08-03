@@ -116,3 +116,18 @@ final audienceTokenServiceProvider = Provider<AudienceTokenService>((ref) {
   final client = ref.watch(skcommsClientProvider);
   return AudienceTokenService(client: client);
 });
+
+/// Async holder for the audience token of a specific [audience]. Riverpod caches
+/// the future so a pane does not re-mint on every rebuild (which would flicker
+/// the iframe it feeds). Resolves to null when the backend mint flag is off
+/// (`SKCHAT_AUDIENCE_MINT`), the mint 401s, or the network fails, in which case
+/// the caller loads tokenless and the upstream returns its own gated response.
+///
+/// This is the direct analog of `embedTokenForModuleProvider`: the skcode pane
+/// watches it for audience `skcode` and appends the returned wire token to the
+/// hostd client iframe URL as `?token=...`.
+final audienceTokenForAudienceProvider =
+    FutureProvider.family<String?, String>((ref, audience) async {
+  final service = ref.watch(audienceTokenServiceProvider);
+  return service.mint(audience);
+});
