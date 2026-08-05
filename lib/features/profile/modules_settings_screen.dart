@@ -52,6 +52,31 @@ class ModulesSettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          // Manage models: enable/disable which discovered models are advertised
+          // to the reply-model picker + the brain (drives the gateway advertise
+          // allowlist via the daemon). Always available.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: ListTile(
+              key: const Key('manage-models-entry'),
+              tileColor: SovereignColors.surfaceRaised,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(
+                Icons.tune,
+                color: SovereignColors.soulLumina,
+              ),
+              title: Text('Manage models', style: tt.bodyLarge),
+              subtitle: Text(
+                'Choose which models are enabled for the picker and the brain',
+                style: tt.bodySmall
+                    ?.copyWith(color: SovereignColors.textSecondary),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push(AppRoutes.manageModels),
+            ),
+          ),
           // Dev-only: mount and preview the LIVE skchat_ui SkworldModule via a
           // concrete ShellContext (U3). Pushed (not go'd) so system back pops
           // it; never shown in release builds.
