@@ -338,6 +338,8 @@ class _BubbleContent extends StatelessWidget {
           if (hasReply)
             QuotedReply(
               original: repliedTo,
+              quotedText: message.quotedText,
+              quotedSender: message.quotedSender,
               accent: accent,
               onTap: onJumpToReplied,
             ),

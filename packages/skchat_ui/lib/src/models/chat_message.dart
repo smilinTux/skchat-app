@@ -33,6 +33,9 @@ class ChatMessage {
     this.isAgent = false,
     this.senderName,
     this.pqLocked = false,
+    this.quotedText,
+    this.quotedSender,
+    this.quotedId,
   });
 
   final String id;
@@ -98,6 +101,30 @@ class ChatMessage {
   /// `message_dedup.dart` and `conversation_provider.dart`.
   final bool pqLocked;
 
+  /// Denormalized quoted-reply snippet (cross-device quote fix, card 55a028c4).
+  ///
+  /// A short plaintext preview of the replied-to original, captured AT COMPOSE
+  /// TIME on the composing device (where the original IS decrypted) and carried
+  /// IN this reply. Any VIEWING device can then render the quote directly from
+  /// this field, even one that never decrypted the sealed original (the common
+  /// cross-device case: the original is outside that device's loaded/decrypted
+  /// window, so local id-resolution against [replyToId] renders a generic
+  /// placeholder or nothing).
+  ///
+  /// Null on legacy replies (composed before this field existed); those fall
+  /// back to local id-resolution, exactly as before. A sealed/locked original
+  /// is NEVER captured here (the placeholder text is not a snippet).
+  final String? quotedText;
+
+  /// Display label for [quotedText]'s author ("You" for our own message, else
+  /// the sender name or "Them"), captured alongside the snippet so the quote
+  /// labels correctly without resolving the original.
+  final String? quotedSender;
+
+  /// Id of the quoted original (mirrors [replyToId]; kept explicit so the
+  /// embedded snippet is self-describing).
+  final String? quotedId;
+
   // -- Derived helpers --------------------------------------------------------
 
   /// Whether this message has been edited (carries an `edited_at`).
@@ -136,6 +163,9 @@ class ChatMessage {
     bool? isAgent,
     String? senderName,
     bool? pqLocked,
+    String? quotedText,
+    String? quotedSender,
+    String? quotedId,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -159,6 +189,9 @@ class ChatMessage {
       isAgent: isAgent ?? this.isAgent,
       senderName: senderName ?? this.senderName,
       pqLocked: pqLocked ?? this.pqLocked,
+      quotedText: quotedText ?? this.quotedText,
+      quotedSender: quotedSender ?? this.quotedSender,
+      quotedId: quotedId ?? this.quotedId,
     );
   }
 
@@ -213,6 +246,9 @@ class ChatMessage {
       isAgent: json['is_agent'] as bool? ?? false,
       senderName: json['sender_name'] as String?,
       pqLocked: json['pq_locked'] as bool? ?? false,
+      quotedText: json['quoted_text'] as String?,
+      quotedSender: json['quoted_sender'] as String?,
+      quotedId: json['quoted_id'] as String?,
     );
   }
 
@@ -237,5 +273,8 @@ class ChatMessage {
         'is_agent': isAgent,
         'sender_name': senderName,
         'pq_locked': pqLocked,
+        'quoted_text': quotedText,
+        'quoted_sender': quotedSender,
+        'quoted_id': quotedId,
       };
 }

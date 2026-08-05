@@ -16,12 +16,53 @@ class QuotedReply extends StatelessWidget {
     super.key,
     required this.original,
     required this.accent,
+    this.quotedText,
+    this.quotedSender,
     this.onTap,
   });
 
+  /// The resolved replied-to message from the loaded window, or null when it is
+  /// not present. Only used as the FALLBACK id-resolution source (legacy
+  /// replies with no embedded snippet).
   final ChatMessage? original;
   final Color accent;
+
+  /// Denormalized snippet + sender captured on the composing device and carried
+  /// in the reply (see [ChatMessage.quotedText]). When [quotedText] is present
+  /// and non-blank it is rendered directly, so the quote survives cross-device
+  /// even when [original] never decrypted / isn't in this device's window.
+  final String? quotedText;
+  final String? quotedSender;
   final VoidCallback? onTap;
+
+  /// Max characters of the denormalized snippet captured at compose time.
+  static const int snippetMaxChars = 120;
+
+  /// Derive the short plaintext snippet to denormalize into an outgoing reply's
+  /// [ChatMessage.quotedText], from the replied-to [original] on the COMPOSING
+  /// device where it is decrypted. Returns null when the original is
+  /// sealed/locked or otherwise non-displayable, so a sealed placeholder is
+  /// NEVER captured as the snippet (the reply then falls back to local
+  /// id-resolution on each viewing device, exactly as legacy replies do).
+  static String? snippetFor(ChatMessage original) {
+    if (original.pqLocked) return null;
+    if (PqDmCodec.isHybridToken(original.content) ||
+        original.content.startsWith(PqDmCodec.pqdm2Prefix)) {
+      return null;
+    }
+    final text = displayTextFor(original.content);
+    if (text == null) return null;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return null;
+    return trimmed.length > snippetMaxChars
+        ? trimmed.substring(0, snippetMaxChars)
+        : trimmed;
+  }
+
+  /// The label the quote shows for [original]'s author ("You" for our own
+  /// message, else the sender name or "Them"). Captured alongside the snippet.
+  static String senderLabelFor(ChatMessage original) =>
+      original.isOutbound ? 'You' : (original.senderName ?? 'Them');
 
   /// Muted placeholder shown when the replied-to message is a hybrid-sealed DM
   /// this device could not open (or a raw `pqdm1:` token that reached the quote
@@ -32,7 +73,7 @@ class QuotedReply extends StatelessWidget {
   /// Whether the replied-to message must render as a sealed placeholder rather
   /// than as text. Two signals, either is sufficient:
   /// - [ChatMessage.pqLocked]: the provider tried to open the token and could
-  ///   NOT (no key / sealed to another device) — the same locked state the main
+  ///   NOT (no key / sealed to another device), the same locked state the main
   ///   bubble shows.
   /// - the stored [ChatMessage.content] is STILL a raw `pqdm1:` token: a
   ///   defensive guard so the quote never renders ciphertext even if an
@@ -46,15 +87,30 @@ class QuotedReply extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sealed = _sealed;
-    final senderLabel = original == null
-        ? ''
-        : (original!.isOutbound ? 'You' : (original!.senderName ?? 'Them'));
-    final preview = original == null
-        ? 'Original message'
-        : (sealed
-            ? sealedPreviewText
-            : (displayTextFor(original!.content) ?? original!.content));
+    // Prefer the denormalized snippet embedded in the reply: it was captured on
+    // the composing device where the original was decrypted, so it renders
+    // correctly on ANY viewing device, including one that never opened the
+    // sealed original / doesn't have it in its loaded window. Fall back to
+    // local id-resolution only when no snippet is embedded (legacy replies).
+    final embedded = quotedText?.trim();
+    final hasSnippet = embedded != null && embedded.isNotEmpty;
+
+    final sealed = !hasSnippet && _sealed;
+    final String senderLabel;
+    final String preview;
+    if (hasSnippet) {
+      senderLabel = quotedSender ?? '';
+      preview = embedded;
+    } else {
+      senderLabel = original == null
+          ? ''
+          : (original!.isOutbound ? 'You' : (original!.senderName ?? 'Them'));
+      preview = original == null
+          ? 'Original message'
+          : (sealed
+              ? sealedPreviewText
+              : (displayTextFor(original!.content) ?? original!.content));
+    }
 
     return GestureDetector(
       onTap: onTap,
