@@ -9,6 +9,7 @@ import "package:skchat/features/spaces/space_share.dart";
 import "package:skchat/features/spaces/space_share_sheet.dart";
 import "package:skchat/features/chats/chats_provider.dart";
 import "package:skchat/models/conversation.dart";
+import "package:skchat/services/backend_config.dart";
 import "package:skchat/services/skcomms_client.dart";
 import "package:skchat/services/skcomms_sync.dart";
 
@@ -47,6 +48,21 @@ class FakeChatsNotifier extends ChatsNotifier {
   @override
   List<Conversation> build() => _seed;
 }
+
+/// Injects a configured web-UI base so the share sheet derives an ABSOLUTE join
+/// URL. The app deliberately derives the host from runtime config
+/// (`backendConfigProvider.skchatWebuiUrl`) with a neutral EMPTY default, so
+/// without this override the sheet would produce a relative `/space/s1` (useless
+/// off-device). Production sets this from settings/env; the test supplies the
+/// same host it asserts against. Overriding `build()` also avoids the notifier's
+/// real Hive `_loadPersisted()`.
+class FakeBackendConfigNotifier extends BackendConfigNotifier {
+  @override
+  BackendConfig build() =>
+      BackendConfig.defaults.copyWith(skchatWebuiUrl: kTestWebuiBase);
+}
+
+const kTestWebuiBase = "https://noroc2027.tail204f0c.ts.net";
 
 void main() {
   const spaceId = "s1";
@@ -89,6 +105,7 @@ void main() {
       overrides: [
         chatsProvider.overrideWith(() => FakeChatsNotifier(conversations)),
         skcommsSyncProvider.overrideWith(() => syncNotifier),
+        backendConfigProvider.overrideWith(FakeBackendConfigNotifier.new),
         ...extraOverrides,
       ],
       child: MaterialApp(

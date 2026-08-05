@@ -17,6 +17,10 @@ class _EmbedTokenAdapter implements HttpClientAdapter {
   bool throwNetwork;
   int hitCount = 0;
 
+  /// The decoded JSON request bodies seen, in order (so a test can assert the
+  /// `mode` sent to the mint endpoint).
+  final List<Map<String, dynamic>> requestBodies = [];
+
   @override
   void close({bool force = false}) {}
 
@@ -27,6 +31,16 @@ class _EmbedTokenAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     hitCount++;
+    if (requestStream != null) {
+      final chunks = await requestStream.toList();
+      final bytes = chunks.expand((c) => c).toList();
+      if (bytes.isNotEmpty) {
+        final decoded = jsonDecode(utf8.decode(bytes));
+        if (decoded is Map) {
+          requestBodies.add(Map<String, dynamic>.from(decoded));
+        }
+      }
+    }
     if (throwNetwork) {
       throw DioException.connectionError(
         requestOptions: options,
@@ -103,6 +117,58 @@ void main() {
     test('malformed body (no token) returns null', () async {
       final svc = _wire(_EmbedTokenAdapter(body: const {'module': 'skos'}));
       expect(await svc.mint('skos'), isNull);
+    });
+
+    test('default mode is ro; sends mode=ro in the request body', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'RO-TOKEN',
+          'module': 'skos',
+          'mode': 'ro',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      expect(await svc.mint('skos'), 'RO-TOKEN');
+      expect(adapter.requestBodies.single['mode'], 'ro');
+    });
+
+    test('rw mode is passed through to the mint endpoint', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'RW-TOKEN',
+          'module': 'skdashboard',
+          'mode': 'rw',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      expect(await svc.mint('skdashboard', mode: 'rw'), 'RW-TOKEN');
+      expect(adapter.requestBodies.single['module'], 'skdashboard');
+      expect(adapter.requestBodies.single['mode'], 'rw');
+    });
+
+    test('cache is keyed by module AND mode: ro and rw are separate', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'TOKEN',
+          'module': 'skdashboard',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      await svc.mint('skdashboard'); // ro (default)
+      await svc.mint('skdashboard', mode: 'rw'); // different key -> re-mints
+      expect(adapter.hitCount, 2);
+      // Same (module, mode) again is served from cache.
+      await svc.mint('skdashboard', mode: 'rw');
+      expect(adapter.hitCount, 2);
     });
 
     test('expired cache re-mints', () async {

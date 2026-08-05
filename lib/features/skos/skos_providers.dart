@@ -10,23 +10,12 @@ import 'skos_models.dart';
 
 /// The active access-plane client.
 ///
-/// **v1 default = [MockAccessClient]** so the Files browser / corpus search /
-/// control panel are demonstrable without a backend or the tailnet.
-///
-/// ▶ TO GO LIVE: return a [DaemonAccessClient] wired to the app's capauth
-///   signer. See the worked example + the single TODO in `access_client.dart`
-///   (`DaemonAccessClient.tokenForCall`). Everything downstream is client-
-///   agnostic, so this is the single line that flips mock → live:
-///
-/// ```dart
-/// final accessClientProvider = Provider<AccessClient>((ref) {
-///   final signer = ref.watch(pgpCapauthSignerProvider);
-///   return DaemonAccessClient(
-///     tokenForCall: (node, tool, args) =>
-///         signer.signAccessEnvelope(node: node, tool: tool, arguments: args),
-///   );
-/// });
-/// ```
+/// **LIVE (P9): [DaemonAccessClient]** wired to the daemon-backed capauth
+/// [AccessTokenSigner] (`accessTokenSignerProvider`). The Files browser /
+/// corpus search / control panel talk to each node's `sk-access` `/tool` over
+/// the tailnet (same-origin webui proxy on web). Everything downstream is
+/// client-agnostic, so to demo OFFLINE without a daemon this single line can be
+/// swapped back to `MockAccessClient()`.
 final accessClientProvider = Provider<AccessClient>((ref) {
   // LIVE (P9): talk to each node's sk-access `/tool` over the tailnet, with the
   // per-call capauth token minted by the local SKComms daemon (the daemon holds

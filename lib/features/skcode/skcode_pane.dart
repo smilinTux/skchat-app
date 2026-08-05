@@ -74,7 +74,7 @@ class SkcodePane extends ConsumerWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'read-only until this device is paired with the code host',
+                  'start, watch, and steer agent sessions',
                   style: TextStyle(fontSize: 12, color: subtle),
                   overflow: TextOverflow.ellipsis,
                 ),

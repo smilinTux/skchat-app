@@ -15,6 +15,7 @@ import '../../features/groups/create_group_screen.dart';
 import '../../features/chats/peer_picker_screen.dart';
 import '../../features/profile/qr_login_screen.dart';
 import '../../features/profile/modules_settings_screen.dart';
+import '../../features/profile/manage_models_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
@@ -117,6 +118,10 @@ class AppRoutes {
 
   /// Modules settings (enable/disable + placement): /modules
   static const modules = '/modules';
+
+  /// Manage models (enable/disable which discovered models are advertised to
+  /// the picker + brain; drives the gateway advertise allowlist): /models/manage
+  static const manageModels = '/models/manage';
 
   /// Reveal this device's 24-word recovery phrase (biometric-gated): /identity/recovery
   static const recoveryPhrase = '/identity/recovery';
@@ -416,6 +421,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const ModulesSettingsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.manageModels,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const ManageModelsScreen(),
             ),
           ),
           // Host for DISCOVERED external subapp modules (card e378d895). One

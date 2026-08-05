@@ -299,28 +299,38 @@ class SKCommsClient {
     }
   }
 
-  /// POST /api/v1/embed-token, mint a short-lived, module-scoped, READ-ONLY
-  /// embed token for a gated iframe pane (`skdashboard` / `skos`).
+  /// POST /api/v1/embed-token, mint a short-lived, module-scoped embed token for
+  /// a gated iframe pane (`skdashboard` / `skos`).
   ///
   /// An iframe cannot set an `Authorization` header, so the gated proxies would
   /// otherwise 401. This mints a token the pane appends to its `src` as
-  /// `?embed_token=...`; the proxy accepts it (read-only, scoped to that exact
-  /// module) for its short life. Reuses THIS client's authenticated Dio, so the
+  /// `?embed_token=...`; the proxy accepts it (scoped to that exact module) for
+  /// its short life. Reuses THIS client's authenticated Dio, so the
   /// operator-session Bearer is attached by the auth interceptor.
   ///
+  /// [mode] is `ro` (read-only, default) or `rw` (read + write). `rw` re-enables
+  /// the pane's in-pane Save/write actions and is only granted by the server for
+  /// its trusted-module allowlist (default `skdashboard`) presented by a full
+  /// operator credential; requesting `rw` for a non-allowlisted module gets a 403
+  /// (handled here as null -> pane degrades to tokenless).
+  ///
   /// The backend guards the route behind the `SKCHAT_EMBED_TOKENS` flag (OFF by
-  /// default -> 404). On a 404 (inert), a 401, or any network error this returns
-  /// null rather than throwing, so a caller degrades to running tokenless.
-  Future<Map<String, dynamic>?> mintEmbedToken(String module) async {
+  /// default -> 404). On a 404 (inert), a 401, a 403 (rw denied), or any network
+  /// error this returns null rather than throwing, so a caller degrades to
+  /// running tokenless.
+  Future<Map<String, dynamic>?> mintEmbedToken(
+    String module, {
+    String mode = 'ro',
+  }) async {
     try {
       final resp = await _dio.post<dynamic>(
         '/api/v1/embed-token',
-        data: {'module': module},
+        data: {'module': module, 'mode': mode},
       );
       final data = resp.data;
       return data is Map ? Map<String, dynamic>.from(data) : null;
     } catch (_) {
-      // 404 (flag off / inert), 401, network error: no token available.
+      // 404 (flag off / inert), 401, 403 (rw denied), network error: no token.
       return null;
     }
   }

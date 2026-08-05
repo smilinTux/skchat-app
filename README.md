@@ -1,4 +1,4 @@
-# skchat-app — Sovereign Chat in Your Hand 📱
+# SKWorld App (formerly skchat-app): Sovereign Chat in Your Hand 📱
 
 > **Purpose:** a cross-platform Flutter chat/voice/video client that talks straight
 > to the agent stack on boxes you own — no SaaS backend, no account, no relay you

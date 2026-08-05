@@ -35,6 +35,15 @@ class _RealKeyPrekeyService implements PqPrekeyService {
   @override
   Uint8List? get privateKey => privValue;
 
+  // A fanout token with no slot for this device makes openIncomingDetailed fire
+  // the fire-and-forget decrypt-failure NACK
+  // (PqConversationService._reportDecryptFailure ->
+  // reportDecryptFailure(localShort)). Implement the current real signature so
+  // that call resolves through the double instead of throwing NoSuchMethodError.
+  @override
+  Future<bool> reportDecryptFailure(String peerShort, {String? messageId}) async =>
+      false;
+
   @override
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
