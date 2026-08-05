@@ -12,6 +12,7 @@ import '../../services/skcomms_client.dart';
 import '../../services/skcomms_sync.dart';
 import '../../core/chat_text.dart';
 import '../chats/chats_provider.dart';
+import 'message_dedup.dart';
 
 /// Holds the message list for a single conversation (identified by peerId).
 /// Loads persisted messages from Hive first, then tries to fetch from the
@@ -80,13 +81,64 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     }
   }
 
-  /// Remove duplicates: same id, or same content+direction within 10s.
-  /// (The local Hive cache can accumulate dup saves from the two load paths.)
+  /// A client-temp id is an optimistic local echo's id: the composer assigns
+  /// `'${DateTime.now().millisecondsSinceEpoch}'` (all digits) at send time, and
+  /// synthetic bubbles use a conventional `temp`-prefixed id. A persisted server
+  /// message always carries a UUID (hyphenated hex, never all-digits, never
+  /// `temp`-prefixed). This is what distinguishes an un-persisted optimistic
+  /// bubble from its server copy, and it is what keeps two distinct server sends
+  /// of identical text from being collapsed into each other.
+  static bool _isClientTempId(String id) =>
+      int.tryParse(id) != null || id.startsWith('temp');
+
+  /// The optimistic local echoes currently in state: outbound bubbles inserted
+  /// at send time, still carrying their client-temp id. These are the ONLY rows
+  /// a freshly-ingested server message may reconcile against by content (the
+  /// author device's own echo vs its server copy). Seeding the content match
+  /// from persisted server ids instead was the sibling-device drop bug: a
+  /// second distinct send of the same text (`reply purple`) matched the first
+  /// and vanished. Sibling devices carry no optimistic echo, so this list is
+  /// empty there and every distinct-id server message renders.
+  List<ChatMessage> _optimisticOutbound() => [
+        for (final m in state)
+          if (m.isOutbound && !m.pqLocked && _isClientTempId(m.id)) m,
+      ];
+
+  /// Does an incoming server message reconcile an optimistic bubble? True iff it
+  /// is outbound and some still-unmatched optimistic echo in [pending] shares
+  /// its content within [kReconcileWindow]. The matched echo is consumed so one
+  /// optimistic bubble reconciles at most one server copy (a genuine second send
+  /// of the same text still renders). Only same-instant optimistic+server pairs
+  /// collapse; distinct server sends never do (they are not in [pending]).
+  static bool _reconcilesOptimistic(
+    List<ChatMessage> pending,
+    String body,
+    bool isOutbound,
+    DateTime ts,
+  ) {
+    if (!isOutbound) return false;
+    final idx = pending.indexWhere((o) =>
+        o.content == body &&
+        o.timestamp.difference(ts).abs() <= kReconcileWindow);
+    if (idx < 0) return false;
+    pending.removeAt(idx);
+    return true;
+  }
+
+  /// Remove duplicate renderings: same id, OR an optimistic bubble collapsed
+  /// against its own server copy (same content+direction within
+  /// [kReconcileWindow], where at LEAST ONE side is a client-temp id).
+  ///
+  /// The client-temp guard is load-bearing: two distinct server ids are two
+  /// distinct sends and BOTH must render even when the text is identical, since
+  /// a sibling (non-authoring) device holds only the server copies and has no
+  /// optimistic echo to fold them into. Collapsing them by content alone dropped
+  /// the operator's own repeated message on every device but the author's.
   ///
   /// A [ChatMessage.pqLocked] placeholder is deduped by id ONLY: every locked
-  /// copy shares the same placeholder content, so the content+direction branch
-  /// would wrongly collapse two genuinely distinct unopenable replies into one
-  /// (CARD E, the sender would look silent on the web/PWA leg).
+  /// copy shares the same placeholder content, so the content branch would
+  /// wrongly collapse two genuinely distinct unopenable replies into one (CARD
+  /// E, the sender would look silent on the web/PWA leg).
   static List<ChatMessage> _dedup(List<ChatMessage> msgs) {
     final ids = <String>{};
     final out = <ChatMessage>[];
@@ -97,7 +149,8 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
               !o.pqLocked &&
               o.content == m.content &&
               o.isOutbound == m.isOutbound &&
-              (o.timestamp.difference(m.timestamp).inSeconds).abs() < 10);
+              (_isClientTempId(o.id) || _isClientTempId(m.id)) &&
+              o.timestamp.difference(m.timestamp).abs() <= kReconcileWindow);
       if (near) continue;
       out.add(m);
     }
@@ -162,11 +215,11 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         final peerShort = normalizePeerKey(peerId);
 
         final existing = state.map((m) => m.id).toSet();
-        // Content signatures (content|direction) already shown, to drop the
-        // bridge's occasional double-delivery (same text, different ids).
-        final seenSig = <String>{
-          for (final m in state) '${m.isOutbound}|${m.content}',
-        };
+        // Distinct server ids are distinct sends and ALL must render (a sibling
+        // device holds only these). The content match is reserved SOLELY for
+        // folding an optimistic bubble into its own server copy, so seed it from
+        // the un-persisted optimistic echoes only, never from server ids.
+        final pendingOptimistic = _optimisticOutbound();
         final fresh = <ChatMessage>[];
 
         for (final m in cliMessages) {
@@ -240,10 +293,18 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           // delivery-receipt UUIDs) so the thread stays clean.
           if (displayTextFor(cliBody) == null) continue;
 
-          // Content dedup is bypassed for locked placeholders: they all share
-          // the same text, so dedup them by id (already guarded above) only.
-          final sig = '$isOutbound|$cliBody';
-          if (!pqLocked && !seenSig.add(sig)) continue;
+          // Fold this server copy into an optimistic bubble ONLY (author's own
+          // echo). Locked placeholders and distinct-id server sends are never
+          // content-collapsed: they render and are deduped by id (guarded above).
+          if (!pqLocked &&
+              _reconcilesOptimistic(
+                pendingOptimistic,
+                cliBody,
+                isOutbound,
+                m.timestamp,
+              )) {
+            continue;
+          }
 
           fresh.add(ChatMessage(
             id: m.id,
@@ -314,9 +375,11 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     final peerShort = normalizePeerKey(peerId);
 
     final existing = state.map((m) => m.id).toSet();
-    final seenSig = <String>{
-      for (final m in state) '${m.isOutbound}|${m.content}',
-    };
+    // Distinct server ids are distinct sends and ALL must render (a sibling
+    // device holds only these). The content match is reserved SOLELY for folding
+    // an optimistic bubble into its own server copy, so seed it from the
+    // un-persisted optimistic echoes only, never from server ids.
+    final pendingOptimistic = _optimisticOutbound();
     final fresh = <ChatMessage>[];
 
     for (final json in raw) {
@@ -378,10 +441,18 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
 
       if (existing.contains(parsed.id)) continue;
       if (displayTextFor(body) == null) continue;
-      // Content dedup is bypassed for locked placeholders: they all share the
-      // same text, so dedup them by id (already guarded above) only.
-      final sig = '$isOutbound|$body';
-      if (!pqLocked && !seenSig.add(sig)) continue;
+      // Fold this server copy into an optimistic bubble ONLY (author's own echo).
+      // Locked placeholders and distinct-id server sends are never
+      // content-collapsed: they render and are deduped by id (guarded above).
+      if (!pqLocked &&
+          _reconcilesOptimistic(
+            pendingOptimistic,
+            body,
+            isOutbound,
+            parsed.timestamp,
+          )) {
+        continue;
+      }
 
       fresh.add(parsed.copyWith(
         peerId: peerShort,
