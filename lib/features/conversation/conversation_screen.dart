@@ -24,6 +24,7 @@ import 'reply_state_provider.dart';
 import 'widgets/conversation_call_button.dart';
 import 'widgets/model_picker_button.dart';
 import 'widgets/message_bubble.dart';
+import 'widgets/quoted_reply.dart';
 import 'widgets/reply_preview.dart';
 import 'widgets/thread_view.dart';
 import 'widgets/conversation_subviews.dart';
@@ -133,6 +134,15 @@ class ConversationScreen extends ConsumerWidget {
             onSend: (text) async {
               final reply = ref.read(replyStateProvider(peerId));
               final tempId = '${DateTime.now().millisecondsSinceEpoch}';
+              // Cross-device quote fix (card 55a028c4): capture a short plaintext
+              // snippet of the replied-to original HERE, on the composing device
+              // where it is decrypted, and carry it IN the reply. A device that
+              // never opened the sealed original can then still render the quote.
+              // snippetFor returns null for a sealed/locked original, so a
+              // placeholder is never captured; those replies fall back to local
+              // id-resolution, exactly as legacy replies do.
+              final snippet =
+                  reply == null ? null : QuotedReply.snippetFor(reply);
               // Optimistic insert (carries reply_to_id so the quote renders).
               ref.read(conversationProvider(peerId).notifier).addMessage(
                     ChatMessage(
@@ -146,6 +156,11 @@ class ConversationScreen extends ConsumerWidget {
                       threadId: reply?.threadId,
                       conversationId: peerId,
                       sender: me,
+                      quotedText: snippet,
+                      quotedSender: snippet == null
+                          ? null
+                          : QuotedReply.senderLabelFor(reply!),
+                      quotedId: snippet == null ? null : reply!.id,
                     ),
                   );
               // Clear the reply chip immediately (the optimistic bubble is in).

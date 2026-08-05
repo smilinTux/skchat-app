@@ -30,10 +30,20 @@ ChatMessage _msg(
       senderName: senderName,
     );
 
-Future<List<String>> _pumpPreview(WidgetTester tester, ChatMessage? original) async {
+Future<List<String>> _pumpPreview(
+  WidgetTester tester,
+  ChatMessage? original, {
+  String? quotedText,
+  String? quotedSender,
+}) async {
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
-      body: QuotedReply(original: original, accent: Colors.blue),
+      body: QuotedReply(
+        original: original,
+        quotedText: quotedText,
+        quotedSender: quotedSender,
+        accent: Colors.blue,
+      ),
     ),
   ));
   return tester
@@ -104,6 +114,111 @@ void main() {
         (tester) async {
       final texts = await _pumpPreview(tester, null);
       expect(texts, contains('Original message'));
+    });
+  });
+
+  group('embedded quoted snippet (cross-device fix, card 55a028c4)', () {
+    testWidgets(
+        'an embedded snippet renders WITHOUT the original in the loaded window',
+        (tester) async {
+      // The viewing device never decrypted the original (original == null:
+      // out-of-window). The reply carries the snippet captured at compose time,
+      // so the quote still renders that text + sender, not the placeholder.
+      final texts = await _pumpPreview(
+        tester,
+        null,
+        quotedText: 'should we deploy tonight?',
+        quotedSender: 'Them',
+      );
+
+      expect(texts, contains('Them'));
+      expect(texts, contains('should we deploy tonight?'));
+      expect(texts, isNot(contains('Original message')));
+      expect(texts, isNot(contains(QuotedReply.sealedPreviewText)));
+    });
+
+    testWidgets(
+        'an embedded snippet wins even when the original is a sealed placeholder',
+        (tester) async {
+      // Original present but pqLocked (this device could not open it). Without
+      // the snippet this shows the sealed placeholder; the embedded snippet
+      // (captured where it WAS decrypted) takes precedence.
+      final texts = await _pumpPreview(
+        tester,
+        _msg(PqConversationService.lockedCantOpenText, locked: true),
+        quotedText: 'the decrypted original',
+        quotedSender: 'Them',
+      );
+
+      expect(texts, contains('the decrypted original'));
+      expect(texts, isNot(contains(QuotedReply.sealedPreviewText)));
+    });
+
+    testWidgets('a legacy reply (no snippet) falls back to local resolution',
+        (tester) async {
+      final texts = await _pumpPreview(
+        tester,
+        _msg('resolved locally', outbound: true),
+        quotedText: null,
+      );
+      expect(texts, contains('You'));
+      expect(texts, contains('resolved locally'));
+    });
+
+    testWidgets('an empty/blank snippet falls back to placeholder',
+        (tester) async {
+      final texts = await _pumpPreview(
+        tester,
+        null,
+        quotedText: '   ',
+      );
+      // Blank snippet is ignored; with no in-window original -> muted fallback.
+      expect(texts, contains('Original message'));
+    });
+  });
+
+  group('QuotedReply.snippetFor (compose-time capture)', () {
+    test('returns a trimmed plaintext snippet for an openable original', () {
+      expect(
+        QuotedReply.snippetFor(_msg('  hello there  ', outbound: true)),
+        'hello there',
+      );
+    });
+
+    test('truncates to snippetMaxChars', () {
+      final long = 'a' * 300;
+      final snip = QuotedReply.snippetFor(_msg(long));
+      expect(snip!.length, QuotedReply.snippetMaxChars);
+    });
+
+    test('returns null for a pqLocked original (never captures placeholder)',
+        () {
+      expect(
+        QuotedReply.snippetFor(
+          _msg(PqConversationService.lockedCantOpenText, locked: true),
+        ),
+        isNull,
+      );
+    });
+
+    test('returns null for a raw pqdm1: / pqdm2: token', () {
+      expect(
+        QuotedReply.snippetFor(_msg('pqdm1:x25519-mlkem768:AAAAsealed')),
+        isNull,
+      );
+      expect(
+        QuotedReply.snippetFor(_msg('pqdm2:header.slots.ct')),
+        isNull,
+      );
+    });
+
+    test('senderLabelFor labels You/name correctly', () {
+      expect(QuotedReply.senderLabelFor(_msg('x', outbound: true)), 'You');
+      expect(
+        QuotedReply.senderLabelFor(_msg('x', senderName: 'Lumina')),
+        'Lumina',
+      );
+      expect(QuotedReply.senderLabelFor(_msg('x', senderName: null)), 'Them');
     });
   });
 }
