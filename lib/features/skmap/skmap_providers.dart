@@ -1,5 +1,7 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../services/daemon_config.dart';
 import 'geo_unit.dart';
 import 'geo_units_source.dart';
 
@@ -9,28 +11,31 @@ import 'geo_units_source.dart';
 
 /// The active geo feed adapter.
 ///
-/// **v1 default = [MockGeoUnitsSource]** so the map is demonstrable without a
-/// backend.
+/// **LIVE** = [DaemonGeoUnitsSource], polling `GET /api/v1/geo/units` on the
+/// skcomms daemon (base = [daemonUrlProvider]). The daemon publishes the CoT
+/// bridge's situational picture (units / markers / waypoints); when nothing has
+/// beaconed yet it returns an empty set, so the map degrades to "no units"
+/// rather than erroring.
 ///
-/// ▶ TO GO LIVE: replace the body with the daemon source once the skcomms
-///   `geo.py` endpoint exists, e.g.
+/// The endpoint returns `{"units": [...], "count": N}` (flat GeoUnit dicts); it
+/// also supports `?format=geojson` for a `FeatureCollection`. The fetcher below
+/// reads `features` then `units`, so either shape works via [GeoUnit.fromJson].
 ///
-/// ```dart
-/// final geoUnitsSourceProvider = Provider<GeoUnitsSource>((ref) {
-///   final base = ref.watch(daemonUrlProvider);          // existing provider
-///   final dio = Dio();
-///   return DaemonGeoUnitsSource(fetcher: () async {
-///     final r = await dio.get('$base/api/v1/geo/units'); // TODO: live route
-///     final feats = (r.data['features'] ?? r.data['units']) as List;
-///     return feats.cast<Map<String, dynamic>>();
-///   });
-/// });
-/// ```
-///
-/// Everything downstream (the provider + the screen) is feed-agnostic, so this
-/// is the single line that flips mock → live.
+/// ◀ To demo without a backend, swap the body back to `MockGeoUnitsSource()`.
+/// Everything downstream (the provider + the screen) is feed-agnostic.
 final geoUnitsSourceProvider = Provider<GeoUnitsSource>((ref) {
-  final source = MockGeoUnitsSource();
+  final base = ref.watch(daemonUrlProvider);
+  final dio = Dio(BaseOptions(baseUrl: base));
+  final source = DaemonGeoUnitsSource(
+    fetcher: () async {
+      final r = await dio.get('/api/v1/geo/units');
+      final data = r.data;
+      final list = (data is Map)
+          ? (data['features'] ?? data['units'] ?? const [])
+          : (data ?? const []);
+      return (list as List).cast<Map<String, dynamic>>();
+    },
+  );
   ref.onDispose(source.dispose);
   return source;
 });
