@@ -30,11 +30,11 @@ Future<void> _pumpPane(WidgetTester tester, {required String? token}) async {
 }
 
 void main() {
-  testWidgets('SkcodePane builds and shows its Code header + pairing hint',
+  testWidgets('SkcodePane builds and shows its Code header + subtitle',
       (tester) async {
     await _pumpPane(tester, token: null);
     expect(find.text('Code'), findsOneWidget);
-    expect(find.textContaining('paired'), findsOneWidget);
+    expect(find.textContaining('steer agent sessions'), findsOneWidget);
   });
 
   testWidgets('injects the audience wire token into the hostd client URL',

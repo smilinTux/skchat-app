@@ -135,7 +135,11 @@ void main() {
       );
       final shown =
           await svc.openIncoming('lumina', 'pqdm1:x25519-mlkem768:AAAA');
-      expect(shown, contains('post-quantum message'));
+      // This device holds no PQ key (hasKey: false), so a hybrid-sealed token
+      // renders the graceful locked placeholder rather than throwing. The copy
+      // is the intended [PqConversationService.lockedNoKeyText]; assert against
+      // the source constant so the test tracks the real placeholder.
+      expect(shown, PqConversationService.lockedNoKeyText);
     });
   });
 }

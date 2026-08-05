@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:livekit_client/livekit_client.dart'
-    show CameraPosition, ConnectionState;
+import 'package:livekit_client/livekit_client.dart' show CameraPosition;
 import 'package:skchat/features/calls/call_session.dart';
 import 'package:skchat/services/call_api_client.dart';
 import 'package:skchat/services/livekit_call_service.dart';
