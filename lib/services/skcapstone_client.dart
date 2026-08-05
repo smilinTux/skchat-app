@@ -4,6 +4,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
+import 'operator_auth_interceptor.dart';
+import 'operator_session_service.dart';
 
 /// Compile-time default for the skcapstone daemon (port 7777). Seed for the
 /// runtime-settable [backendConfigProvider]; the live value comes from there so
@@ -16,8 +18,19 @@ const _kSKDashboardBaseUrl = kDefaultSkcapstoneDashboardUrl;
 
 /// Low-level HTTP client for the skcapstone daemon REST API.
 class SKCapstoneClient {
-  SKCapstoneClient({String? baseUrl, String? dashboardUrl})
-      : _dio = Dio(
+  /// [sessionService] is the operator-auth handshake (same one [SKCommsClient]
+  /// uses). It is nullable: when not supplied the client behaves exactly as it
+  /// did before, no Bearer header is attached and no 401 retry is attempted.
+  /// When supplied, an [buildOperatorAuthInterceptor] attaches the operator
+  /// session Bearer to BOTH the daemon (:7777) and dashboard (:7778) Dios so
+  /// `/api/board` (and other routes) pass the webui dataplane auth gate instead
+  /// of 401ing to a false "Dashboard offline". The interceptor no-ops
+  /// gracefully on unenrolled devices, so guest/native flows do not regress.
+  SKCapstoneClient({
+    String? baseUrl,
+    String? dashboardUrl,
+    OperatorSessionService? sessionService,
+  })  : _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl ?? _kSKCapstoneBaseUrl,
             connectTimeout: const Duration(seconds: 5),
@@ -30,10 +43,19 @@ class SKCapstoneClient {
             connectTimeout: const Duration(seconds: 5),
             receiveTimeout: const Duration(seconds: 10),
           ),
-        );
+        ),
+        _sessionService = sessionService {
+    _dio.interceptors.add(
+      buildOperatorAuthInterceptor(_sessionService, () => _dio),
+    );
+    _dashDio.interceptors.add(
+      buildOperatorAuthInterceptor(_sessionService, () => _dashDio),
+    );
+  }
 
   final Dio _dio;
   final Dio _dashDio;
+  final OperatorSessionService? _sessionService;
 
   /// GET /ping, verify the daemon is running.
   Future<bool> isAlive() async {
@@ -162,6 +184,7 @@ final skCapstoneClientProvider = Provider<SKCapstoneClient>((ref) {
   return SKCapstoneClient(
     baseUrl: cfg.skcapstoneUrl,
     dashboardUrl: dash,
+    sessionService: ref.watch(operatorSessionServiceProvider),
   );
 });
 

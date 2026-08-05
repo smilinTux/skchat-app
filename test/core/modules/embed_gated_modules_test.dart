@@ -29,4 +29,27 @@ void main() {
       expect(kEmbedGatedModuleIds, {'skdashboard', 'skos'});
     });
   });
+
+  group('embedModeForModule (rw allowlist mirror)', () {
+    test('skdashboard is a trusted admin surface -> requests rw', () {
+      expect(embedModeForModule('skdashboard'), 'rw');
+    });
+
+    test('case/whitespace tolerant', () {
+      expect(embedModeForModule('  SKDashboard '), 'rw');
+    });
+
+    test('skos stays read-only -> requests ro', () {
+      expect(embedModeForModule('skos'), 'ro');
+    });
+
+    test('unknown / non-rw modules default to ro', () {
+      expect(embedModeForModule('skcode'), 'ro');
+      expect(embedModeForModule('whatever'), 'ro');
+    });
+
+    test('the rw set is exactly {skdashboard}', () {
+      expect(kEmbedRwModuleIds, {'skdashboard'});
+    });
+  });
 }

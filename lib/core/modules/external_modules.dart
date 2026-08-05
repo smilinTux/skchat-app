@@ -66,6 +66,22 @@ const Set<String> kEmbedGatedModuleIds = {'skdashboard', 'skos'};
 bool moduleRequiresEmbedToken(String moduleId) =>
     kEmbedGatedModuleIds.contains(moduleId.trim().toLowerCase());
 
+/// Gated modules that are TRUSTED first-party ADMIN surfaces, whose pane may
+/// request a READ-WRITE (`mode=rw`) embed token so its in-pane Save actions (the
+/// Models console `POST /api/models/advertise`, cmdb seed, kanban mutations)
+/// re-enable for the same already-authenticated operator. Mirrors the server's
+/// `SKCHAT_EMBED_RW_MODULES` allowlist (default `skdashboard`). Every other gated
+/// module stays read-only (`mode=ro`). The server is the real gate: it only mints
+/// rw for a module on ITS allowlist and only for a full operator credential, so a
+/// module listed here that the server does not allow simply degrades to ro.
+const Set<String> kEmbedRwModuleIds = {'skdashboard'};
+
+/// The embed-token mode ([`ro`] read-only or [`rw`] read + write) [moduleId]'s
+/// pane should request. Trusted admin modules ([kEmbedRwModuleIds]) request `rw`;
+/// all other gated modules request `ro`.
+String embedModeForModule(String moduleId) =>
+    kEmbedRwModuleIds.contains(moduleId.trim().toLowerCase()) ? 'rw' : 'ro';
+
 /// Map a manifest `nav.icon` TOKEN (never a URL, per spec 5.2) to a Material
 /// [IconData]. Unknown tokens fall back to a generic module glyph, so an
 /// unrecognised icon degrades gracefully instead of failing discovery.
