@@ -9,6 +9,7 @@ import 'package:skchat/models/chat_message.dart';
 import 'package:skchat/models/conversation.dart';
 import 'package:skchat/services/skcomms_client.dart';
 import 'package:skchat/services/daemon_config.dart';
+import 'package:skchat/services/daemon_service.dart';
 import 'package:skchat/services/pq_conversation_service.dart';
 import 'package:skchat/services/pq_prekey_service.dart';
 
@@ -38,6 +39,21 @@ class _StubPrekeyService implements PqPrekeyService {
       const PrekeyBundle();
   @override
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A [DaemonService] that never touches a real `skchat` subprocess. The real
+/// [DaemonService.getConversation] shells out via `Process.run`; started
+/// unawaited from [ConversationNotifier.build] it can resolve AFTER the test's
+/// `container.dispose()`, then touch the disposed notifier and surface as a
+/// "failed after test completion" async error. Returning `[]` synchronously
+/// keeps this unit test hermetic (no process spawn, nothing left in flight).
+class _StubDaemonService extends DaemonService {
+  _StubDaemonService() : super(identity: 'chef@skworld.io');
+
+  @override
+  Future<List<SkchatCliMessage>> getConversation(String peerId,
+          {int limit = 100}) async =>
+      const [];
 }
 
 
@@ -88,6 +104,9 @@ void main() {
           ),
         ),
         daemonUrlProvider.overrideWith(_StubDaemonConfig.new),
+        // Stub the daemon so build()'s unawaited history fetch does not spawn a
+        // real `skchat` subprocess that could resolve after dispose.
+        daemonServiceProvider.overrideWithValue(_StubDaemonService()),
       ],
     );
   }

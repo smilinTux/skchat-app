@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/modules/external_modules.dart';
 import 'skcomms_client.dart';
 
 /// A safety margin subtracted from a cached embed token's `expires_at` before it
@@ -55,19 +56,24 @@ class EmbedTokenService {
 
   final Map<String, _CachedEmbedToken> _cache = {};
 
-  /// Return a cached, unexpired embed token for [module] if one is held;
-  /// otherwise call the backend mint endpoint, cache the result with its
-  /// `expires_at`, and return it. Returns null (never throws) on ANY failure so
-  /// the caller degrades to loading the pane tokenless.
-  Future<String?> mint(String module) async {
-    final cached = _cache[module];
+  /// Return a cached, unexpired embed token for [module] (at the requested
+  /// [mode]) if one is held; otherwise call the backend mint endpoint, cache the
+  /// result with its `expires_at`, and return it. Returns null (never throws) on
+  /// ANY failure so the caller degrades to loading the pane tokenless.
+  ///
+  /// [mode] is `ro` (read-only, default) or `rw` (read + write). The cache is
+  /// keyed by `module:mode` so a ro token is never reused where a rw one was
+  /// requested (or vice versa).
+  Future<String?> mint(String module, {String mode = 'ro'}) async {
+    final key = '$module:$mode';
+    final cached = _cache[key];
     if (cached != null && _isFresh(cached)) {
       return cached.token;
     }
 
     final Map<String, dynamic>? data;
     try {
-      data = await _client.mintEmbedToken(module);
+      data = await _client.mintEmbedToken(module, mode: mode);
     } catch (_) {
       // Defensive: mintEmbedToken already swallows transport errors, but a
       // caller must never see an exception cross this boundary.
@@ -78,7 +84,7 @@ class EmbedTokenService {
     final token = data['token'];
     if (token is! String || token.isEmpty) return null;
 
-    _cache[module] = _CachedEmbedToken(token, _parseExpiry(data['expires_at']));
+    _cache[key] = _CachedEmbedToken(token, _parseExpiry(data['expires_at']));
     return token;
   }
 
@@ -125,8 +131,13 @@ final embedTokenServiceProvider = Provider<EmbedTokenService>((ref) {
 /// flicker the iframe). Resolves to null when the backend mint flag is off or
 /// the mint fails, in which case the pane loads tokenless and shows the
 /// upstream's own gated response.
+///
+/// The requested mode is resolved from the module: a trusted admin surface
+/// ([kEmbedRwModuleIds], e.g. `skdashboard`) requests `rw` so its in-pane Save
+/// actions work; every other gated module requests `ro`. The server is still the
+/// gate, so a `rw` request the server declines simply degrades to tokenless.
 final embedTokenForModuleProvider =
     FutureProvider.family<String?, String>((ref, module) async {
   final service = ref.watch(embedTokenServiceProvider);
-  return service.mint(module);
+  return service.mint(module, mode: embedModeForModule(module));
 });

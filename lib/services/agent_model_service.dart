@@ -117,6 +117,57 @@ class AgentModelState {
   List<AgentModel> get available => catalog.models;
 }
 
+/// A discovered gateway model plus whether it is ENABLED (advertised on the
+/// gateway allowlist, and so offered in the picker / to the brain).
+class ManagedModel {
+  const ManagedModel({
+    required this.id,
+    required this.provider,
+    required this.advertised,
+    this.free,
+  });
+
+  final String id;
+  final String provider;
+  final bool advertised;
+  final bool? free;
+
+  factory ManagedModel.fromJson(Map<String, dynamic> j) => ManagedModel(
+        id: j['id'] as String? ?? '',
+        provider: (j['provider'] as String?)?.trim().isNotEmpty == true
+            ? j['provider'] as String
+            : (j['owned_by'] as String? ?? 'gateway'),
+        advertised: j['advertised'] as bool? ?? false,
+        free: j['free'] as bool?,
+      );
+}
+
+/// The full discovered catalog + the currently-enabled id set, for the
+/// "Manage models" screen. `source` is `gateway` normally, or `curated` when
+/// the gateway admin was unreachable and the daemon degraded to curated.
+class ManagedModelsState {
+  const ManagedModelsState({
+    required this.models,
+    required this.enabled,
+    this.source = 'gateway',
+  });
+
+  final List<ManagedModel> models;
+  final Set<String> enabled;
+  final String source;
+
+  factory ManagedModelsState.fromJson(Map<String, dynamic> j) => ManagedModelsState(
+        models: (j['models'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ManagedModel.fromJson)
+            .toList(),
+        enabled: (j['enabled'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toSet(),
+        source: j['source'] as String? ?? 'gateway',
+      );
+}
+
 /// Reads/writes the per-agent reply model via the skchat daemon
 /// (`GET`/`POST /api/v1/agent/model` on port 9385).
 ///
@@ -170,6 +221,36 @@ class AgentModelService {
       final d = resp.data;
       if (d == null) return null;
       return _parse({'agent': agent, ...d});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Fetch the model-ENABLEMENT view: every discovered model + which are
+  /// enabled (advertised). Drives the "Manage models" screen. Returns null on
+  /// any failure (daemon offline), so the screen shows an offline state.
+  Future<ManagedModelsState?> listManagedModels() async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '$_baseUrl/api/v1/models/manage',
+      );
+      final d = resp.data;
+      return d == null ? null : ManagedModelsState.fromJson(d);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Persist the ENABLED set (the full list of ids to advertise; empty =
+  /// advertise everything). Returns the refreshed view, or null on failure.
+  Future<ManagedModelsState?> setEnabledModels(List<String> enabled) async {
+    try {
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '$_baseUrl/api/v1/models/manage',
+        data: {'enabled': enabled},
+      );
+      final d = resp.data;
+      return d == null ? null : ManagedModelsState.fromJson(d);
     } catch (_) {
       return null;
     }

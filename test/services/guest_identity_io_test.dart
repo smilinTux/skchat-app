@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as c; // dev-only hashing for the assertion
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pointycastle/export.dart';
-import 'package:skchat/services/guest_identity.dart';
 import 'package:skchat/services/guest_identity_io.dart';
 import 'package:skchat/services/guest_key_store.dart';
 
