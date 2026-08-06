@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
@@ -180,8 +181,21 @@ class _PeerPickerScreenState extends ConsumerState<PeerPickerScreen> {
     );
   }
 
+  /// True when the peer fetch was REJECTED (not unreachable): a 401/403 from the
+  /// dataplane auth gate. This is what a guest hits, /api/v1/peers is
+  /// operator-only, so "daemon unreachable" is a misleading lie (the daemon is
+  /// online). Surface an honest permissions message instead.
+  bool _isPermissionError(Object error) {
+    if (error is DioException) {
+      final code = error.response?.statusCode;
+      return code == 401 || code == 403;
+    }
+    return false;
+  }
+
   Widget _buildError(TextTheme tt, Object error, List<Conversation> recentConvs) {
     final filteredConvs = _filteredRecentConvs(recentConvs);
+    final permission = _isPermissionError(error);
     return ListView(
       padding: const EdgeInsets.only(bottom: 32),
       children: [
@@ -194,14 +208,18 @@ class _PeerPickerScreenState extends ConsumerState<PeerPickerScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.cloud_off_rounded,
+              Icon(
+                permission
+                    ? Icons.lock_outline_rounded
+                    : Icons.cloud_off_rounded,
                 size: 40,
                 color: SovereignColors.textTertiary,
               ),
               const SizedBox(height: 12),
               Text(
-                'SKComms daemon unreachable',
+                permission
+                    ? 'Contacts are operator-only'
+                    : 'SKComms daemon unreachable',
                 style: tt.titleSmall?.copyWith(
                   color: SovereignColors.textSecondary,
                 ),
@@ -209,18 +227,26 @@ class _PeerPickerScreenState extends ConsumerState<PeerPickerScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Start the daemon to discover new peers.',
+                permission
+                    ? 'This account can message agents, but browsing '
+                        'contacts is not available yet.'
+                    : 'Start the daemon to discover new peers.',
                 style: tt.bodySmall?.copyWith(
                   color: SovereignColors.textTertiary,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () => ref.read(peerPickerProvider.notifier).refresh(),
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('Retry'),
-              ),
+              // Retry only helps a genuine connectivity failure; a permissions
+              // boundary will just 401 again, so do not offer it there.
+              if (!permission) ...[
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () =>
+                      ref.read(peerPickerProvider.notifier).refresh(),
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('Retry'),
+                ),
+              ],
             ],
           ),
         ),
