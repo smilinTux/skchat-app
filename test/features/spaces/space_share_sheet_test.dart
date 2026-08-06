@@ -33,6 +33,9 @@ class FakeSyncNotifier extends SKCommsSyncNotifier {
     String? inReplyTo,
     String? contentType,
     Map<String, dynamic>? rich,
+    String? quotedText,
+    String? quotedSender,
+    String? quotedId,
   }) async {
     calls.add((peerId: peerId, content: content));
     return nextResult;

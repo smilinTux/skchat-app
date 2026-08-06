@@ -198,4 +198,40 @@ void main() {
       expect(msgs, isEmpty);
     });
   });
+
+  // ── Cross-device reply-quote wire threading (card 5a19f848) ────────────────
+  group('sendMessage threads the quoted snippet into the POST body', () {
+    test('carries quoted_text/quoted_sender/quoted_id when provided', () async {
+      final a = _CannedAdapter();
+      a.routes['/api/v1/send'] = {'ok': true};
+      await _client(a).sendMessage(
+        recipient: 'lumina@chef.skworld',
+        message: 'sounds good',
+        inReplyTo: 'orig-1',
+        quotedText: 'here is the original plan',
+        quotedSender: 'Lumina',
+        quotedId: 'orig-1',
+      );
+      final sent = a.lastRequest!.data as Map;
+      expect(sent['reply_to_id'], 'orig-1');
+      expect(sent['quoted_text'], 'here is the original plan');
+      expect(sent['quoted_sender'], 'Lumina');
+      expect(sent['quoted_id'], 'orig-1');
+    });
+
+    test('omits the quoted_* keys entirely when not provided', () async {
+      final a = _CannedAdapter();
+      a.routes['/api/v1/send'] = {'ok': true};
+      await _client(a).sendMessage(
+        recipient: 'lumina@chef.skworld',
+        message: 'plain message',
+      );
+      final sent = a.lastRequest!.data as Map;
+      // Null-aware map entries drop the key rather than sending a null value,
+      // so a non-reply send never ships empty quoted fields.
+      expect(sent.containsKey('quoted_text'), isFalse);
+      expect(sent.containsKey('quoted_sender'), isFalse);
+      expect(sent.containsKey('quoted_id'), isFalse);
+    });
+  });
 }

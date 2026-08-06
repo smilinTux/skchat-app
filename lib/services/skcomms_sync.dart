@@ -169,6 +169,9 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     String? inReplyTo,
     String? contentType,
     Map<String, dynamic>? rich,
+    String? quotedText,
+    String? quotedSender,
+    String? quotedId,
   }) async {
     // Primary: skchat CLI, local store + transport delivery (native only).
     final daemon = ref.read(daemonServiceProvider);
@@ -193,6 +196,15 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     final pq = ref.read(pqConversationServiceProvider);
     final wireContent = await pq.sealOutgoing(peerId, content);
 
+    // Cross-device reply-quote (card 5a19f848): carry the denormalized snippet
+    // so a sibling/recipient device renders the quote. SECURITY: never ship a
+    // plaintext quoted preview alongside a SEALED body -- that would leak the
+    // quoted original next to the ciphertext. `sealOutgoing` returns a `pqdm1:`/
+    // `pqdm2:` token when it sealed (otherwise the body unchanged), so suppress
+    // the quoted_* fields whenever the wire body is sealed. The plaintext path
+    // (the live chef<->lumina conversation) carries them as-is.
+    final sealed =
+        wireContent.startsWith('pqdm1:') || wireContent.startsWith('pqdm2:');
     final client = ref.read(skcommsClientProvider);
     try {
       final result = await client.sendMessage(
@@ -202,6 +214,9 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
         inReplyTo: inReplyTo,
         contentType: contentType,
         rich: rich,
+        quotedText: sealed ? null : quotedText,
+        quotedSender: sealed ? null : quotedSender,
+        quotedId: sealed ? null : quotedId,
       );
       return result.delivered ? result : null;
     } catch (_) {

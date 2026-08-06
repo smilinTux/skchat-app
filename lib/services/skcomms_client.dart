@@ -103,6 +103,9 @@ class SKCommsClient {
     String? inReplyTo,
     String? contentType,
     Map<String, dynamic>? rich,
+    String? quotedText,
+    String? quotedSender,
+    String? quotedId,
   }) async {
     final body = <String, dynamic>{
       // Contract key first, legacy key second (both harmless / additive).
@@ -117,6 +120,14 @@ class SKCommsClient {
       'in_reply_to': inReplyTo,
       'content_type': ?contentType,
       'rich': ?rich,
+      // Denormalized reply-quote snippet (cross-device quote fix, card
+      // 5a19f848): carried so a sibling/recipient device that never decrypted
+      // the original still renders the quote. Only added when non-null; the
+      // caller suppresses these for a sealed body so a sealed message never
+      // ships a plaintext quoted preview.
+      'quoted_text': ?quotedText,
+      'quoted_sender': ?quotedSender,
+      'quoted_id': ?quotedId,
     };
     final resp = await _dio.post('/api/v1/send', data: body);
     final data = resp.data is Map
