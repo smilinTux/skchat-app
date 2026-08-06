@@ -179,10 +179,21 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
   /// independent of the unreliable directionality guess. A genuine inbound is
   /// opened with our private key. A token this device cannot open reports
   /// `opened == false` and renders as a locked placeholder.
-  /// Returns `(text, isOutbound, locked)`. `text == null` means drop; `locked`
-  /// marks a sealed reply this device could NOT open; it still renders (as a
-  /// visible placeholder) but MUST be deduped by id only (see [ChatMessage.pqLocked]).
-  Future<({String? text, bool isOutbound, bool locked})> _resolvePqToken(
+  /// Returns `(text, isOutbound, locked, quotedText, quotedSender, quotedId)`.
+  /// `text == null` means drop; `locked` marks a sealed reply this device could
+  /// NOT open; it still renders (as a visible placeholder) but MUST be deduped
+  /// by id only (see [ChatMessage.pqLocked]). The quoted_* fields carry a
+  /// cross-device reply-quote unwrapped from the sealed `skq1:` envelope (card
+  /// 5a19f848); they are null unless the opened body wrapped a quote.
+  Future<
+      ({
+        String? text,
+        bool isOutbound,
+        bool locked,
+        String? quotedText,
+        String? quotedSender,
+        String? quotedId,
+      })> _resolvePqToken(
     String token,
     String peerShort, {
     required bool isOutboundGuess,
@@ -190,10 +201,14 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
     final pq = ref.read(pqConversationServiceProvider);
     final r = await pq.openIncomingDetailed(peerShort, token);
     ref.invalidate(conversationPqStateProvider(peerShort));
-    if (r.mine) {
-      return (text: r.text, isOutbound: true, locked: false);
-    }
-    return (text: r.text, isOutbound: isOutboundGuess, locked: !r.opened);
+    return (
+      text: r.text,
+      isOutbound: r.mine ? true : isOutboundGuess,
+      locked: r.mine ? false : !r.opened,
+      quotedText: r.quotedText,
+      quotedSender: r.quotedSender,
+      quotedId: r.quotedId,
+    );
   }
 
   /// Fetch conversation history from the skchat local store via CLI.
@@ -238,6 +253,11 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
           // renders as a locked placeholder (CARD E), deduped by id.
           var cliBody = m.content;
           var pqLocked = false;
+          // Cross-device reply-quote unwrapped from the sealed `skq1:` envelope
+          // (card 5a19f848); null unless this sealed body carried a quote.
+          String? cliQuotedText;
+          String? cliQuotedSender;
+          String? cliQuotedId;
           if (PqDmCodec.isHybridToken(cliBody) ||
               cliBody.startsWith(PqDmCodec.pqdm2Prefix)) {
             final r = await _resolvePqToken(
@@ -249,6 +269,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             cliBody = r.text!;
             isOutbound = r.isOutbound;
             pqLocked = r.locked;
+            cliQuotedText = r.quotedText;
+            cliQuotedSender = r.quotedSender;
+            cliQuotedId = r.quotedId;
           }
 
           // Reaction sentinel (__REACT__), fold into the target message's
@@ -317,6 +340,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
             threadId: m.threadId,
             deliveryStatus: isOutbound ? 'sent' : 'delivered',
             pqLocked: pqLocked,
+            quotedText: cliQuotedText,
+            quotedSender: cliQuotedSender,
+            quotedId: cliQuotedId,
           ));
         }
 

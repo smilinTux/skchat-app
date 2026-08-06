@@ -101,7 +101,13 @@ class PqConversationService {
   /// unchanged. Records the negotiated suite so the UI 🔐 indicator is honest,
   /// and NEVER silently downgrades a previously-hybrid conversation on a
   /// transient fetch miss.
-  Future<String> sealOutgoing(String peer, String content) async {
+  Future<String> sealOutgoing(
+    String peer,
+    String content, {
+    String? quotedText,
+    String? quotedSender,
+    String? quotedId,
+  }) async {
     final peerShort = _short(peer);
     // Control sentinels (__REACT__/__TYPING__/… and __CALL_REQUEST__) must stay
     // cleartext so the existing dispatch keeps working, never seal them.
@@ -137,7 +143,23 @@ class PqConversationService {
       return content;
     }
 
-    final body = Uint8List.fromList(utf8.encode(content));
+    // Cross-device reply-quote (card 5a19f848 sealed leg): when this reply
+    // carries a quoted snippet AND the body is about to be SEALED, the quote
+    // cannot ride the wire as a plaintext top-level field (an anti-leak guard
+    // nulls those on sealed sends). Instead we wrap the quote INSIDE the sealed
+    // plaintext with a `skq1:` prefix so it is protected by the same envelope.
+    // Non-quote sends seal the raw body unchanged (no wrapper), and a body with
+    // no prefix opens back as raw for byte-for-byte back-compat.
+    final payloadStr = (quotedText != null)
+        ? 'skq1:' +
+            jsonEncode({
+              't': content,
+              'q': quotedText,
+              if (quotedSender != null) 'qs': quotedSender,
+              if (quotedId != null) 'qi': quotedId,
+            })
+        : content;
+    final body = Uint8List.fromList(utf8.encode(payloadStr));
 
     // Fanout when ANY peer slot advertises the pqdm2 capability (mirrors the
     // daemon's `_seal_hybrid_outbound` gate). Seal to every peer device slot AND
@@ -256,23 +278,52 @@ class PqConversationService {
   /// The caller renders a not-opened result as a per-message locked bubble
   /// (deduped by id only) so the sender is never silently dropped. CARD E, the
   /// reduced-assurance web/PWA leg.
-  Future<({String text, bool opened, bool mine})> openIncomingDetailed(
+  Future<
+      ({
+        String text,
+        bool opened,
+        bool mine,
+        String? quotedText,
+        String? quotedSender,
+        String? quotedId,
+      })> openIncomingDetailed(
     String peer,
     String body,
   ) async {
     final isPqdm2 = body.startsWith(PqDmCodec.pqdm2Prefix);
     if (!PqDmCodec.isHybridToken(body) && !isPqdm2) {
-      return (text: body, opened: true, mine: false);
+      return (
+        text: body,
+        opened: true,
+        mine: false,
+        quotedText: null,
+        quotedSender: null,
+        quotedId: null,
+      );
     }
     final peerShort = _short(peer);
 
     final haveKey = await _prekeys.ensureKeyPair();
     if (!haveKey) {
-      return (text: lockedNoKeyText, opened: false, mine: false);
+      return (
+        text: lockedNoKeyText,
+        opened: false,
+        mine: false,
+        quotedText: null,
+        quotedSender: null,
+        quotedId: null,
+      );
     }
     final priv = _prekeys.privateKey;
     if (priv == null) {
-      return (text: lockedNoKeyText, opened: false, mine: false);
+      return (
+        text: lockedNoKeyText,
+        opened: false,
+        mine: false,
+        quotedText: null,
+        quotedSender: null,
+        quotedId: null,
+      );
     }
 
     // pqdm2: multi-device fanout envelope. Select THIS device's own slot by its
@@ -286,7 +337,14 @@ class PqConversationService {
     if (isPqdm2) {
       final myKeyId = _prekeys.keyId;
       if (myKeyId == null) {
-        return (text: lockedNoKeyText, opened: false, mine: false);
+        return (
+          text: lockedNoKeyText,
+          opened: false,
+          mine: false,
+          quotedText: null,
+          quotedSender: null,
+          quotedId: null,
+        );
       }
       final header = _pqdm2Header(body);
       final headerSender = header?['sender'] as String?;
@@ -314,10 +372,25 @@ class PqConversationService {
         if (!mineToken) {
           _reportDecryptFailure();
         }
-        return (text: lockedCantOpenText, opened: false, mine: false);
+        return (
+          text: lockedCantOpenText,
+          opened: false,
+          mine: false,
+          quotedText: null,
+          quotedSender: null,
+          quotedId: null,
+        );
       }
       _state[peerShort] = PqConversationState.hybridPq;
-      return (text: utf8.decode(clear), opened: true, mine: mineToken);
+      final u = _unwrapSkq1(utf8.decode(clear));
+      return (
+        text: u.text,
+        opened: true,
+        mine: mineToken,
+        quotedText: u.quotedText,
+        quotedSender: u.quotedSender,
+        quotedId: u.quotedId,
+      );
     }
 
     try {
@@ -330,14 +403,72 @@ class PqConversationService {
         recipient: _localShort,
       );
       _state[peerShort] = PqConversationState.hybridPq;
-      return (text: utf8.decode(clear), opened: true, mine: false);
+      final u = _unwrapSkq1(utf8.decode(clear));
+      return (
+        text: u.text,
+        opened: true,
+        mine: false,
+        quotedText: u.quotedText,
+        quotedSender: u.quotedSender,
+        quotedId: u.quotedId,
+      );
     } catch (_) {
       // DowngradeDetected / malformed / wrong-device key, surface, don't crash.
       // A sealed inbound we could not open: NACK so the sender re-pulls our
       // fresh bundle now (coord 4c054eab, criterion 1). Fire-and-forget.
       _reportDecryptFailure();
-      return (text: lockedCantOpenText, opened: false, mine: false);
+      return (
+        text: lockedCantOpenText,
+        opened: false,
+        mine: false,
+        quotedText: null,
+        quotedSender: null,
+        quotedId: null,
+      );
     }
+  }
+
+  /// Unwrap a `skq1:` reply-quote envelope from an OPENED sealed plaintext.
+  ///
+  /// The sealed leg of the cross-device reply-quote (card 5a19f848) carries the
+  /// quote INSIDE the encrypted body: `skq1:` + `jsonEncode({t,q,qs,qi})`. When
+  /// the opened plaintext starts with `skq1:`, parse it into the real body `t`
+  /// plus the quoted snippet (`q`/`qs`/`qi`). Any parse error falls back to the
+  /// raw string (treated as a plain, unwrapped body). A plaintext with no
+  /// prefix returns unchanged with null quoted fields (back-compat).
+  static ({
+    String text,
+    String? quotedText,
+    String? quotedSender,
+    String? quotedId,
+  }) _unwrapSkq1(String plaintext) {
+    if (!plaintext.startsWith('skq1:')) {
+      return (
+        text: plaintext,
+        quotedText: null,
+        quotedSender: null,
+        quotedId: null,
+      );
+    }
+    try {
+      final decoded = jsonDecode(plaintext.substring('skq1:'.length));
+      if (decoded is Map<String, dynamic>) {
+        return (
+          text: (decoded['t'] as String?) ?? plaintext,
+          quotedText: decoded['q'] as String?,
+          quotedSender: decoded['qs'] as String?,
+          quotedId: decoded['qi'] as String?,
+        );
+      }
+    } catch (_) {
+      // Malformed wrapper: fall back to the raw string as the body.
+    }
+    return (
+      text: plaintext,
+      quotedText: null,
+      quotedSender: null,
+      quotedId: null,
+    );
   }
 
   /// Fire-and-forget the decrypt-failure NACK for THIS device (the reporting
