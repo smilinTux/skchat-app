@@ -176,6 +176,15 @@ class ConversationScreen extends ConsumerWidget {
                         content: text,
                         inReplyTo: reply?.id,
                         threadId: reply?.threadId,
+                        // Carry the captured quote snippet over the wire so a
+                        // sibling/recipient device renders it (card 5a19f848).
+                        // snippet is null for a sealed/locked original, so those
+                        // replies fall back to local id-resolution as before.
+                        quotedText: snippet,
+                        quotedSender: snippet == null
+                            ? null
+                            : QuotedReply.senderLabelFor(reply!),
+                        quotedId: snippet == null ? null : reply!.id,
                       );
               // PQC Q5: sealing happened inside sendMessage → re-read the PQ
               // self-report so the 🔐 badge appears on the very first hybrid send.
