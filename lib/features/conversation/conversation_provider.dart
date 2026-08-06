@@ -416,6 +416,12 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
       var isOutbound = localShort != null && senderShort == localShort;
       var body = parsed.content;
       var pqLocked = false;
+      // The quoted-reply snippet: default to the contract fields (present for a
+      // PLAINTEXT reply), overridden below by the skq1 envelope unwrapped from a
+      // SEALED reply (where the top-level contract fields are suppressed).
+      var quotedText = parsed.quotedText;
+      var quotedSender = parsed.quotedSender;
+      var quotedId = parsed.quotedId;
 
       // PQC Q5: an inbound `pqdm1:` / `pqdm2:` token is a hybrid-sealed DM, open
       // it with this device's hybrid private key (flips the convo `hybrid-pq`).
@@ -435,6 +441,13 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         body = r.text!;
         isOutbound = r.isOutbound;
         pqLocked = r.locked;
+        // A sealed reply carries its quote INSIDE the skq1 envelope; the
+        // top-level contract quote fields are suppressed on a sealed wire, so
+        // take the unwrapped quote here (this was the web-leg gap where Lumina's
+        // sealed reply rendered "Original message" on iPhone/Android browsers).
+        quotedText = r.quotedText ?? quotedText;
+        quotedSender = r.quotedSender ?? quotedSender;
+        quotedId = r.quotedId ?? quotedId;
       }
 
       // Control sentinels, fold into target state instead of rendering.
@@ -487,6 +500,9 @@ class ConversationNotifier extends FamilyNotifier<List<ChatMessage>, String> {
         conversationId: peerShort,
         deliveryStatus: isOutbound ? 'sent' : 'delivered',
         pqLocked: pqLocked,
+        quotedText: quotedText,
+        quotedSender: quotedSender,
+        quotedId: quotedId,
       ));
     }
 
