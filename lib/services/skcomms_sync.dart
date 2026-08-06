@@ -194,7 +194,18 @@ class SKCommsSyncNotifier extends Notifier<DaemonState> {
     // body is returned unchanged (classical path, byte-for-byte). Control
     // sentinels are never sealed (sealOutgoing passes `__…` through).
     final pq = ref.read(pqConversationServiceProvider);
-    final wireContent = await pq.sealOutgoing(peerId, content);
+    // When the body seals AND this is a reply with a quote, sealOutgoing wraps
+    // the quote INSIDE the sealed envelope (`skq1:`), so the top-level plaintext
+    // quoted_* fields stay null (no leak) while the recipient/sibling still
+    // renders the quote after decrypting. On the plaintext path the wrapper is
+    // skipped and the top-level fields carry the quote as today.
+    final wireContent = await pq.sealOutgoing(
+      peerId,
+      content,
+      quotedText: quotedText,
+      quotedSender: quotedSender,
+      quotedId: quotedId,
+    );
 
     // Cross-device reply-quote (card 5a19f848): carry the denormalized snippet
     // so a sibling/recipient device renders the quote. SECURITY: never ship a
