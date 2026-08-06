@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/build_info.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
@@ -155,7 +156,20 @@ class ProfileScreen extends ConsumerWidget {
       backgroundColor: SovereignColors.surfaceBase,
       appBar: AppBar(
         backgroundColor: SovereignColors.surfaceBase,
-        title: Text('Me', style: tt.displayLarge?.copyWith(fontSize: 24)),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Me', style: tt.displayLarge?.copyWith(fontSize: 24)),
+            Text(
+              appBuildLabel,
+              style: tt.bodySmall?.copyWith(
+                fontSize: 11,
+                color: tt.bodySmall?.color?.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.qr_code_rounded),
