@@ -5,6 +5,7 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../shell/toolbar_module_actions.dart';
 import 'chats_provider.dart';
+import 'invite_to_dm_sheet.dart';
 import 'widgets/conversation_tile.dart';
 
 /// Chat list screen, shows all conversations sorted by recency.
@@ -97,6 +98,19 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
               onTap: () {
                 Navigator.of(sheetCtx).pop();
                 context.push(AppRoutes.createGroup);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_add_alt_1_rounded,
+                  color: SovereignColors.textSecondary),
+              title: const Text('Invite to DM',
+                  style: TextStyle(color: SovereignColors.textPrimary)),
+              subtitle: const Text('Link someone straight into a 1:1 with you',
+                  style: TextStyle(
+                      color: SovereignColors.textTertiary, fontSize: 12)),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                showInviteToDmSheet(context);
               },
             ),
             const SizedBox(height: 8),
