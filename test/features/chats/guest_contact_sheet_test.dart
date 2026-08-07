@@ -35,7 +35,7 @@ const _contact = GuestContact(
   groupId: 'g1',
 );
 
-Widget _harness(_RecordingAdapter a, {int changes = 0}) {
+Widget _harness(_RecordingAdapter a) {
   return ProviderScope(
     overrides: [
       guestDmContactsServiceProvider.overrideWithValue(_service(a)),
