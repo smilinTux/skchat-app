@@ -228,6 +228,14 @@ class _OperatorEnrollmentSectionState
     final linked = _status == _LinkStatus.linked;
     final linking = _status == _LinkStatus.linking;
 
+    // CR-3.4 PR4 soak signal: how many times the daemon rejected the audience
+    // token and the client fell back to the proven HS256 session. Zero on a
+    // healthy prefer-audience seat (and always zero under the default hs256
+    // policy); surfaced only when it has actually happened so the seat status
+    // stays clean until there is something to report.
+    final audienceFallbacks =
+        linked ? ref.read(operatorSessionServiceProvider).audienceFallbackCount : 0;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GlassCard(
@@ -315,6 +323,19 @@ class _OperatorEnrollmentSectionState
                   title: const Text("Refresh session"),
                   onTap: _refreshSession,
                 ),
+                if (audienceFallbacks > 0)
+                  ListTile(
+                    key: const Key("operator-audience-fallback-count"),
+                    leading: Icon(
+                      Icons.info_outline_rounded,
+                      color: SovereignColors.accentWarning,
+                    ),
+                    title: const Text("Audience token fell back to HS256"),
+                    subtitle: Text(
+                      "$audienceFallbacks time(s) this session",
+                      style: tt.labelSmall,
+                    ),
+                  ),
               ],
             ],
           ),

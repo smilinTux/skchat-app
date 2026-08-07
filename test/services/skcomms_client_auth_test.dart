@@ -73,6 +73,14 @@ class _FakeSessionService extends OperatorSessionService {
     return next as String;
   }
 
+  /// The interceptor now consumes the full credential bundle. This fake serves
+  /// the hs256 path (no audience token), delegating to the scripted
+  /// [ensureSession] so the existing token queue + call counts still drive the
+  /// request-attach and 401-retry behavior under test.
+  @override
+  Future<OperatorCredentials> ensureCredentials() async =>
+      OperatorCredentials(sessionToken: await ensureSession());
+
   @override
   void clearSession() {
     clearSessionCalls++;

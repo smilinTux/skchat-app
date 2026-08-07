@@ -230,6 +230,67 @@ void main() {
     });
   });
 
+  group("audience fallback status (CR-3.4 PR4)", () {
+    testWidgets(
+      "a linked seat that has fallen back surfaces the fallback count",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final store = _FakeTokenStore()..value = _fakeJwt(future);
+        final adapter = _CannedAdapter({});
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+          tokenReader: store.read,
+          tokenWriter: store.write,
+        );
+        // Two prefer-audience requests fell back to HS256 earlier this session.
+        service.recordAudienceFallback();
+        service.recordAudienceFallback();
+
+        await tester.pumpWidget(_wrap(service));
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+        expect(
+          find.byKey(const Key("operator-audience-fallback-count")),
+          findsOneWidget,
+        );
+        expect(find.textContaining("2 time(s)"), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "a clean linked seat (zero fallbacks) hides the fallback line",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final store = _FakeTokenStore()..value = _fakeJwt(future);
+        final adapter = _CannedAdapter({});
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+          tokenReader: store.read,
+          tokenWriter: store.write,
+        );
+
+        await tester.pumpWidget(_wrap(service));
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+        expect(
+          find.byKey(const Key("operator-audience-fallback-count")),
+          findsNothing,
+        );
+      },
+    );
+  });
+
   group("not-a-trusted-operator error path", () {
     testWidgets(
       "a 403 from enroll/open shows the friendly message, never a raw "
