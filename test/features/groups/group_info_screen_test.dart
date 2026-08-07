@@ -11,6 +11,7 @@ import 'package:skchat/services/daemon_service.dart';
 import 'package:skchat/services/skcomms_client.dart';
 import 'package:skchat/services/peer_trust_store.dart';
 import 'package:skchat/features/identity/widgets/trust_badge.dart';
+import 'package:skchat/core/theme/sovereign_colors.dart';
 
 /// In-memory trust store so the tier resolver is Hive-free under widget-test
 /// fake async (real Hive I/O never completes and would stick the tier provider
@@ -417,6 +418,292 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(TrustBadge), findsNothing);
+    });
+  });
+
+  group('GroupMemberInfo guest fields (G6)', () {
+    test('fromJson parses the guest keys', () {
+      final member = GroupMemberInfo.fromJson({
+        'identity_uri': 'guest://alice',
+        'display_name': '',
+        'guest': true,
+        'guest_name': 'Alice',
+        'guest_alias': 'Bestie',
+        'guest_status': 'active',
+        'membership_status': 'active',
+      });
+
+      expect(member.isGuest, true);
+      expect(member.guestName, 'Alice');
+      expect(member.guestAlias, 'Bestie');
+      expect(member.guestStatus, 'active');
+      expect(member.membershipStatus, 'active');
+    });
+
+    test('trusted member carries none of the guest keys', () {
+      final member = GroupMemberInfo.fromJson({
+        'identity_uri': 'chef@skworld.io',
+        'display_name': 'Chef',
+      });
+
+      expect(member.isGuest, false);
+      expect(member.guestName, isNull);
+      expect(member.guestAlias, isNull);
+      expect(member.title, 'Chef');
+      expect(member.isUntrustedName, false);
+      expect(member.isRevoked, false);
+    });
+
+    test('unaliased guest title is "guest: <name>" and untrusted', () {
+      const member = GroupMemberInfo(
+        identityUri: 'guest://alice',
+        displayName: '',
+        isGuest: true,
+        guestName: 'Alice',
+      );
+
+      expect(member.title, 'guest: Alice');
+      expect(member.isUntrustedName, true);
+    });
+
+    test('aliased guest title is the alias and is trusted styling', () {
+      const member = GroupMemberInfo(
+        identityUri: 'guest://alice',
+        displayName: '',
+        isGuest: true,
+        guestName: 'Alice',
+        guestAlias: 'Bestie',
+      );
+
+      expect(member.hasGuestAlias, true);
+      expect(member.title, 'Bestie');
+      expect(member.isUntrustedName, false);
+    });
+
+    test('a guest naming themselves after a real member does not collide',
+        () {
+      const trusted = GroupMemberInfo(
+        identityUri: 'chef@skworld.io',
+        displayName: 'Chef',
+      );
+      const spoofer = GroupMemberInfo(
+        identityUri: 'guest://spoofer',
+        displayName: '',
+        isGuest: true,
+        guestName: 'Chef',
+      );
+
+      expect(trusted.title, 'Chef');
+      expect(spoofer.title, 'guest: Chef');
+      expect(spoofer.title, isNot(trusted.title));
+      expect(spoofer.isUntrustedName, true);
+      expect(trusted.isUntrustedName, false);
+    });
+
+    test('revoked at either level reports isRevoked', () {
+      const revokedPerson = GroupMemberInfo(
+        identityUri: 'guest://alice',
+        displayName: '',
+        isGuest: true,
+        guestName: 'Alice',
+        guestStatus: 'revoked',
+        membershipStatus: 'active',
+      );
+      const revokedSeat = GroupMemberInfo(
+        identityUri: 'guest://bob',
+        displayName: '',
+        isGuest: true,
+        guestName: 'Bob',
+        guestStatus: 'active',
+        membershipStatus: 'revoked',
+      );
+
+      expect(revokedPerson.isRevoked, true);
+      expect(revokedSeat.isRevoked, true);
+    });
+  });
+
+  group('_MemberTile guest rendering (G6)', () {
+    late _MockClient client;
+    late _MockRepo repo;
+
+    setUp(() {
+      client = _MockClient();
+      repo = _MockRepo();
+      when(() => repo.save(any())).thenAnswer((_) async {});
+    });
+
+    testWidgets('an unaliased guest renders "guest: Alice" with the Guest '
+        'chip, styled untrusted', (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'guest://alice',
+            displayName: '',
+            role: MemberRole.member,
+            isGuest: true,
+            guestName: 'Alice',
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('guest: Alice'), findsOneWidget);
+      expect(find.text('Guest'), findsOneWidget);
+
+      final text = tester.widget<Text>(find.text('guest: Alice'));
+      expect(text.style?.color, SovereignColors.accentWarning);
+      expect(text.style?.fontStyle, FontStyle.italic);
+    });
+
+    testWidgets('an aliased guest renders "Bestie" with the chip but '
+        'trusted styling', (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'guest://alice',
+            displayName: '',
+            role: MemberRole.member,
+            isGuest: true,
+            guestName: 'Alice',
+            guestAlias: 'Bestie',
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bestie'), findsOneWidget);
+      // Still a guest, so the chip stays.
+      expect(find.text('Guest'), findsOneWidget);
+      expect(find.text('guest: Alice'), findsNothing);
+
+      final text = tester.widget<Text>(find.text('Bestie'));
+      expect(text.style?.fontStyle, FontStyle.normal);
+    });
+
+    testWidgets(
+        'a guest naming themselves the same as a real member does not '
+        'render identically', (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'guest://spoofer',
+            displayName: '',
+            role: MemberRole.member,
+            isGuest: true,
+            guestName: 'Chef',
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      // The real Chef renders as "Chef"; the guest impersonator renders as
+      // "guest: Chef" - never both as the bare "Chef" text.
+      expect(find.text('Chef'), findsOneWidget);
+      expect(find.text('guest: Chef'), findsOneWidget);
+    });
+
+    testWidgets('a revoked guest renders dimmed', (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'guest://alice',
+            displayName: '',
+            role: MemberRole.member,
+            isGuest: true,
+            guestName: 'Alice',
+            guestStatus: 'revoked',
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Revoked'), findsOneWidget);
+
+      final opacityFinder = find.ancestor(
+        of: find.text('guest: Alice'),
+        matching: find.byType(Opacity),
+      );
+      expect(opacityFinder, findsWidgets);
+      final opacity = tester.widget<Opacity>(opacityFinder.first);
+      expect(opacity.opacity, 0.55);
+    });
+
+    testWidgets('a trusted member renders unchanged (no chip, no dimming)',
+        (tester) async {
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [
+          GroupMemberInfo(
+            identityUri: 'chef@skworld.io',
+            displayName: 'Chef',
+            role: MemberRole.admin,
+          ),
+          GroupMemberInfo(
+            identityUri: 'lumina@skworld.io',
+            displayName: 'Lumina',
+            role: MemberRole.member,
+          ),
+        ],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Chef'), findsOneWidget);
+      expect(find.text('Lumina'), findsOneWidget);
+      expect(find.text('Guest'), findsNothing);
+      expect(find.text('Revoked'), findsNothing);
+
+      final chefText = tester.widget<Text>(find.text('Chef'));
+      expect(chefText.style?.fontStyle, isNot(FontStyle.italic));
     });
   });
 }

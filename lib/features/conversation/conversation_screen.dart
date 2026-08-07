@@ -2,10 +2,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:skchat_ui/skchat_ui.dart' show guestDisplayTitle;
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../models/attachment_ref.dart';
 import '../../models/chat_message.dart';
+import '../../models/conversation.dart';
 import '../../services/daemon_service.dart';
 import '../../services/peer_trust_store.dart';
 import '../../services/skcomms_client.dart';
@@ -85,6 +87,7 @@ class ConversationScreen extends ConsumerWidget {
           Expanded(
             child: _MessageList(
               messages: messages,
+              conversation: conversation,
               soulColor: soul,
               userSoulColor: SovereignColors.soulChef,
               myIdentity: me,
@@ -844,6 +847,7 @@ class _MenuRow extends StatelessWidget {
 class _MessageList extends StatefulWidget {
   const _MessageList({
     required this.messages,
+    required this.conversation,
     required this.soulColor,
     required this.userSoulColor,
     required this.myIdentity,
@@ -856,6 +860,10 @@ class _MessageList extends StatefulWidget {
   });
 
   final List<ChatMessage> messages;
+
+  /// guest-dm G6: the live thread, needed to gate per-sender attribution
+  /// (group only) and resolve names from the roster rather than the wire.
+  final Conversation conversation;
   final Color soulColor;
   final Color userSoulColor;
   final String myIdentity;
@@ -955,6 +963,11 @@ class _MessageListState extends State<_MessageList> {
   @override
   Widget build(BuildContext context) {
     final count = widget.messages.length;
+    // guest-dm G6: roster lookup keyed by identity, resolved ONCE per list
+    // build (not per row) and reused by resolveGroupSender below.
+    final membersByIdentity = <String, ConversationMember>{
+      for (final m in widget.conversation.members) m.identityUri: m,
+    };
     return ListView.builder(
       controller: _scrollController,
       // Bottom-anchored: newest message pins to the bottom of the viewport, so
@@ -966,6 +979,17 @@ class _MessageListState extends State<_MessageList> {
       itemBuilder: (context, index) {
         // reverse:true → walk the message list from newest to oldest.
         final message = widget.messages[count - 1 - index];
+
+        // guest-dm G6 slice 2: a room-level system notice (e.g. "promoted to
+        // a group") is not something anyone SAID -- render it as a centered
+        // event row and skip MessageBubble entirely, so it never picks up
+        // bubble chrome, an avatar gutter, or (via slice 1) a sender label.
+        if (message.contentType.toLowerCase() == 'system') {
+          return SystemEventRow(
+            text: displayTextFor(message.content) ?? message.content,
+          );
+        }
+
         // Resolve the replied-to message (for the quoted block) within window.
         ChatMessage? repliedTo;
         if (message.replyToId != null) {
@@ -974,12 +998,22 @@ class _MessageListState extends State<_MessageList> {
               .toList();
           if (matches.isNotEmpty) repliedTo = matches.first;
         }
+        // guest-dm G6 slice 1 (SECURITY): resolve attribution from the
+        // conversation ROSTER, never the wire `sender_name` -- a guest picks
+        // that field themselves, so trusting it in a gdm would let a guest
+        // send with sender_name "Chef" and pass as a real contact.
+        final resolvedSender = widget.conversation.isGroup
+            ? resolveGroupSender(message, widget.conversation, membersByIdentity)
+            : const ResolvedSender();
         return MessageBubble(
           message: message,
           soulColor: widget.soulColor,
           userSoulColor: widget.userSoulColor,
           myIdentity: widget.myIdentity,
           repliedTo: repliedTo,
+          showSenderName: widget.conversation.isGroup,
+          senderNameOverride: resolvedSender.name,
+          senderNameUntrusted: resolvedSender.untrusted,
           onReact: (emoji) => widget.onReact(message.id, emoji),
           onReply: () => widget.onReply(message),
           onEdit: (body) => widget.onEdit(message.id, body),
@@ -993,6 +1027,87 @@ class _MessageListState extends State<_MessageList> {
               : null,
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// guest-dm G6: per-message sender attribution (SECURITY-SENSITIVE)
+
+/// The resolved (name, trust) pair for a single message's sender label.
+/// A null [name] means "no override" -- MessageBubble falls back to its
+/// pre-G6 behavior (the wire `sender_name`), which only happens outside a
+/// guest-family thread where nobody untrusted can forge that field.
+class ResolvedSender {
+  const ResolvedSender({this.name, this.untrusted = false});
+
+  final String? name;
+  final bool untrusted;
+}
+
+/// Resolves who a group message is FROM using the conversation roster, never
+/// the wire `sender_name` -- that field is self-asserted by whoever sent the
+/// message, so in a gdm a guest could set it to "Chef" and impersonate a
+/// real contact. [message.sender] is the wire identity, matched against
+/// [membersByIdentity] (keyed by [ConversationMember.identityUri]); the
+/// matched member's alias-wins [ConversationMember.title] is what renders.
+///
+/// A sender absent from the roster (left the room, or the roster hasn't
+/// caught up yet) falls back per conversation family:
+///  - a guest-family thread ([Conversation.isGuestDm], covers a promoted
+///    gdm too) still must not trust the wire name, so it renders through the
+///    SAME anti-spoof rule the roster itself uses ([guestDisplayTitle]),
+///    untrusted, prefixed `guest:`.
+///  - an ordinary (non-guest) group has no untrusted party able to forge the
+///    field, so a null override here lets MessageBubble keep its existing
+///    `message.senderName` fallback.
+ResolvedSender resolveGroupSender(
+  ChatMessage message,
+  Conversation conversation,
+  Map<String, ConversationMember> membersByIdentity,
+) {
+  final member = membersByIdentity[message.sender];
+  if (member != null) {
+    return ResolvedSender(name: member.title, untrusted: member.isUntrustedName);
+  }
+  if (conversation.isGuestDm) {
+    return ResolvedSender(
+      name: guestDisplayTitle(null, message.senderName),
+      untrusted: true,
+    );
+  }
+  return const ResolvedSender();
+}
+
+// ---------------------------------------------------------------------------
+// guest-dm G6 slice 2: system-event row
+
+/// A room-level notice (`content_type: system`, e.g. "Ops room is now a
+/// group conversation.") rendered as a centered, full-width event row --
+/// no bubble, no avatar gutter, no sender label. Visually distinct from any
+/// participant's own bubble (guest or trusted) so a system notice can never
+/// be mistaken for something someone said.
+class SystemEventRow extends StatelessWidget {
+  const SystemEventRow({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 6),
+      child: Center(
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: SovereignColors.textTertiary,
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+            height: 1.3,
+          ),
+        ),
+      ),
     );
   }
 }

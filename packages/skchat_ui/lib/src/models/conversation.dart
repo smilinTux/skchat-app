@@ -1,6 +1,24 @@
 import 'package:flutter/material.dart';
 import '../theme/sovereign_colors.dart';
 
+/// The ONE anti-spoofing title rule for anything a guest is behind (guest-dm
+/// C3, generalized in G6).
+///
+/// The operator's private [alias] always wins and renders like a real contact
+/// name. Absent an alias, the guest's self-chosen [name] is shown prefixed with
+/// `guest:` and must be styled untrusted by the caller, so a guest naming
+/// themselves "Chef" cannot pass as a real contact. Never the raw group name.
+///
+/// One helper, three callers: the guest-DM row title, every member of a gdm
+/// roster, and per-message sender attribution in a gdm thread. If it forked,
+/// one of those surfaces would eventually render a spoofable name.
+String guestDisplayTitle(String? alias, String? name) {
+  final a = alias?.trim() ?? '';
+  if (a.isNotEmpty) return a;
+  final n = name?.trim() ?? '';
+  return 'guest: ${n.isNotEmpty ? n : 'guest'}';
+}
+
 /// One participant of a group conversation, carrying the identity plus the
 /// real capauth soul-fingerprint needed to anchor a per-member trust tier
 /// (and the folded aggregate group badge). Mirrors GroupMemberInfo's parse
@@ -11,6 +29,11 @@ class ConversationMember {
     required this.identityUri,
     required this.displayName,
     this.soulFingerprint,
+    this.isGuest = false,
+    this.guestName,
+    this.guestAlias,
+    this.guestStatus,
+    this.membershipStatus,
   });
 
   final String identityUri;
@@ -20,6 +43,40 @@ class ConversationMember {
   /// empty for a keyless member (keyless means no badge, never a fabricated key).
   final String? soulFingerprint;
 
+  // ── guest-dm G6: per-member guest identity in a gdm roster (G4 payload) ────
+  /// This member is an untrusted guest, not a capauth-trusted member.
+  final bool isGuest;
+
+  /// The guest's self-chosen (untrusted, self-asserted) name.
+  final String? guestName;
+
+  /// The operator's PRIVATE alias for this guest. Alias-wins, per member.
+  final String? guestAlias;
+
+  /// Person-level status (`active` | `revoked`): the guest was revoked
+  /// everywhere but is still seated here, so the row renders dimmed.
+  final String? guestStatus;
+
+  /// Per-group status (`active` | `revoked`). A per-group revoke normally
+  /// removes the seat outright, so this is the belt to guestStatus's braces.
+  final String? membershipStatus;
+
+  bool get hasGuestAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
+
+  /// Revoked at either level: dim the row, no live actions.
+  bool get isRevoked =>
+      guestStatus == 'revoked' || membershipStatus == 'revoked';
+
+  /// Alias-wins title for this member. Trusted members keep their real
+  /// display name; guests go through the shared anti-spoof rule.
+  String get title => isGuest
+      ? guestDisplayTitle(guestAlias, guestName ?? displayName)
+      : displayName;
+
+  /// True when this member's name is self-asserted and unaliased - the caller
+  /// must render it with untrusted styling.
+  bool get isUntrustedName => isGuest && !hasGuestAlias;
+
   factory ConversationMember.fromJson(Map<String, dynamic> json) {
     return ConversationMember(
       identityUri: json['identity_uri'] as String? ?? '',
@@ -27,6 +84,11 @@ class ConversationMember {
       // Server emits both the conversation-contract key and the peer alias.
       soulFingerprint: (json['soul_fingerprint'] as String?) ??
           (json['fingerprint'] as String?),
+      isGuest: json['guest'] as bool? ?? false,
+      guestName: json['guest_name'] as String?,
+      guestAlias: json['guest_alias'] as String?,
+      guestStatus: json['guest_status'] as String?,
+      membershipStatus: json['membership_status'] as String?,
     );
   }
 }
@@ -57,6 +119,7 @@ class Conversation {
     this.guestMuted = false,
     this.ringing = false,
     this.ringTs,
+    this.mode,
   });
 
   final String peerId;
@@ -110,6 +173,14 @@ class Conversation {
   /// handled ring is not re-surfaced.
   final double? ringTs;
 
+  /// guest-dm G6: the server's guest-family room mode, `dm` or `gdm`. A `gdm`
+  /// is a promoted guest DM: still guest-flavored (untrusted people are in it,
+  /// so it stays under the Guests filter) but group-shaped - several guests,
+  /// a roster, a member count, and per-message attribution.
+  final String? mode;
+
+  bool get isGdm => mode == 'gdm';
+
   /// True when the operator has set a private alias (alias-wins title).
   bool get hasGuestAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
 
@@ -122,13 +193,17 @@ class Conversation {
   /// The anti-spoofing title for a guest DM: the operator alias wins (rendered
   /// like a real contact), else the guest's self-name with a `guest:` prefix
   /// and untrusted styling. NEVER the raw group name.
-  String get guestTitle {
-    if (hasGuestAlias) return guestAlias!.trim();
-    final name = (guestName != null && guestName!.trim().isNotEmpty)
-        ? guestName!.trim()
-        : 'guest';
-    return 'guest: $name';
-  }
+  ///
+  /// A gdm holds several guests, so there is no single guest to title with -
+  /// the room is titled by its own name and the per-guest rule moves to the
+  /// roster and to message attribution (both via [guestDisplayTitle]).
+  String get guestTitle => isGdm
+      ? (displayName.trim().isNotEmpty ? displayName.trim() : 'Guest group')
+      : guestDisplayTitle(guestAlias, guestName);
+
+  /// The gdm room title is the group's own name and is operator-set, so it is
+  /// never spoofable the way a guest's self-name is.
+  bool get isUntrustedTitle => isGuestDm && !isGdm && !hasGuestAlias;
 
   /// Resolved soul-color, derives from fingerprint if [soulColor] is not set.
   Color get resolvedSoulColor {
@@ -172,6 +247,7 @@ class Conversation {
     bool? guestMuted,
     bool? ringing,
     double? ringTs,
+    String? mode,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -197,6 +273,7 @@ class Conversation {
       guestMuted: guestMuted ?? this.guestMuted,
       ringing: ringing ?? this.ringing,
       ringTs: ringTs ?? this.ringTs,
+      mode: mode ?? this.mode,
     );
   }
 
@@ -221,7 +298,12 @@ class Conversation {
                   ConversationMember.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
-      isGuestDm: json['guest_dm'] as bool? ?? false,
+      // A gdm is a promoted guest DM: the server stops emitting the flat
+      // `guest_dm` badge (there is no single guest to badge) and emits
+      // `mode: gdm` instead, so fold it in here - untrusted people are still
+      // in the room and every guest surface must keep catching it.
+      isGuestDm: (json['guest_dm'] as bool? ?? false) || json['mode'] == 'gdm',
+      mode: json['mode'] as String?,
       guestName: json['guest_name'] as String?,
       guestAlias: json['guest_alias'] as String?,
       guestStatus: json['guest_status'] as String?,

@@ -78,6 +78,52 @@ class GuestJoinResult {
   }
 }
 
+/// One member of the guest's own room, as the guest is allowed to see it
+/// (guest-dm G6). Mirrors the server's `_guest_visible_roster`: deliberately
+/// guest-safe, no operator alias, no status, no fingerprints - a per-group
+/// revoke simply drops the member from this list on the next poll.
+class GuestRoomMember {
+  const GuestRoomMember({
+    required this.identityUri,
+    required this.displayName,
+    required this.isGuest,
+    required this.isSelf,
+  });
+
+  final String identityUri;
+  final String displayName;
+
+  /// False for the ONE `guest: false` roster entry: the operator seat.
+  final bool isGuest;
+
+  /// True for the row matching the calling session's own guest identity.
+  final bool isSelf;
+
+  factory GuestRoomMember.fromJson(Map<String, dynamic> j) => GuestRoomMember(
+        identityUri: j['identity_uri'] as String? ?? '',
+        displayName: j['display_name'] as String? ?? '',
+        isGuest: j['guest'] as bool? ?? false,
+        isSelf: j['self'] as bool? ?? false,
+      );
+}
+
+/// The bound room's conversation, as returned by `GET /api/v1/guest/conversation`
+/// (guest-dm G6): the thread mode (`"dm"` while it is a private 1:1, `"gdm"`
+/// once the operator has promoted it to a group), the guest-visible roster,
+/// and the message history. `mode` is nullable because classic (non-dm)
+/// guest-group links never set `metadata.mode`.
+class GuestConversation {
+  const GuestConversation({
+    required this.mode,
+    required this.members,
+    required this.messages,
+  });
+
+  final String? mode;
+  final List<GuestRoomMember> members;
+  final List<Map<String, dynamic>> messages;
+}
+
 /// Drives the guest-group HTTP surface (`/api/v1/guest/*` + the operator
 /// invite mint). Every in-room call carries the guest session token as a bearer
 /// header; the server pins it to the bound group, so this service can never
@@ -166,12 +212,15 @@ class GuestGroupService {
   }
 
   /// Fetch the bound group's conversation (token-scoped, no group id needed).
-  Future<List<Map<String, dynamic>>> conversation(String sessionToken) async {
+  /// guest-dm G6: also surfaces `mode` + the guest-visible `members` roster,
+  /// so the room can tell a guest when their private DM becomes a group.
+  Future<GuestConversation> conversation(String sessionToken) async {
     final r = await _dio.get<Map<String, dynamic>>(
       '$_base/api/v1/guest/conversation',
       options: _bearer(sessionToken),
     );
-    final msgs = (r.data?['messages'] as List?)
+    final data = r.data ?? const {};
+    final msgs = (data['messages'] as List?)
             ?.whereType<Map>()
             .map((m) => m.cast<String, dynamic>())
             .toList() ??
@@ -189,7 +238,16 @@ class GuestGroupService {
         }
       }
     }
-    return msgs;
+    final members = (data['members'] as List?)
+            ?.whereType<Map>()
+            .map((m) => GuestRoomMember.fromJson(m.cast<String, dynamic>()))
+            .toList() ??
+        const <GuestRoomMember>[];
+    return GuestConversation(
+      mode: data['mode'] as String?,
+      members: members,
+      messages: msgs,
+    );
   }
 
   /// Send a SIGNED text message into the bound group. The signature is over the

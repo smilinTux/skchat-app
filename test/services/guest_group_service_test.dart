@@ -166,11 +166,64 @@ void main() {
         {"id": "b", "body": "2"},
       ],
     };
-    final msgs = await svc.conversation("S");
-    expect(msgs.length, 2);
+    final convo = await svc.conversation("S");
+    expect(convo.messages.length, 2);
     expect(adapter.requests.single.headers["Authorization"], "Bearer S");
     // No group id is ever sent — the server derives it from the token.
     expect(adapter.requests.single.uri.path, "/api/v1/guest/conversation");
+  });
+
+  test("conversation parses mode + the guest-visible roster (guest-dm G6)",
+      () async {
+    adapter.routes["/api/v1/guest/conversation"] = {
+      "group_id": "g1",
+      "mode": "gdm",
+      "members": [
+        {
+          "identity_uri": "guest:alice#deadbeef",
+          "display_name": "Alice",
+          "guest": true,
+          "self": true,
+        },
+        {
+          "identity_uri": "capauth:lumina@skworld.io",
+          "display_name": "Lumina",
+          "guest": false,
+          "self": false,
+        },
+        {
+          "identity_uri": "guest:bob#c0ffee",
+          "display_name": "Bob",
+          "guest": true,
+          "self": false,
+        },
+      ],
+      "messages": [
+        {"id": "a", "body": "1"},
+      ],
+    };
+    final convo = await svc.conversation("S");
+    expect(convo.mode, "gdm");
+    expect(convo.members.length, 3);
+    final self = convo.members.firstWhere((m) => m.isSelf);
+    expect(self.displayName, "Alice");
+    expect(self.isGuest, isTrue);
+    final host = convo.members.firstWhere((m) => !m.isGuest);
+    expect(host.displayName, "Lumina");
+    expect(host.isSelf, isFalse);
+    final otherGuest = convo.members.firstWhere((m) => m.isGuest && !m.isSelf);
+    expect(otherGuest.displayName, "Bob");
+  });
+
+  test("conversation defaults mode to null and members to empty when absent",
+      () async {
+    adapter.routes["/api/v1/guest/conversation"] = {
+      "group_id": "g1",
+      "messages": <Object?>[],
+    };
+    final convo = await svc.conversation("S");
+    expect(convo.mode, isNull);
+    expect(convo.members, isEmpty);
   });
 
   test("fileUrl builds the group-scoped download URL", () {

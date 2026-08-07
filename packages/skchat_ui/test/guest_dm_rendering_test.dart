@@ -51,6 +51,26 @@ List<Conversation> _mixed() {
 
 Widget _surface() => ChatsSurface(conversations: _mixed());
 
+// guest-dm G6: a gdm (promoted guest DM) is group-shaped - several guests, a
+// roster, a member count - but still holds untrusted people, so it must stay
+// guest-flavored (Guest chip, Guests filter) while its title is the
+// operator-set group name, never a guest's self-name.
+List<Conversation> _withGdm() => [
+      ..._mixed(),
+      Conversation(
+        peerId: 'g-gdm',
+        displayName: 'Fishing Trip Crew',
+        lastMessage: 'see you at the dock',
+        lastMessageTime: DateTime.now(),
+        isGroup: true,
+        isGuestDm: true,
+        mode: 'gdm',
+        memberCount: 3,
+      ),
+    ];
+
+Widget _surfaceWithGdm() => ChatsSurface(conversations: _withGdm());
+
 void main() {
   testWidgets("operator alias wins the title; the raw self-name is not shown",
       (tester) async {
@@ -110,5 +130,43 @@ void main() {
     expect(find.text('Lumina'), findsNothing);
     expect(find.text('Alex from the expo'), findsOneWidget);
     expect(find.text('guest: Chef'), findsOneWidget);
+  });
+
+  // ── guest-dm G6: gdm (promoted guest DM, group-shaped) ─────────────────────
+
+  testWidgets(
+      'a gdm shows its group name, a Guest chip, and the member count',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(home: _surfaceWithGdm()));
+    await tester.pump();
+
+    expect(find.text('Fishing Trip Crew'), findsOneWidget);
+    expect(find.text('Guest group, 3 members'), findsOneWidget);
+    // 3 pre-existing guest DMs + the gdm = 4 Guest chips.
+    expect(find.text('Guest'), findsNWidgets(4));
+    // The gdm's own title is the group name, never a per-guest `guest:` name
+    // (the 1:1 rows in _mixed() still legitimately render that prefix).
+    expect(find.text('guest: Fishing Trip Crew'), findsNothing);
+  });
+
+  testWidgets('a gdm title renders trusted, not the guest-DM untrusted style',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(home: _surfaceWithGdm()));
+    await tester.pump();
+
+    final titleText = tester.widget<Text>(find.text('Fishing Trip Crew'));
+    expect(titleText.style?.fontStyle, isNot(FontStyle.italic));
+    expect(titleText.style?.color, isNot(SovereignColors.accentWarning));
+  });
+
+  testWidgets('the Guests filter still catches a gdm', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: _surfaceWithGdm()));
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Guests'));
+    await tester.pump();
+
+    expect(find.text('Lumina'), findsNothing);
+    expect(find.text('Fishing Trip Crew'), findsOneWidget);
   });
 }

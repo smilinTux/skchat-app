@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:skchat_ui/skchat_ui.dart' show guestDisplayTitle;
 import '../../core/router/app_router.dart';
 import '../../core/chat_text.dart';
 import '../../core/theme/theme.dart';
@@ -24,6 +25,11 @@ class GroupMemberInfo {
     this.isOnline = false,
     this.soulColor,
     this.soulFingerprint,
+    this.isGuest = false,
+    this.guestName,
+    this.guestAlias,
+    this.guestStatus,
+    this.membershipStatus,
   });
 
   final String identityUri;
@@ -38,6 +44,44 @@ class GroupMemberInfo {
   /// or empty for a member with no known key (keyless -> no badge).
   final String? soulFingerprint;
 
+  // ── guest-dm G6: per-member guest identity in a gdm roster ─────────────────
+  // Mirrors ConversationMember (packages/skchat_ui/lib/src/models/conversation
+  // .dart) - a gdm holds several untrusted guests alongside trusted members,
+  // so the anti-spoof rule applies PER MEMBER here, not once for the room.
+  /// This member is an untrusted guest, not a capauth-trusted member.
+  final bool isGuest;
+
+  /// The guest's self-chosen (untrusted, self-asserted) name.
+  final String? guestName;
+
+  /// The operator's PRIVATE alias for this guest. Alias-wins, per member.
+  final String? guestAlias;
+
+  /// Person-level status (`active` | `revoked`): the guest was revoked
+  /// everywhere but is still seated here, so the row renders dimmed.
+  final String? guestStatus;
+
+  /// Per-group status (`active` | `revoked`). A per-group revoke normally
+  /// removes the seat outright, so this is the belt to guestStatus's braces.
+  final String? membershipStatus;
+
+  bool get hasGuestAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
+
+  /// Revoked at either level: dim the row, no live actions.
+  bool get isRevoked =>
+      guestStatus == 'revoked' || membershipStatus == 'revoked';
+
+  /// Alias-wins title for this member, via the ONE shared anti-spoof rule
+  /// (skchat_ui's [guestDisplayTitle]). Trusted members keep their real
+  /// display name.
+  String get title => isGuest
+      ? guestDisplayTitle(guestAlias, guestName ?? displayName)
+      : displayName;
+
+  /// True when this member's name is self-asserted and unaliased - the caller
+  /// must render it with untrusted styling.
+  bool get isUntrustedName => isGuest && !hasGuestAlias;
+
   /// Parse a member from the daemon's JSON response.
   factory GroupMemberInfo.fromJson(Map<String, dynamic> json) {
     return GroupMemberInfo(
@@ -49,6 +93,11 @@ class GroupMemberInfo {
       // Server emits both the conversation key and the peer alias; read either.
       soulFingerprint: (json['soul_fingerprint'] as String?) ??
           (json['fingerprint'] as String?),
+      isGuest: json['guest'] as bool? ?? false,
+      guestName: json['guest_name'] as String?,
+      guestAlias: json['guest_alias'] as String?,
+      guestStatus: json['guest_status'] as String?,
+      membershipStatus: json['membership_status'] as String?,
     );
   }
 
@@ -111,6 +160,11 @@ final groupMembersProvider =
       isOnline: member.isOnline,
       soulColor: soul,
       soulFingerprint: member.soulFingerprint,
+      isGuest: member.isGuest,
+      guestName: member.guestName,
+      guestAlias: member.guestAlias,
+      guestStatus: member.guestStatus,
+      membershipStatus: member.membershipStatus,
     );
   }).toList();
 });
@@ -1075,7 +1129,19 @@ class _MemberTile extends ConsumerWidget {
     final showBadge =
         tier == PeerTrustTier.red || tier == PeerTrustTier.amber;
 
-    return Padding(
+    // guest-dm G6: alias-wins per member, never the raw display name - a gdm
+    // roster mixes trusted members with untrusted guests, so the anti-spoof
+    // rule (mirrored in ConversationTile for the guest-DM row) must be applied
+    // here per-row too, or a guest naming themselves "Chef" would render
+    // identically to the real Chef member.
+    final title = member.title;
+    final untrustedName = member.isUntrustedName;
+    // Initial off the person, not off the `guest:` prefix - otherwise every
+    // unaliased guest in the room gets the same "G" avatar.
+    final initialSource =
+        untrustedName ? (member.guestName ?? member.displayName) : title;
+
+    final tile = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 3),
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1083,8 +1149,8 @@ class _MemberTile extends ConsumerWidget {
           children: [
             SoulAvatar(
               soulColor: soul,
-              initials: member.displayName.isNotEmpty
-                  ? member.displayName[0].toUpperCase()
+              initials: initialSource.isNotEmpty
+                  ? initialSource[0].toUpperCase()
                   : '?',
               isAgent: member.participantType == ParticipantType.agent,
               isOnline: member.isOnline,
@@ -1099,13 +1165,27 @@ class _MemberTile extends ConsumerWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          member.displayName,
-                          style: tt.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w600),
+                          title,
+                          style: tt.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: untrustedName
+                                ? SovereignColors.accentWarning
+                                : null,
+                            fontStyle: untrustedName
+                                ? FontStyle.italic
+                                : FontStyle.normal,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      // An aliased guest still gets the chip (they ARE a guest)
+                      // but the name above keeps trusted styling - the operator
+                      // set the alias, so it can't be a spoof.
+                      if (member.isGuest) ...[
+                        const SizedBox(width: 6),
+                        const _GuestChip(),
+                      ],
                       if (showBadge) ...[
                         const SizedBox(width: 6),
                         TrustBadge(
@@ -1118,7 +1198,15 @@ class _MemberTile extends ConsumerWidget {
                     children: [
                       _RoleBadge(role: member.role),
                       const SizedBox(width: 6),
-                      if (member.participantType == ParticipantType.agent)
+                      if (member.isRevoked)
+                        Text(
+                          'Revoked',
+                          style: tt.labelSmall?.copyWith(
+                            color: SovereignColors.textTertiary,
+                            fontSize: 10,
+                          ),
+                        )
+                      else if (member.participantType == ParticipantType.agent)
                         Text(
                           'Agent',
                           style: tt.labelSmall?.copyWith(
@@ -1189,6 +1277,9 @@ class _MemberTile extends ConsumerWidget {
         ),
       ),
     );
+    // A revoked guest is dimmed but still visible (same idiom as a revoked
+    // guest DM row in the chats list), never silently dropped from the roster.
+    return member.isRevoked ? Opacity(opacity: 0.55, child: tile) : tile;
   }
 }
 
@@ -1216,6 +1307,35 @@ class _RoleBadge extends StatelessWidget {
         label,
         style: TextStyle(
           color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// guest-dm G6: a small "Guest" chip marking an untrusted member of a gdm
+/// roster. Mirrors ConversationTile's `_GuestChip`
+/// (lib/features/chats/widgets/conversation_tile.dart) - same idiom, kept as
+/// a local copy because it is a private widget in that file.
+class _GuestChip extends StatelessWidget {
+  const _GuestChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: SovereignColors.accentWarning.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+            color: SovereignColors.accentWarning.withValues(alpha: 0.4)),
+      ),
+      child: const Text(
+        'Guest',
+        style: TextStyle(
+          color: SovereignColors.accentWarning,
           fontSize: 10,
           fontWeight: FontWeight.w600,
         ),
