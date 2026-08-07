@@ -14,6 +14,10 @@ import 'livekit_call_screen.dart';
 /// `/call/incoming` for member calls). It dedupes by `peerId:ring_ts` so a ring
 /// the operator already answered or dismissed never re-appears, and a revoked/
 /// expired contact never rings.
+///
+/// guest-dm G7: `c.isGuestDm` folds in a promoted gdm too ([Conversation]'s
+/// `fromJson`), so this filter needs no change to keep catching a gdm ring -
+/// only the banner copy (which caller to name) differs by [Conversation.isGdm].
 class GuestRingNotifier extends Notifier<Conversation?> {
   final Set<String> _handled = {};
 
@@ -46,8 +50,42 @@ final guestRingProvider =
 /// renders nothing when no guest is ringing, else an Answer / Dismiss strip
 /// with the alias-wins identity (never the raw group name or an un-prefixed
 /// guest self-name).
+///
+/// guest-dm G7: a gdm ring never borrows the room's own title as if it were a
+/// person - `guestTitle` on a gdm is the room name, not a caller. The banner
+/// names the server-resolved caller ([Conversation.ringingCaller]) when the
+/// payload has one; when it does not (older server, or the server named
+/// nobody) it degrades to naming only the room.
 class GuestRingBanner extends ConsumerWidget {
   const GuestRingBanner({super.key});
+
+  /// Builds the banner's message as spans so a gdm caller name can carry the
+  /// same untrusted (warning + italic) styling every other guest surface
+  /// uses for an unaliased self-name, without disturbing the plain 1:1 copy.
+  static TextSpan _message(Conversation c) {
+    if (!c.isGdm) {
+      return TextSpan(text: 'Incoming call from ${c.guestTitle}');
+    }
+    final caller = c.ringingCaller;
+    if (caller == null) {
+      return TextSpan(text: 'Incoming group call in ${c.guestTitle}');
+    }
+    return TextSpan(
+      children: [
+        const TextSpan(text: 'Incoming group call from '),
+        TextSpan(
+          text: caller.title,
+          style: caller.isUntrustedName
+              ? const TextStyle(
+                  color: SovereignColors.accentWarning,
+                  fontStyle: FontStyle.italic,
+                )
+              : null,
+        ),
+        TextSpan(text: ' in ${c.guestTitle}'),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -65,7 +103,10 @@ class GuestRingBanner extends ConsumerWidget {
               const Icon(Icons.call_received_rounded),
               const SizedBox(width: 10),
               Expanded(
-                child: Text('Incoming call from ${ringing.guestTitle}'),
+                child: Text.rich(
+                  _message(ringing),
+                  style: DefaultTextStyle.of(context).style,
+                ),
               ),
               TextButton(
                 key: const Key('guest-ring-dismiss'),
@@ -85,9 +126,15 @@ class GuestRingBanner extends ConsumerWidget {
     );
   }
 
-  /// Answer joins the DM group's call room via the existing group-call join path
-  /// (never re-rings anyone), then opens the call screen. The ring is dismissed
-  /// either way so it does not linger.
+  /// Answer joins the room's call via the existing group-call join path
+  /// (never re-rings anyone), then opens the call screen. The ring is
+  /// dismissed either way so it does not linger.
+  ///
+  /// guest-dm G7: no branch on `c.isGdm` is needed here - a 1:1 guest DM and a
+  /// promoted gdm are both a "group" server-side (`c.peerId` is a group id
+  /// either way), so [GroupCallService.joinCall] already lands a gdm Answer in
+  /// the SAME derived room every other member/guest joins, with no separate
+  /// "1:1 leg" to fork from.
   Future<void> _answer(
     BuildContext context, WidgetRef ref, Conversation c) async {
     final notifier = ref.read(guestRingProvider.notifier);

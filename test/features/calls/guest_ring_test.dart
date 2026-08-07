@@ -22,6 +22,8 @@ Conversation _c({
   String? alias,
   String guestName = 'Mallory',
   String? status,
+  String? mode,
+  List<GuestRinger> ringers = const [],
 }) =>
     Conversation(
       peerId: peerId,
@@ -35,6 +37,8 @@ Conversation _c({
       guestStatus: status,
       ringing: ringing,
       ringTs: ringTs,
+      mode: mode,
+      ringers: ringers,
     );
 
 ProviderContainer _container(List<Conversation> convos) {
@@ -117,5 +121,111 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Incoming call from guest: Chef'), findsOneWidget);
+  });
+
+  // ── guest-dm G7: gdm ring surfacing + honest naming ────────────────────────
+
+  test(
+      'a ringing gdm surfaces via the folded isGuestDm even with no guest_dm '
+      'flag (mode=gdm alone, straight off fromJson)', () {
+    final gdm = Conversation.fromJson(const {
+      'peer_id': 'g-gdm',
+      'display_name': 'Ops room',
+      'mode': 'gdm',
+      'ringing': true,
+      'ring_ts': 1000.0,
+    });
+    expect(gdm.isGuestDm, isTrue); // folded, not from a `guest_dm` flag
+    final c = _container([gdm]);
+    final ringing = c.read(guestRingProvider);
+    expect(ringing?.peerId, 'g-gdm');
+    expect(ringing?.isGdm, isTrue);
+  });
+
+  test('dismiss dedupes a gdm ring by peerId:ring_ts same as a 1:1', () {
+    final c = _container([_c(peerId: 'g-gdm', mode: 'gdm')]);
+    final ringing = c.read(guestRingProvider);
+    expect(ringing, isNotNull);
+    c.read(guestRingProvider.notifier).dismiss(ringing!);
+    expect(c.read(guestRingProvider), isNull);
+  });
+
+  testWidgets(
+      'a gdm ring with a server-resolved caller names the caller AND the '
+      'room, distinct copy from the 1:1 banner', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          chatsProvider.overrideWith(() => FakeChatsNotifier([
+                _c(
+                  peerId: 'g-gdm',
+                  mode: 'gdm',
+                  ringers: const [
+                    GuestRinger(
+                      guestId: 'guest:bob',
+                      guestName: 'Bob',
+                      guestAlias: 'Work Bob',
+                      ringTs: 1000,
+                    ),
+                  ],
+                ),
+              ])),
+        ],
+        child: const MaterialApp(home: Scaffold(body: GuestRingBanner())),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.text('Incoming group call from Work Bob in raw-group-name'),
+      findsOneWidget,
+    );
+    // Never the 1:1 phrasing for a gdm.
+    expect(find.textContaining('Incoming call from'), findsNothing);
+  });
+
+  testWidgets(
+      'a gdm caller with no alias renders guest: <name> (anti-spoof, same '
+      'rule as every other guest surface)', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          chatsProvider.overrideWith(() => FakeChatsNotifier([
+                _c(
+                  peerId: 'g-gdm',
+                  mode: 'gdm',
+                  ringers: const [
+                    GuestRinger(guestId: 'guest:bob', guestName: 'Bob', ringTs: 1000),
+                  ],
+                ),
+              ])),
+        ],
+        child: const MaterialApp(home: Scaffold(body: GuestRingBanner())),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.text('Incoming group call from guest: Bob in raw-group-name'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'a gdm ring with NO server-resolved caller (older server, or nobody '
+      'named) never borrows the room title as a person - names only the room',
+      (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          chatsProvider.overrideWith(
+              () => FakeChatsNotifier([_c(peerId: 'g-gdm', mode: 'gdm')])),
+        ],
+        child: const MaterialApp(home: Scaffold(body: GuestRingBanner())),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Incoming group call in raw-group-name'), findsOneWidget);
+    // No fabricated "from" someone - the room name is never presented as a
+    // caller's identity.
+    expect(find.textContaining('Incoming group call from'), findsNothing);
   });
 }
