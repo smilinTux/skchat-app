@@ -125,4 +125,42 @@ void main() {
       );
     });
   });
+
+  group('GuestRinger (G7)', () {
+    Conversation parse(Map<String, dynamic> extra) =>
+        Conversation.fromJson(<String, dynamic>{
+          'peer_id': 'g1',
+          'display_name': 'Ops room',
+          'last_message': '',
+          'mode': 'gdm',
+          ...extra,
+        });
+
+    test('a quiet room names nobody', () {
+      expect(parse({}).ringers, isEmpty);
+      expect(parse({}).ringingCaller, isNull);
+    });
+
+    test('the caller is named alias-wins, newest first', () {
+      final c = parse({
+        'ringing': true,
+        'ring_ts': 200.0,
+        'ringers': [
+          {'guest_id': 'g:bob', 'guest_name': 'Bob', 'guest_alias': 'Work Bob', 'ring_ts': 200.0},
+          {'guest_id': 'g:alice', 'guest_name': 'Alice', 'ring_ts': 100.0},
+        ],
+      });
+      expect(c.ringers.length, 2);
+      expect(c.ringingCaller!.title, 'Work Bob');
+      expect(c.ringingCaller!.isUntrustedName, isFalse);
+      expect(c.ringers[1].title, 'guest: Alice');
+      expect(c.ringers[1].isUntrustedName, isTrue);
+    });
+
+    test('an unnamed ring is never given the room name as a person', () {
+      final c = parse({'ringing': true, 'ring_ts': 5.0});
+      expect(c.ringing, isTrue);
+      expect(c.ringingCaller, isNull);
+    });
+  });
 }

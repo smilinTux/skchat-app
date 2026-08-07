@@ -19,6 +19,43 @@ String guestDisplayTitle(String? alias, String? name) {
   return 'guest: ${n.isNotEmpty ? n : 'guest'}';
 }
 
+/// guest-dm G7: one guest with a live call ring in a promoted room.
+///
+/// A 1:1 guest DM has exactly one guest, so its ring needs no name. A gdm has
+/// several, so the operator cannot answer without knowing who is calling. The
+/// identity here is server-resolved from the operator's own contact row, never
+/// from anything the guest supplies, so it goes through the same alias-wins
+/// rule as every other guest surface.
+class GuestRinger {
+  const GuestRinger({
+    required this.guestId,
+    required this.guestName,
+    this.guestAlias,
+    this.ringTs,
+  });
+
+  final String guestId;
+  final String guestName;
+  final String? guestAlias;
+  final double? ringTs;
+
+  bool get hasAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
+
+  String get title => guestDisplayTitle(guestAlias, guestName);
+
+  /// The caller's name is self-asserted and unaliased: style it untrusted.
+  bool get isUntrustedName => !hasAlias;
+
+  factory GuestRinger.fromJson(Map<String, dynamic> json) {
+    return GuestRinger(
+      guestId: json['guest_id'] as String? ?? '',
+      guestName: json['guest_name'] as String? ?? '',
+      guestAlias: json['guest_alias'] as String?,
+      ringTs: (json['ring_ts'] as num?)?.toDouble(),
+    );
+  }
+}
+
 /// One participant of a group conversation, carrying the identity plus the
 /// real capauth soul-fingerprint needed to anchor a per-member trust tier
 /// (and the folded aggregate group badge). Mirrors GroupMemberInfo's parse
@@ -120,6 +157,7 @@ class Conversation {
     this.ringing = false,
     this.ringTs,
     this.mode,
+    this.ringers = const [],
   });
 
   final String peerId;
@@ -180,6 +218,15 @@ class Conversation {
   final String? mode;
 
   bool get isGdm => mode == 'gdm';
+
+  /// guest-dm G7: guests currently ringing this room, newest first. Empty for a
+  /// 1:1 guest DM, where [ringing] alone already identifies the caller.
+  final List<GuestRinger> ringers;
+
+  /// Who to name on an incoming gdm ring, or null when the room is not a gdm
+  /// or the server named nobody. Never guessed client-side: an unnamed ring
+  /// stays unnamed rather than borrowing the room's title as a person.
+  GuestRinger? get ringingCaller => ringers.isEmpty ? null : ringers.first;
 
   /// True when the operator has set a private alias (alias-wins title).
   bool get hasGuestAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
@@ -248,6 +295,7 @@ class Conversation {
     bool? ringing,
     double? ringTs,
     String? mode,
+    List<GuestRinger>? ringers,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -274,6 +322,7 @@ class Conversation {
       ringing: ringing ?? this.ringing,
       ringTs: ringTs ?? this.ringTs,
       mode: mode ?? this.mode,
+      ringers: ringers ?? this.ringers,
     );
   }
 
@@ -310,6 +359,11 @@ class Conversation {
       guestMuted: json['muted'] as bool? ?? false,
       ringing: json['ringing'] as bool? ?? false,
       ringTs: (json['ring_ts'] as num?)?.toDouble(),
+      ringers: (json['ringers'] as List<dynamic>?)
+              ?.whereType<Map>()
+              .map((e) => GuestRinger.fromJson(e.cast<String, dynamic>()))
+              .toList() ??
+          const [],
     );
   }
 }

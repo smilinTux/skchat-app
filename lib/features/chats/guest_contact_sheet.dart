@@ -9,10 +9,20 @@ import '../../services/guest_dm_contacts_service.dart';
 /// (guest-dm C4): rename the private alias, set/clear expiry, mute (stops the
 /// call ring, S6), and Revoke access. [onChanged] fires after any mutation so
 /// the caller can refresh the S4-backed list/tile.
+///
+/// [groupId] is the guest-dm G7 addition: pass it when opening the sheet from
+/// a gdm roster member row (never from a 1:1 guest DM) and the sheet offers a
+/// second, less severe action - "Remove from this group" - alongside the
+/// person-level Revoke access, and labels alias/mute as person-level so the
+/// operator does not mistake either for a per-room setting.
+/// [groupMembershipRevoked] lets the caller pre-disable that action when the
+/// roster already shows this member's seat as revoked.
 Future<void> showGuestContactSheet(
   BuildContext context, {
   required GuestContact contact,
   VoidCallback? onChanged,
+  String? groupId,
+  bool groupMembershipRevoked = false,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -21,15 +31,30 @@ Future<void> showGuestContactSheet(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
-    builder: (_) => _GuestContactSheetBody(contact: contact, onChanged: onChanged),
+    builder: (_) => _GuestContactSheetBody(
+      contact: contact,
+      onChanged: onChanged,
+      groupId: groupId,
+      groupMembershipRevoked: groupMembershipRevoked,
+    ),
   );
 }
 
 class _GuestContactSheetBody extends ConsumerStatefulWidget {
-  const _GuestContactSheetBody({required this.contact, this.onChanged});
+  const _GuestContactSheetBody({
+    required this.contact,
+    this.onChanged,
+    this.groupId,
+    this.groupMembershipRevoked = false,
+  });
 
   final GuestContact contact;
   final VoidCallback? onChanged;
+
+  /// Non-null when the sheet was opened from a gdm roster member row -
+  /// enables the per-group "Remove from this group" action.
+  final String? groupId;
+  final bool groupMembershipRevoked;
 
   @override
   ConsumerState<_GuestContactSheetBody> createState() =>
@@ -41,6 +66,7 @@ class _GuestContactSheetBodyState
   late final TextEditingController _aliasCtl =
       TextEditingController(text: widget.contact.alias ?? '');
   late GuestContact _contact = widget.contact;
+  late bool _groupMembershipRevoked = widget.groupMembershipRevoked;
   bool _busy = false;
   String? _error;
 
@@ -108,13 +134,23 @@ class _GuestContactSheetBodyState
       });
 
   Future<void> _revoke() async {
+    // Opened from a group roster: this button is the person-level, EVERYTHING
+    // action, so the copy must say so plainly - "Remove from this group"
+    // below is the scoped one, and an operator must not be able to confuse
+    // the two. Opened from a 1:1 guest DM (no group context): unchanged.
+    final inGroup = widget.groupId != null;
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
         title: const Text('Revoke access?'),
         content: Text(
-          '${_contact.title} will lose access to this chat and the invite link '
-          'will stop working. This cannot be undone from here.',
+          inGroup
+              ? '${_contact.title} will lose access to every conversation '
+                  'with you, not just this group, and the invite link will '
+                  'stop working. This cannot be undone from here.'
+              : '${_contact.title} will lose access to this chat and the '
+                  'invite link will stop working. This cannot be undone '
+                  'from here.',
         ),
         actions: [
           TextButton(
@@ -132,6 +168,46 @@ class _GuestContactSheetBodyState
     );
     if (ok == true) {
       await _run(() => _svc.revoke(_contact.fp), close: true);
+    }
+  }
+
+  /// guest-dm G7: per-group revoke, offered only when the sheet was opened
+  /// from a gdm roster member ([widget.groupId] non-null). Deliberately
+  /// worded against [_revoke]'s dialog above so the two cannot be confused:
+  /// this one names the ONE group and says other conversations survive; that
+  /// one says every conversation ends.
+  Future<void> _removeFromGroup() async {
+    final groupId = widget.groupId;
+    if (groupId == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Remove from this group?'),
+        content: Text(
+          '${_contact.title} will lose their seat in this group only. Any '
+          'other conversations you have with this person keep working. This '
+          'cannot be undone from here.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: SovereignColors.accentWarning),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _run(
+        () => _svc.revokeGroupMembership(_contact.fp, groupId),
+        close: true,
+      );
+      _groupMembershipRevoked = true;
     }
   }
 
@@ -166,6 +242,15 @@ class _GuestContactSheetBodyState
                           color: SovereignColors.textTertiary, fontSize: 12)),
               ],
             ),
+            if (widget.groupId != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Alias and mute apply to this person everywhere, not just '
+                'this group.',
+                style: tt.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary),
+              ),
+            ],
             const SizedBox(height: 16),
             TextField(
               controller: _aliasCtl,
@@ -226,6 +311,22 @@ class _GuestContactSheetBodyState
                       color: SovereignColors.accentDanger, fontSize: 13)),
             ],
             const SizedBox(height: 12),
+            // guest-dm G7: the scoped action lives above the person-level one
+            // and uses warning (not danger) styling - it removes ONE seat,
+            // not the whole relationship, so it must not read as equally
+            // severe. Only offered when opened from a group roster member.
+            if (widget.groupId != null) ...[
+              OutlinedButton.icon(
+                onPressed: _busy || _groupMembershipRevoked
+                    ? null
+                    : _removeFromGroup,
+                icon: const Icon(Icons.group_remove_outlined,
+                    color: SovereignColors.accentWarning),
+                label: const Text('Remove from this group',
+                    style: TextStyle(color: SovereignColors.accentWarning)),
+              ),
+              const SizedBox(height: 8),
+            ],
             OutlinedButton.icon(
               onPressed: _busy || _contact.isRevoked ? null : _revoke,
               icon: const Icon(Icons.block, color: SovereignColors.accentDanger),

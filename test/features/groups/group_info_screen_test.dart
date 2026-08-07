@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +13,7 @@ import 'package:skchat/models/conversation.dart';
 import 'package:skchat/services/daemon_service.dart';
 import 'package:skchat/services/skcomms_client.dart';
 import 'package:skchat/services/peer_trust_store.dart';
+import 'package:skchat/services/guest_dm_contacts_service.dart';
 import 'package:skchat/features/identity/widgets/trust_badge.dart';
 import 'package:skchat/core/theme/sovereign_colors.dart';
 
@@ -31,6 +35,39 @@ class _MemTrustStore implements PeerTrustStore {
 class _MockClient extends Mock implements SKCommsClient {}
 
 class _MockRepo extends Mock implements ConversationRepository {}
+
+/// guest-dm G7: canned Dio adapter for GuestDmContactsService, wired into
+/// _openGuestContactSheet's listContacts() + revoke calls. Mirrors the
+/// pattern in test/services/guest_invite_service_test.dart.
+class _RecordingAdapter implements HttpClientAdapter {
+  _RecordingAdapter({this.contacts = const []});
+  final List<Map<String, dynamic>> contacts;
+  final List<RequestOptions> requests = [];
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options, Stream<List<int>>? rs,
+      Future<void>? cf) async {
+    requests.add(options);
+    if (options.method == 'GET' &&
+        options.path.endsWith('/guest-dm/contacts')) {
+      return ResponseBody.fromString(
+          jsonEncode({'contacts': contacts}), 200,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          });
+    }
+    return ResponseBody.fromString(jsonEncode(const {}), 200, headers: {
+      Headers.contentTypeHeader: [Headers.jsonContentType],
+    });
+  }
+}
+
+Map<String, dynamic> _body(Object? data) => data is String
+    ? jsonDecode(data) as Map<String, dynamic>
+    : (data as Map).cast<String, dynamic>();
 
 /// GroupsNotifier seeded with one group so the info screen finds it.
 class _FakeGroupsNotifier extends GroupsNotifier {
@@ -704,6 +741,164 @@ void main() {
 
       final chefText = tester.widget<Text>(find.text('Chef'));
       expect(chefText.style?.fontStyle, isNot(FontStyle.italic));
+    });
+  });
+
+  group('Per-member contact sheet (guest-dm G7)', () {
+    late _MockClient client;
+    late _MockRepo repo;
+
+    setUp(() {
+      client = _MockClient();
+      repo = _MockRepo();
+      when(() => repo.save(any())).thenAnswer((_) async {});
+    });
+
+    const guest = GroupMemberInfo(
+      identityUri: 'guest://alice#FP-ALICE',
+      displayName: '',
+      role: MemberRole.member,
+      isGuest: true,
+      guestName: 'Alice',
+    );
+    const trusted = GroupMemberInfo(
+      identityUri: 'chef@skworld.io',
+      displayName: 'Chef',
+      role: MemberRole.admin,
+    );
+
+    testWidgets('tapping a guest member row opens the C4 contact sheet',
+        (tester) async {
+      final adapter = _RecordingAdapter(contacts: const [
+        {'fp': 'FP-ALICE', 'guest_name': 'Alice', 'group_id': 'g-1'},
+      ]);
+      final svc = GuestDmContactsService(
+          dio: Dio()..httpClientAdapter = adapter,
+          webuiBaseUrl: 'https://h.test');
+
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [trusted, guest],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+          guestDmContactsServiceProvider.overrideWithValue(svc),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('guest: Alice'));
+      await tester.pumpAndSettle();
+
+      // The sheet is up, opened with a group context: alias field present
+      // plus the per-group note and the scoped action.
+      expect(find.text('Private alias'), findsOneWidget);
+      expect(
+          find.textContaining('apply to this person everywhere'),
+          findsOneWidget);
+      expect(find.text('Remove from this group'), findsOneWidget);
+
+      // fp was derived from identity_uri the same way the server does.
+      final getReq = adapter.requests
+          .firstWhere((r) => r.path.endsWith('/guest-dm/contacts'));
+      expect(getReq.method, 'GET');
+    });
+
+    testWidgets('long-pressing a guest member row also opens the sheet',
+        (tester) async {
+      final adapter = _RecordingAdapter();
+      final svc = GuestDmContactsService(
+          dio: Dio()..httpClientAdapter = adapter,
+          webuiBaseUrl: 'https://h.test');
+
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [trusted, guest],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+          guestDmContactsServiceProvider.overrideWithValue(svc),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.text('guest: Alice'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Private alias'), findsOneWidget);
+    });
+
+    testWidgets('tapping a trusted member row does NOT open the sheet',
+        (tester) async {
+      final adapter = _RecordingAdapter();
+      final svc = GuestDmContactsService(
+          dio: Dio()..httpClientAdapter = adapter,
+          webuiBaseUrl: 'https://h.test');
+
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [trusted, guest],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+          guestDmContactsServiceProvider.overrideWithValue(svc),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Chef'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Private alias'), findsNothing);
+      expect(adapter.requests, isEmpty);
+    });
+
+    testWidgets(
+        'a successful per-group revoke refreshes the roster immediately '
+        '(no waiting on a poll)', (tester) async {
+      final adapter = _RecordingAdapter(contacts: const [
+        {'fp': 'FP-ALICE', 'guest_name': 'Alice', 'group_id': 'g-1'},
+      ]);
+      final svc = GuestDmContactsService(
+          dio: Dio()..httpClientAdapter = adapter,
+          webuiBaseUrl: 'https://h.test');
+
+      var rebuilds = 0;
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: const [trusted, guest],
+        extraOverrides: [
+          peerTrustResolverProvider
+              .overrideWithValue(PeerTrustResolver(_MemTrustStore())),
+          guestDmContactsServiceProvider.overrideWithValue(svc),
+          groupMembersProvider('g-1').overrideWith((ref) async {
+            rebuilds++;
+            return const [trusted, guest];
+          }),
+        ],
+      ));
+      await tester.pumpAndSettle();
+      final rebuildsAfterLoad = rebuilds;
+
+      await tester.tap(find.text('guest: Alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove from this group'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+
+      // ref.invalidate(groupMembersProvider(groupId)) reruns the override,
+      // proving the roster was refreshed on the spot rather than left stale
+      // until the next poll.
+      expect(rebuilds, greaterThan(rebuildsAfterLoad));
+
+      final postReq = adapter.requests.firstWhere((r) => r.method == 'POST');
+      expect(postReq.uri.path, '/api/v1/guest-dm/contacts/FP-ALICE/revoke');
+      expect(_body(postReq.data)['group_id'], 'g-1');
     });
   });
 }
