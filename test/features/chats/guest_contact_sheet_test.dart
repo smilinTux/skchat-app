@@ -37,7 +37,6 @@ const _contact = GuestContact(
 
 Widget _harness(
   _RecordingAdapter a, {
-  int changes = 0,
   String? groupId,
   bool groupMembershipRevoked = false,
   VoidCallback? onChanged,
