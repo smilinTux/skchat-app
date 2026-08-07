@@ -29,6 +29,8 @@ class MessageBubble extends StatefulWidget {
     required this.soulColor,
     this.userSoulColor = SovereignColors.soulChef,
     this.showSenderName = false,
+    this.senderNameOverride,
+    this.senderNameUntrusted = false,
     this.repliedTo,
     this.myIdentity = 'me',
     this.onReply,
@@ -48,6 +50,21 @@ class MessageBubble extends StatefulWidget {
 
   /// Show sender name above bubble (group chats).
   final bool showSenderName;
+
+  /// guest-dm G6: the ROSTER-resolved sender name to render instead of
+  /// [ChatMessage.senderName]. Null keeps the pre-G6 fallback (the wire
+  /// `sender_name`), which is fine outside a guest-family thread -- an
+  /// ordinary group has no untrusted party able to forge it. A gdm caller
+  /// MUST always resolve this from the conversation roster and pass it
+  /// explicitly (see conversation_screen.dart's resolveGroupSender); the
+  /// wire value is guest-supplied and would otherwise let a guest set
+  /// `sender_name` to "Chef" and impersonate a real contact.
+  final String? senderNameOverride;
+
+  /// Style [senderNameOverride] untrusted (warning color + italic), mirroring
+  /// how an unaliased guest title renders everywhere else (ConversationTile,
+  /// group roster). Ignored when [senderNameOverride] is null.
+  final bool senderNameUntrusted;
 
   /// The resolved message this one replies to (for the quoted block), or null.
   final ChatMessage? repliedTo;
@@ -223,11 +240,18 @@ class _MessageBubbleState extends State<MessageBubble>
                       Padding(
                         padding: const EdgeInsets.only(left: 4, bottom: 2),
                         child: Text(
-                          widget.message.senderName ?? 'Unknown',
+                          widget.senderNameOverride ??
+                              widget.message.senderName ??
+                              'Unknown',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: widget.soulColor,
+                            fontStyle: widget.senderNameUntrusted
+                                ? FontStyle.italic
+                                : FontStyle.normal,
+                            color: widget.senderNameUntrusted
+                                ? SovereignColors.accentWarning
+                                : widget.soulColor,
                           ),
                         ),
                       ),
