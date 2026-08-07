@@ -24,6 +24,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # CR-6.1 / reconciled spec 3.2 step 4, gate (b): the import boundary.
+  # Pure bash (no Flutter toolchain), so it gives fast feedback and cannot be
+  # masked by a resolution failure. Proves skchat_ui imports ONLY
+  # skworld_module_api + flutter/dart core, and the standalone runner never
+  # imports the app shell package (package:skchat).
+  import-gate:
+    name: import gates (skchat_ui boundary, standalone zero-shell)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout skworld-app
+        uses: actions/checkout@v4
+      - name: skchat_ui imports only skworld_module_api
+        run: bash packages/skchat_ui/tool/import_gate.sh
+      - name: skchat_standalone has zero shell imports
+        run: bash apps/skchat_standalone/tool/standalone_import_gate.sh
+
   flutter:
     name: analyze, test, build web
     runs-on: ubuntu-latest
@@ -97,6 +114,20 @@ jobs:
         env:
           SK_PQC_LIBOQS: ${{ github.workspace }}/liboqs-install/lib/liboqs.so
         run: flutter test
+
+      # CR-6.1 / reconciled spec 3.2 step 4, gate (b) as a runnable test: the
+      # skchat_ui package tests include import_gate_test.dart (the boundary as
+      # a `flutter test` assertion) plus the module/surface tests. Workspace
+      # members are not run by the root `flutter test`, so run them explicitly.
+      - name: skchat_ui package tests (import gate + module)
+        run: flutter test
+        working-directory: skchat-app/packages/skchat_ui
+
+      # CR-6.1 / reconciled spec 3.2 step 4, gate (a): the standalone runner
+      # boots headless and the hosted module runs with `shell == null`.
+      - name: standalone boot gate (shell == null)
+        run: flutter test
+        working-directory: skchat-app/apps/skchat_standalone
 
       - name: flutter build web
         # base href must match the production serve path (/app/ on the Funnel), or
