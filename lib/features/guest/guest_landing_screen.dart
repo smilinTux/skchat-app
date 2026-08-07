@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/sovereign_colors.dart';
 import '../../services/guest_group_service.dart';
+import 'guest_invite_inactive.dart';
 import 'guest_room_screen.dart';
 
 /// Guest landing for a shareable group link `/g/:token`.
@@ -29,8 +30,17 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
   final _nameCtl = TextEditingController();
   bool _busy = true;
   String? _error;
+  // guest-dm C2: a revoked/expired link (S3 reason on join) shows the distinct
+  // "no longer active" terminal view, not a generic "join failed".
+  String? _terminalReason;
   String? _groupName;
   bool _validInvite = false;
+  // guest-dm C2: a mode=dm invite lands the guest straight into a 1:1 with the
+  // operator, so the landing shows DM copy (chat with <operator_name>) instead
+  // of group copy. Null/"group" keeps the original group framing.
+  String? _mode;
+  String? _operatorName;
+  bool get _isDm => _mode == 'dm';
   // Phase 1 (SKCHAT_PQ_INVITES_ENABLED) operator claims from the preview; absent
   // when the operator hasn't enabled signed invites.
   String? _jti;
@@ -54,8 +64,15 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
       final preview = await svc.previewInvite(widget.token);
       _validInvite = preview['valid'] == true;
       _groupName = preview['group_name'] as String?;
+      _mode = preview['mode'] as String?;
+      _operatorName = (preview['operator_name'] as String?)?.trim();
       _jti = preview['jti'] as String?;
       _bc = preview['bc'] as String?;
+      // DM invite: suggest an editable display name so the guest can join in one
+      // tap, but still rename before (or after, see guest_room_screen) joining.
+      if (_isDm && _nameCtl.text.isEmpty) {
+        _nameCtl.text = 'Guest';
+      }
       // Phase 2: hand the service the operator PQ sealing material so guest
       // sends are pqdm1-sealed to the operator's bc-verified hybrid prekey.
       svc.configureSealing(
@@ -104,22 +121,34 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => GuestRoomScreen(join: result),
+          builder: (_) => GuestRoomScreen(
+            join: result,
+            isDm: _isDm,
+            operatorName: _operatorName,
+          ),
         ),
       );
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
+      if (!mounted) return;
+      final reason = contactTerminalReason(e);
+      setState(() {
+        _busy = false;
+        if (reason != null) {
+          _terminalReason = reason;
+        } else {
           _error = 'Join failed, the invite may be invalid or expired.';
-        });
-      }
+        }
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
+    // A revoked/expired link is terminal: show the distinct inactive view.
+    if (_terminalReason != null) {
+      return GuestInviteInactiveView(reason: _terminalReason);
+    }
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       body: Center(
@@ -133,21 +162,28 @@ class _GuestLandingScreenState extends ConsumerState<GuestLandingScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Icon(Icons.groups_2_outlined,
-                          size: 48, color: SovereignColors.soulLumina),
+                      Icon(
+                        _isDm
+                            ? Icons.chat_bubble_outline_rounded
+                            : Icons.groups_2_outlined,
+                        size: 48,
+                        color: SovereignColors.soulLumina,
+                      ),
                       const SizedBox(height: 16),
                       Text(
-                        _validInvite
-                            ? "You're invited to"
-                            : 'Invite unavailable',
+                        !_validInvite
+                            ? 'Invite unavailable'
+                            : _isDm
+                                ? "You're invited to chat with"
+                                : "You're invited to",
                         style: tt.bodyMedium
                             ?.copyWith(color: SovereignColors.textSecondary),
                         textAlign: TextAlign.center,
                       ),
-                      if (_groupName != null) ...[
+                      if (_validInvite && (_isDm ? _operatorName : _groupName) != null) ...[
                         const SizedBox(height: 4),
                         Text(
-                          _groupName!,
+                          (_isDm ? _operatorName : _groupName)!,
                           style: tt.titleLarge,
                           textAlign: TextAlign.center,
                         ),

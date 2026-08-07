@@ -267,6 +267,22 @@ class GuestGroupService {
     return r.data ?? const {};
   }
 
+  /// guest-dm C2/S5: change this guest's OWN display name. Returns the server
+  /// response, which includes the REMINTED `session_token` (the caller MUST swap
+  /// its stored token for this one, or the rename silently reverts on the next
+  /// request) and the server-enforced `display_name`.
+  Future<Map<String, dynamic>> rename({
+    required String sessionToken,
+    required String name,
+  }) async {
+    final r = await _dio.post<Map<String, dynamic>>(
+      '$_base/api/v1/guest/name',
+      data: {'display_name': name},
+      options: _bearer(sessionToken),
+    );
+    return r.data ?? const {};
+  }
+
   Options _bearer(String token) => Options(
         headers: {
           'Authorization': 'Bearer $token',
