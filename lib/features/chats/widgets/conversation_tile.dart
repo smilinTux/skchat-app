@@ -17,10 +17,16 @@ class ConversationTile extends ConsumerWidget {
     super.key,
     required this.conversation,
     required this.onTap,
+    this.onLongPress,
   });
 
   final Conversation conversation;
   final VoidCallback onTap;
+
+  /// Long-press hook (guest-dm C4/G7 gap-fill). The caller wires this to open
+  /// the C4 contact sheet for a 1:1 guest DM row only - null for every other
+  /// row (ordinary chat, group, or gdm), so this tile stays inert for them.
+  final VoidCallback? onLongPress;
 
   /// A 1:1 row is never a group. Group rows never show/record trust
   /// standing (there is no single peer key to anchor it to).
@@ -85,6 +91,7 @@ class ConversationTile extends ConsumerWidget {
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
