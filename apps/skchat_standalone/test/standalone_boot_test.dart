@@ -57,14 +57,16 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const SkchatStandaloneApp());
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     // The standalone login gate renders first (its own capauth seam).
     expect(find.text('Enter'), findsOneWidget);
 
     // Enter the app.
     await tester.tap(find.text('Enter'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     // The skchat_ui subapp surface is now mounted inside the standalone chrome,
     // and it booted without a shell (no exceptions were thrown pumping it).
