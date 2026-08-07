@@ -68,7 +68,14 @@ class ConversationTile extends ConsumerWidget {
     final showBadge =
         badgeTier == PeerTrustTier.red || badgeTier == PeerTrustTier.amber;
 
-    return Padding(
+    // guest-dm C3: a guest DM renders with the anti-spoofing title (operator
+    // alias wins, else `guest: <name>` in untrusted styling), a Guest badge, and
+    // revoked/expired dimming - never the raw group name.
+    final isGuest = conversation.isGuestDm;
+    final title = isGuest ? conversation.guestTitle : conversation.displayName;
+    final untrustedName = isGuest && !conversation.hasGuestAlias;
+
+    final tile = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -112,16 +119,26 @@ class ConversationTile extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          conversation.displayName,
+                          title,
                           style: tt.titleSmall?.copyWith(
                             fontWeight: conversation.unreadCount > 0
                                 ? FontWeight.w700
                                 : FontWeight.w600,
+                            color: untrustedName
+                                ? SovereignColors.accentWarning
+                                : null,
+                            fontStyle: untrustedName
+                                ? FontStyle.italic
+                                : FontStyle.normal,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (isGuest) ...[
+                        const SizedBox(width: 6),
+                        const _GuestChip(),
+                      ],
                       if (showBadge) ...[
                         const SizedBox(width: 6),
                         TrustBadge(
@@ -147,9 +164,21 @@ class ConversationTile extends ConsumerWidget {
                       const EncryptBadge(size: 11),
                       const SizedBox(width: 4),
                       Text(
-                        conversation.isGroup ? 'Group' : 'E2E',
+                        isGuest
+                            ? (conversation.isGuestRevoked
+                                ? 'Revoked'
+                                : conversation.isGuestExpired
+                                    ? 'Expired'
+                                    : 'Guest DM')
+                            : conversation.isGroup
+                                ? 'Group'
+                                : 'E2E',
                         style: tt.labelSmall?.copyWith(
-                          color: SovereignColors.accentEncrypt,
+                          color: conversation.isGuestInactive
+                              ? SovereignColors.textTertiary
+                              : isGuest
+                                  ? SovereignColors.accentWarning
+                                  : SovereignColors.accentEncrypt,
                           fontSize: 10,
                         ),
                       ),
@@ -218,6 +247,10 @@ class ConversationTile extends ConsumerWidget {
         ),
       ),
     );
+    // A revoked/expired guest DM is dimmed (still visible, no longer live).
+    return conversation.isGuestInactive
+        ? Opacity(opacity: 0.55, child: tile)
+        : tile;
   }
 
   String _typingText(Conversation c) {
@@ -293,6 +326,32 @@ class _RecordPeerSightState extends ConsumerState<_RecordPeerSight> {
 
   @override
   Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// guest-dm C3: a small "Guest" chip marking an untrusted guest-DM row.
+class _GuestChip extends StatelessWidget {
+  const _GuestChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: SovereignColors.accentWarning.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+            color: SovereignColors.accentWarning.withValues(alpha: 0.4)),
+      ),
+      child: const Text(
+        'Guest',
+        style: TextStyle(
+          color: SovereignColors.accentWarning,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }
 
 class _UnreadBadge extends StatelessWidget {

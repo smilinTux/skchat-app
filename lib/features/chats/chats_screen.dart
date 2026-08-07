@@ -10,20 +10,51 @@ import 'widgets/conversation_tile.dart';
 /// Chat list screen, shows all conversations sorted by recency.
 /// Each row is a GlassCard with soul-color avatar, encryption badge,
 /// last message preview, and delivery status.
-class ChatsScreen extends ConsumerWidget {
+class ChatsScreen extends ConsumerStatefulWidget {
   const ChatsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ChatsScreen> createState() => _ChatsScreenState();
+}
+
+class _ChatsScreenState extends ConsumerState<ChatsScreen> {
+  /// guest-dm C3: the Guests filter (show only guest DMs), default off.
+  bool _guestsOnly = false;
+
+  @override
+  Widget build(BuildContext context) {
     final conversations = ref.watch(chatsProvider);
     final tt = Theme.of(context).textTheme;
+    final hasGuestDms = conversations.any((c) => c.isGuestDm);
+    final shown = _guestsOnly
+        ? conversations.where((c) => c.isGuestDm).toList()
+        : conversations;
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       appBar: _buildAppBar(context, tt),
-      body: conversations.isEmpty
-          ? _buildEmpty(context, tt)
-          : _buildList(conversations, context),
+      body: Column(
+        children: [
+          if (hasGuestDms)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: FilterChip(
+                  label: const Text('Guests'),
+                  avatar: const Icon(Icons.person_outline, size: 16),
+                  selected: _guestsOnly,
+                  onSelected: (v) => setState(() => _guestsOnly = v),
+                ),
+              ),
+            ),
+          Expanded(
+            child: shown.isEmpty
+                ? _buildEmpty(context, tt)
+                : _buildList(shown, context),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showComposeMenu(context),
         tooltip: 'New',

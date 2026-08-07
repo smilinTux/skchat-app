@@ -109,6 +109,9 @@ class _ChatsSurfaceState extends State<ChatsSurface> {
   /// The current search query. Empty shows all; non-empty filters locally.
   String _query = '';
 
+  /// guest-dm C3: the Guests filter (show only guest DMs), default off.
+  bool _guestsOnly = false;
+
   @override
   void dispose() {
     _searchCtl.dispose();
@@ -147,7 +150,10 @@ class _ChatsSurfaceState extends State<ChatsSurface> {
     // Glass theme when standalone.
     final theme = widget.shell?.theme ?? SovereignTheme.dark();
     final all = widget.conversations ?? _sampleConversations();
-    final visible = filterConversations(all, _query);
+    final searched = filterConversations(all, _query);
+    final visible =
+        _guestsOnly ? searched.where((c) => c.isGuestDm).toList() : searched;
+    final hasGuestDms = all.any((c) => c.isGuestDm);
 
     return Theme(
       data: theme,
@@ -201,25 +207,50 @@ class _ChatsSurfaceState extends State<ChatsSurface> {
           foregroundColor: SovereignColors.surfaceBase,
           child: const Icon(Icons.edit_rounded),
         ),
-        body: all.isEmpty
-            ? const _EmptyChats()
-            : visible.isEmpty
-                ? const _EmptyChats(
-                    title: 'No matches',
-                    subtitle: 'Try a different name or message.',
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.only(top: 8, bottom: 96),
-                    itemCount: visible.length,
-                    itemBuilder: (context, index) {
-                      final conv = visible[index];
-                      return ConversationListTile(
-                        conversation: conv,
-                        trust: widget.trustResolver?.call(conv),
-                        onTap: () => _openConversation(context, conv),
-                      );
-                    },
+        body: Column(
+          children: [
+            // guest-dm C3: the Guests filter chip appears only when the operator
+            // actually has guest DMs, so it never clutters an all-agent list.
+            if (hasGuestDms)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: FilterChip(
+                    label: const Text('Guests'),
+                    avatar: const Icon(Icons.person_outline, size: 16),
+                    selected: _guestsOnly,
+                    onSelected: (v) => setState(() => _guestsOnly = v),
+                    selectedColor:
+                        SovereignColors.accentWarning.withValues(alpha: 0.25),
                   ),
+                ),
+              ),
+            Expanded(
+              child: all.isEmpty
+                  ? const _EmptyChats()
+                  : visible.isEmpty
+                      ? _EmptyChats(
+                          title: _guestsOnly ? 'No guest DMs' : 'No matches',
+                          subtitle: _guestsOnly
+                              ? 'Guest invites you send will appear here.'
+                              : 'Try a different name or message.',
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.only(top: 8, bottom: 96),
+                          itemCount: visible.length,
+                          itemBuilder: (context, index) {
+                            final conv = visible[index];
+                            return ConversationListTile(
+                              conversation: conv,
+                              trust: widget.trustResolver?.call(conv),
+                              onTap: () => _openConversation(context, conv),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
       ),
     );
   }
