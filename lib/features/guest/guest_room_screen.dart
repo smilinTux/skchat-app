@@ -8,6 +8,7 @@ import '../../core/theme/sovereign_colors.dart';
 import '../../services/guest_group_service.dart';
 import '../calls/livekit_call_screen.dart';
 import 'guest_download.dart';
+import 'guest_invite_inactive.dart';
 
 /// The FULL in-room experience for a guest, scoped to ONE group.
 ///
@@ -21,9 +22,21 @@ import 'guest_download.dart';
 /// add-member / invite / rename / admin actions. An untrusted-guest badge is
 /// always shown. All scoping is enforced server-side by the session token.
 class GuestRoomScreen extends ConsumerStatefulWidget {
-  const GuestRoomScreen({super.key, required this.join});
+  const GuestRoomScreen({
+    super.key,
+    required this.join,
+    this.isDm = false,
+    this.operatorName,
+  });
 
   final GuestJoinResult join;
+
+  /// guest-dm C2: a mode=dm invite renders 1:1 framing (title = operator name)
+  /// instead of the group name + a chat, not group, mental model.
+  final bool isDm;
+
+  /// The operator's display name for the DM header (from the invite preview).
+  final String? operatorName;
 
   @override
   ConsumerState<GuestRoomScreen> createState() => _GuestRoomScreenState();
@@ -33,17 +46,40 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
   final _composeCtl = TextEditingController();
   final _scrollCtl = ScrollController();
   late List<Map<String, dynamic>> _messages;
+  // guest-dm C2: session token + display name are mutable, a self-rename remints
+  // the token (S5) and the caller must swap it or the change reverts.
+  late String _session;
+  late String _displayName;
+  // Non-null once a contact-terminal 403 (revoked/expired) is seen anywhere in
+  // the room: the whole screen swaps to the inactive view (S3 reason codes).
+  String? _terminalReason;
+  bool _renaming = false;
   bool _sending = false;
   bool _uploading = false;
   bool _callConnecting = false;
   Timer? _pollTimer;
 
   GuestGroupService get _svc => ref.read(guestGroupServiceProvider);
-  String get _token => widget.join.sessionToken;
+  String get _token => _session;
+
+  /// The DM 1:1 title (operator name) or the group name.
+  String get _title =>
+      widget.isDm ? (widget.operatorName ?? widget.join.groupName) : widget.join.groupName;
+
+  /// If [error] is a contact-terminal 403 (S3), record the reason so [build]
+  /// swaps to the inactive view, and return true. Callers stop after this.
+  bool _handleTerminal(Object error) {
+    final reason = contactTerminalReason(error);
+    if (reason == null) return false;
+    if (mounted) setState(() => _terminalReason = reason);
+    return true;
+  }
 
   @override
   void initState() {
     super.initState();
+    _session = widget.join.sessionToken;
+    _displayName = widget.join.displayName;
     _messages = List.of(widget.join.messages);
     _refresh();
     // Poll the room so the guest sees NEW messages from the operator/members
@@ -67,8 +103,34 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
       if (!mounted) return;
       setState(() => _messages = msgs);
       _scrollToBottom();
-    } catch (_) {
-      // Stay on the last-known messages; the server may be briefly unreachable.
+    } catch (e) {
+      // The 3s poller is the most likely place to first see a revoke/expiry:
+      // swap to the inactive view. Otherwise stay on the last-known messages
+      // (the server may be briefly unreachable).
+      _handleTerminal(e);
+    }
+  }
+
+  /// guest-dm C2: change my own display name (S5 remints the session token).
+  Future<void> _rename(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || _renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final res = await _svc.rename(sessionToken: _token, name: trimmed);
+      final newToken = res['session_token'] as String?;
+      final newName = (res['display_name'] as String?) ?? trimmed;
+      if (!mounted) return;
+      setState(() {
+        // Swap in the reminted token, or the change reverts on the next request.
+        if (newToken != null && newToken.isNotEmpty) _session = newToken;
+        _displayName = newName;
+      });
+    } catch (e) {
+      if (_handleTerminal(e)) return;
+      _snack('Could not change your name.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
     }
   }
 
@@ -99,6 +161,7 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
         _scrollToBottom();
       }
     } catch (e) {
+      if (_handleTerminal(e)) return;
       _snack('Could not send message.');
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -128,6 +191,7 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
         _scrollToBottom();
       }
     } catch (e) {
+      if (_handleTerminal(e)) return;
       _snack('Upload failed.');
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -178,7 +242,8 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
           ),
         ),
       );
-    } catch (_) {
+    } catch (e) {
+      if (_handleTerminal(e)) return;
       _snack('Could not start the call.');
     } finally {
       if (mounted) setState(() => _callConnecting = false);
@@ -191,9 +256,24 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
         .showSnackBar(SnackBar(content: Text(m)));
   }
 
+  /// guest-dm C2: prompt for a new self-name, prefilled with the current one.
+  Future<void> _promptRename() async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameDialog(initial: _displayName),
+    );
+    if (name != null && name.trim().isNotEmpty) {
+      await _rename(name);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
+    // Contact revoked/expired (S3): the room is gone, nothing to retry.
+    if (_terminalReason != null) {
+      return GuestInviteInactiveView(reason: _terminalReason);
+    }
     return Scaffold(
       backgroundColor: SovereignColors.surfaceBase,
       appBar: AppBar(
@@ -203,7 +283,7 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.join.groupName,
+            Text(_title,
                 style: tt.titleMedium, overflow: TextOverflow.ellipsis),
             const _GuestBadge(),
           ],
@@ -219,6 +299,19 @@ class _GuestRoomScreenState extends ConsumerState<GuestRoomScreen> {
                   )
                 : const Icon(Icons.videocam_outlined),
             onPressed: _callConnecting ? null : _joinCall,
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (v) {
+              if (v == 'rename') _promptRename();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem<String>(
+                value: 'rename',
+                child: Text('Change my name'),
+              ),
+            ],
           ),
         ],
       ),
@@ -484,6 +577,55 @@ class _Composer extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Self-contained rename dialog: owns its [TextEditingController] so it is
+/// disposed with the dialog State (not synchronously after pop, which would tear
+/// down the field while the route is still animating out).
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _ctl =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change my name'),
+      content: TextField(
+        controller: _ctl,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'Display name',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (v) => Navigator.of(context).pop(v),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_ctl.text),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }
