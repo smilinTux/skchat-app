@@ -401,7 +401,13 @@ class GuestInviteService {
   /// operator's private nickname for whoever joins (only the operator sees it).
   /// [contactTtl] sets the contact-expiry TTL (seconds). Returns `{token,
   /// join_url, ...}`; [joinUrl] is relative - prefix with [fullLink].
+  ///
+  /// [groupId] defaults to `dm` (a fresh 2-seat DM). Pass an EXISTING guest-DM
+  /// group id to add another guest to it (guest-dm G5): the server (G1) flips
+  /// that group to `gdm` in place and admits the new guest as a per-person
+  /// member. Same request shape either way (per-person alias, contact TTL).
   Future<Map<String, dynamic>> createDmInvite({
+    String groupId = 'dm',
     bool singleUse = true,
     int? ttl,
     String? alias,
@@ -424,7 +430,7 @@ class GuestInviteService {
       if (contactTtl != null) 'contact_ttl': contactTtl,
     };
     final r = await _dio.post<Map<String, dynamic>>(
-      '$_base/api/v1/groups/dm/invite',
+      '$_base/api/v1/groups/$groupId/invite',
       queryParameters: const {'mode': 'dm'},
       data: data,
       options: Options(headers: headers),
