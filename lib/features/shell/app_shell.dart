@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/modules/module_registry.dart';
 import '../../core/router/app_router.dart';
 import '../../features/calls/incoming_call_watcher.dart';
+import '../../features/calls/guest_ring.dart';
 import '../../features/calls/widgets/incoming_call_banner.dart';
 import '../../features/calls/widgets/pip_overlay.dart';
 import '../../features/chats/chats_provider.dart';
@@ -150,7 +151,14 @@ class AppShell extends ConsumerWidget {
           isOffline: isOffline,
           badgeCounts: badgeCounts,
           onSelect: context.go,
-          banner: const IncomingCallBanner(),
+          banner: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IncomingCallBanner(),
+              // guest-dm C5: the operator's incoming guest-DM ring (poll fallback).
+              GuestRingBanner(),
+            ],
+          ),
           child: child,
         ),
       ),

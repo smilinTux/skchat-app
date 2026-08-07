@@ -55,6 +55,8 @@ class Conversation {
     this.guestAlias,
     this.guestStatus,
     this.guestMuted = false,
+    this.ringing = false,
+    this.ringTs,
   });
 
   final String peerId;
@@ -100,6 +102,13 @@ class Conversation {
 
   /// Operator muted this guest DM (S4). Carried for the contact sheet (C4).
   final bool guestMuted;
+
+  /// guest-dm C5: the guest is ringing the operator right now (S6 poll fallback).
+  final bool ringing;
+
+  /// Epoch-seconds timestamp of the active ring; the client dedupes on it so a
+  /// handled ring is not re-surfaced.
+  final double? ringTs;
 
   /// True when the operator has set a private alias (alias-wins title).
   bool get hasGuestAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
@@ -161,6 +170,8 @@ class Conversation {
     String? guestAlias,
     String? guestStatus,
     bool? guestMuted,
+    bool? ringing,
+    double? ringTs,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -184,6 +195,8 @@ class Conversation {
       guestAlias: guestAlias ?? this.guestAlias,
       guestStatus: guestStatus ?? this.guestStatus,
       guestMuted: guestMuted ?? this.guestMuted,
+      ringing: ringing ?? this.ringing,
+      ringTs: ringTs ?? this.ringTs,
     );
   }
 
@@ -213,6 +226,8 @@ class Conversation {
       guestAlias: json['guest_alias'] as String?,
       guestStatus: json['guest_status'] as String?,
       guestMuted: json['muted'] as bool? ?? false,
+      ringing: json['ringing'] as bool? ?? false,
+      ringTs: (json['ring_ts'] as num?)?.toDouble(),
     );
   }
 }
