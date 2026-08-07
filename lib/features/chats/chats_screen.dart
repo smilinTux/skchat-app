@@ -5,6 +5,7 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../shell/toolbar_module_actions.dart';
 import 'chats_provider.dart';
+import 'guest_group_mint_sheet.dart';
 import 'invite_to_dm_sheet.dart';
 import 'widgets/conversation_tile.dart';
 
@@ -111,6 +112,19 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
               onTap: () {
                 Navigator.of(sheetCtx).pop();
                 showInviteToDmSheet(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.groups_2_outlined,
+                  color: SovereignColors.textSecondary),
+              title: const Text('New guest group',
+                  style: TextStyle(color: SovereignColors.textPrimary)),
+              subtitle: const Text('Name it, then invite guests by link',
+                  style: TextStyle(
+                      color: SovereignColors.textTertiary, fontSize: 12)),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                showNewGuestGroupFlow(context, ref);
               },
             ),
             const SizedBox(height: 8),
