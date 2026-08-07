@@ -373,6 +373,49 @@ class GuestInviteService {
     return r.data ?? const {};
   }
 
+  /// Mint an Invite-to-DM link (guest-dm C1): a NEW 2-seat DM guest group with
+  /// the operator in seat 1, so the guest lands directly in a 1:1 with the
+  /// operator (no group). Posts to `/api/v1/groups/dm/invite?mode=dm`; the path
+  /// group id is unused for `mode=dm` (see guest_group_routes.operator_create_invite),
+  /// so a literal `dm` placeholder is sent.
+  ///
+  /// [singleUse] (default true, per the locked decision) mints a one-shot link;
+  /// pass false for the operator's standing, reusable my-DM-link (server marks it
+  /// `reusable`, never single-use, with a `dm_reuse` claim). [alias] pre-sets the
+  /// operator's private nickname for whoever joins (only the operator sees it).
+  /// [contactTtl] sets the contact-expiry TTL (seconds). Returns `{token,
+  /// join_url, ...}`; [joinUrl] is relative - prefix with [fullLink].
+  Future<Map<String, dynamic>> createDmInvite({
+    bool singleUse = true,
+    int? ttl,
+    String? alias,
+    int? contactTtl,
+    String? operatorToken,
+  }) async {
+    final headers = <String, dynamic>{'Content-Type': 'application/json'};
+    final tok = (operatorToken != null && operatorToken.isNotEmpty)
+        ? operatorToken
+        : op_token.operatorToken();
+    if (tok != null && tok.isNotEmpty) {
+      headers['X-Operator-Token'] = tok;
+    }
+    final data = <String, dynamic>{
+      if (ttl != null) 'ttl': ttl,
+      'single_use': singleUse,
+      // A non-single-use DM link is the operator's standing my-DM-link.
+      if (!singleUse) 'reusable': true,
+      if (alias != null && alias.trim().isNotEmpty) 'alias': alias.trim(),
+      if (contactTtl != null) 'contact_ttl': contactTtl,
+    };
+    final r = await _dio.post<Map<String, dynamic>>(
+      '$_base/api/v1/groups/dm/invite',
+      queryParameters: const {'mode': 'dm'},
+      data: data,
+      options: Options(headers: headers),
+    );
+    return r.data ?? const {};
+  }
+
   /// Build the full shareable URL from a relative join_url, prefixing [baseUrl].
   String fullLink(String joinUrl) {
     if (joinUrl.startsWith('http')) return joinUrl;
