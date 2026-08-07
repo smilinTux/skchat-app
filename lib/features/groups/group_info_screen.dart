@@ -12,7 +12,9 @@ import '../../services/skcomms_client.dart';
 import '../../services/peer_trust_store.dart';
 import '../identity/widgets/trust_badge.dart';
 import '../../services/guest_group_service.dart';
+import '../../services/guest_dm_contacts_service.dart';
 import '../chats/chats_provider.dart';
+import '../chats/guest_contact_sheet.dart';
 import 'groups_provider.dart';
 
 /// Data class representing a group member in the Flutter UI.
@@ -81,6 +83,16 @@ class GroupMemberInfo {
   /// True when this member's name is self-asserted and unaliased - the caller
   /// must render it with untrusted styling.
   bool get isUntrustedName => isGuest && !hasGuestAlias;
+
+  /// guest-dm G7: this guest's `dm_contacts` fingerprint, derived the SAME
+  /// way the server does (`identity_uri.rsplit("#", 1)[-1]`, see
+  /// `_guest_member_fields` in daemon_proxy_groups.py) so the client can hit
+  /// the `/guest-dm/contacts/{fp}/...` routes for a roster member without a
+  /// separate lookup.
+  String get guestFp {
+    final i = identityUri.lastIndexOf('#');
+    return i == -1 ? identityUri : identityUri.substring(i + 1);
+  }
 
   /// Parse a member from the daemon's JSON response.
   factory GroupMemberInfo.fromJson(Map<String, dynamic> json) {
@@ -387,6 +399,11 @@ class GroupInfoScreen extends ConsumerWidget {
             onChangeRole: member.role != MemberRole.admin
                 ? () => _showRoleDialog(context, ref, member)
                 : null,
+            // guest-dm G7: only a guest member has a dm_contacts row to
+            // manage - a trusted member must never open this sheet.
+            onOpenGuestContact: member.isGuest
+                ? () => _openGuestContactSheet(context, ref, member)
+                : null,
           );
         },
         childCount: members.length,
@@ -615,6 +632,60 @@ class GroupInfoScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+
+  /// guest-dm G7: open the C4 contact sheet from a gdm roster guest member
+  /// (tap or long-press on the row). The roster only carries a slice of the
+  /// contact row (alias/status, not mute/expiry), so this fetches the full
+  /// S4 `/guest-dm/contacts` list first and hands the sheet the matching row;
+  /// on a lookup miss (daemon offline, or the contact has not synced to this
+  /// device yet) it falls back to a contact built from the roster fields
+  /// alone so the sheet still opens with what is known.
+  Future<void> _openGuestContactSheet(
+    BuildContext context,
+    WidgetRef ref,
+    GroupMemberInfo member,
+  ) async {
+    final fp = member.guestFp;
+    final svc = ref.read(guestDmContactsServiceProvider);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: SovereignColors.soulLumina),
+      ),
+    );
+    GuestContact contact = GuestContact(
+      fp: fp,
+      guestName: member.guestName ?? '',
+      alias: member.guestAlias,
+      groupId: groupId,
+      status: member.guestStatus ?? 'active',
+    );
+    try {
+      final all = await svc.listContacts();
+      for (final c in all) {
+        if (c.fp == fp) {
+          contact = c;
+          break;
+        }
+      }
+    } on Object {
+      // Daemon offline or the route is unavailable: keep the roster-derived
+      // fallback above so the sheet still opens.
+    }
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // dismiss the spinner
+
+    await showGuestContactSheet(
+      context,
+      contact: contact,
+      groupId: groupId,
+      groupMembershipRevoked: member.membershipStatus == 'revoked',
+      // Per-group revoke pulls the seat off the roster, so refresh right
+      // away rather than waiting on the next poll.
+      onChanged: () => ref.invalidate(groupMembersProvider(groupId)),
     );
   }
 
@@ -1107,11 +1178,16 @@ class _MemberTile extends ConsumerWidget {
     required this.member,
     this.onRemove,
     this.onChangeRole,
+    this.onOpenGuestContact,
   });
 
   final GroupMemberInfo member;
   final VoidCallback? onRemove;
   final VoidCallback? onChangeRole;
+
+  /// guest-dm G7: tap/long-press opens the C4 contact sheet. Null for a
+  /// trusted member (set by the caller only when `member.isGuest`).
+  final VoidCallback? onOpenGuestContact;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1144,6 +1220,11 @@ class _MemberTile extends ConsumerWidget {
     final tile = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 3),
       child: GlassCard(
+        // guest-dm G7: tap or long-press a guest row to open the C4 contact
+        // sheet. Both null for a trusted member, so the row stays inert -
+        // trusted members have no dm_contacts row to manage.
+        onTap: onOpenGuestContact,
+        onLongPress: onOpenGuestContact,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [

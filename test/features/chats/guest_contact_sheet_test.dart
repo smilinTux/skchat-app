@@ -35,7 +35,13 @@ const _contact = GuestContact(
   groupId: 'g1',
 );
 
-Widget _harness(_RecordingAdapter a, {int changes = 0}) {
+Widget _harness(
+  _RecordingAdapter a, {
+  int changes = 0,
+  String? groupId,
+  bool groupMembershipRevoked = false,
+  VoidCallback? onChanged,
+}) {
   return ProviderScope(
     overrides: [
       guestDmContactsServiceProvider.overrideWithValue(_service(a)),
@@ -44,8 +50,13 @@ Widget _harness(_RecordingAdapter a, {int changes = 0}) {
       home: Scaffold(
         body: Builder(
           builder: (context) => ElevatedButton(
-            onPressed: () =>
-                showGuestContactSheet(context, contact: _contact),
+            onPressed: () => showGuestContactSheet(
+              context,
+              contact: _contact,
+              groupId: groupId,
+              groupMembershipRevoked: groupMembershipRevoked,
+              onChanged: onChanged,
+            ),
             child: const Text('open'),
           ),
         ),
@@ -127,5 +138,104 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('operator-only'), findsOneWidget);
+  });
+
+  group('guest-dm G7: per-group context', () {
+    testWidgets(
+        '1:1 path (no groupId) is unchanged: no "Remove from this group" '
+        'button and no person-level note', (tester) async {
+      final a = _RecordingAdapter();
+      await tester.pumpWidget(_harness(a));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove from this group'), findsNothing);
+      expect(
+          find.textContaining('apply to this person everywhere'), findsNothing);
+    });
+
+    testWidgets(
+        'opened with a groupId shows the person-level note and the scoped '
+        'action', (tester) async {
+      final a = _RecordingAdapter();
+      await tester.pumpWidget(_harness(a, groupId: 'g-1'));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove from this group'), findsOneWidget);
+      expect(
+          find.textContaining('apply to this person everywhere'),
+          findsOneWidget);
+      // Both actions are offered side by side, never one replacing the other.
+      expect(find.text('Revoke access'), findsOneWidget);
+    });
+
+    testWidgets(
+        'the two confirm dialogs are worded so they cannot be confused: '
+        'per-group says other conversations survive, person-level says '
+        'every conversation ends', (tester) async {
+      final a = _RecordingAdapter();
+      await tester.pumpWidget(_harness(a, groupId: 'g-1'));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Remove from this group'));
+      await tester.pumpAndSettle();
+      expect(find.text('Remove from this group?'), findsOneWidget);
+      expect(find.textContaining('this group only'), findsOneWidget);
+      expect(find.textContaining('keep working'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Revoke access'));
+      await tester.pumpAndSettle();
+      expect(find.text('Revoke access?'), findsOneWidget);
+      expect(find.textContaining('every conversation with you'),
+          findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(a.requests, isEmpty);
+    });
+
+    testWidgets(
+        'confirming the per-group remove POSTs group_id, closes the sheet, '
+        'and fires onChanged so the roster refreshes immediately',
+        (tester) async {
+      final a = _RecordingAdapter();
+      var changed = 0;
+      await tester.pumpWidget(
+          _harness(a, groupId: 'g-1', onChanged: () => changed++));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Remove from this group'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+
+      final req = a.requests.single;
+      expect(req.method, 'POST');
+      expect(req.uri.path, '/api/v1/guest-dm/contacts/FP1/revoke');
+      expect(_body(req.data)['group_id'], 'g-1');
+      expect(changed, 1);
+      // The sheet closes on success, same idiom as the person-level revoke.
+      expect(find.text('Remove from this group'), findsNothing);
+    });
+
+    testWidgets('a membership already revoked pre-disables the scoped action',
+        (tester) async {
+      final a = _RecordingAdapter();
+      await tester.pumpWidget(
+          _harness(a, groupId: 'g-1', groupMembershipRevoked: true));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      final button = tester.widget<OutlinedButton>(find.ancestor(
+        of: find.text('Remove from this group'),
+        matching: find.byType(OutlinedButton),
+      ));
+      expect(button.onPressed, isNull);
+    });
   });
 }

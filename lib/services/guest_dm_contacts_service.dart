@@ -133,11 +133,23 @@ class GuestDmContactsService {
     );
   }
 
-  /// Revoke a contact: the guest loses access and the link dies.
+  /// Revoke a contact: the guest loses access everywhere and the link dies.
   Future<void> revoke(String fp) async {
     await _dio.post<Map<String, dynamic>>(
       '$_base/api/v1/guest-dm/contacts/$fp/revoke',
       data: const {},
+      options: _opts(),
+    );
+  }
+
+  /// Revoke a contact's seat in ONE group only (guest-dm G7). Same route as
+  /// [revoke] but with a `group_id` body, which the server (guest_group_
+  /// routes.py `guest_dm_contact_revoke`) treats as a per-group revoke: this
+  /// person's other conversations with us are untouched.
+  Future<void> revokeGroupMembership(String fp, String groupId) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$_base/api/v1/guest-dm/contacts/$fp/revoke',
+      data: {'group_id': groupId},
       options: _opts(),
     );
   }
