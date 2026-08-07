@@ -9,10 +9,14 @@ version: 1.4.0+13
 # (reconciled spec 3.2) added the module contract package; step 2 adds
 # skchat_ui, the real package the grade-A skchat manifest points at, and the
 # first extracted leaf feature (ChatMessage) with an export shim in lib/.
-# apps/skchat_standalone is a later, separate wave.
+# Step 3 adds apps/skchat_standalone, the thin runner that hosts skchat_ui with
+# a null shell (standalone mode) and deploys to :8088 until the umbrella
+# cutover. Adding it as a member does not change the root app's own dependency
+# set, so the deployed root-app web artifact stays byte-equivalent.
 workspace:
   - packages/skworld_module_api
   - packages/skchat_ui
+  - apps/skchat_standalone
 
 environment:
   sdk: ^3.11.0
