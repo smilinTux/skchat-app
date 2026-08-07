@@ -50,6 +50,11 @@ class Conversation {
     this.initials,
     this.avatarUrl,
     this.members = const [],
+    this.isGuestDm = false,
+    this.guestName,
+    this.guestAlias,
+    this.guestStatus,
+    this.guestMuted = false,
   });
 
   final String peerId;
@@ -75,6 +80,46 @@ class Conversation {
   /// Group participants (empty for a 1:1). Populated from the server
   /// `participants` array; drives the composite avatar + aggregate badge.
   final List<ConversationMember> members;
+
+  // ── guest-dm C3: operator-facing guest-DM badge (S4 payload) ──────────────
+  /// True when this "group" is actually a guest DM (server `guest_dm`). The row
+  /// renders inline in Chats with a guest badge and the guest/alias title, never
+  /// the raw group name.
+  final bool isGuestDm;
+
+  /// The guest's self-chosen (untrusted, self-asserted) display name.
+  final String? guestName;
+
+  /// The operator's PRIVATE alias for this guest. When set it ALWAYS wins the
+  /// title and renders like a real contact name; the guest can never set it, so
+  /// a guest naming themselves "Chef" cannot impersonate a real contact.
+  final String? guestAlias;
+
+  /// `active` | `revoked` | `expired` (S3/S4). Non-active renders dimmed.
+  final String? guestStatus;
+
+  /// Operator muted this guest DM (S4). Carried for the contact sheet (C4).
+  final bool guestMuted;
+
+  /// True when the operator has set a private alias (alias-wins title).
+  bool get hasGuestAlias => guestAlias != null && guestAlias!.trim().isNotEmpty;
+
+  bool get isGuestRevoked => guestStatus == 'revoked';
+  bool get isGuestExpired => guestStatus == 'expired';
+
+  /// A revoked or expired guest DM: render dimmed with a label, no live actions.
+  bool get isGuestInactive => isGuestRevoked || isGuestExpired;
+
+  /// The anti-spoofing title for a guest DM: the operator alias wins (rendered
+  /// like a real contact), else the guest's self-name with a `guest:` prefix
+  /// and untrusted styling. NEVER the raw group name.
+  String get guestTitle {
+    if (hasGuestAlias) return guestAlias!.trim();
+    final name = (guestName != null && guestName!.trim().isNotEmpty)
+        ? guestName!.trim()
+        : 'guest';
+    return 'guest: $name';
+  }
 
   /// Resolved soul-color, derives from fingerprint if [soulColor] is not set.
   Color get resolvedSoulColor {
@@ -111,6 +156,11 @@ class Conversation {
     String? initials,
     String? avatarUrl,
     List<ConversationMember>? members,
+    bool? isGuestDm,
+    String? guestName,
+    String? guestAlias,
+    String? guestStatus,
+    bool? guestMuted,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -129,6 +179,11 @@ class Conversation {
       initials: initials ?? this.initials,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       members: members ?? this.members,
+      isGuestDm: isGuestDm ?? this.isGuestDm,
+      guestName: guestName ?? this.guestName,
+      guestAlias: guestAlias ?? this.guestAlias,
+      guestStatus: guestStatus ?? this.guestStatus,
+      guestMuted: guestMuted ?? this.guestMuted,
     );
   }
 
@@ -153,6 +208,11 @@ class Conversation {
                   ConversationMember.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
+      isGuestDm: json['guest_dm'] as bool? ?? false,
+      guestName: json['guest_name'] as String?,
+      guestAlias: json['guest_alias'] as String?,
+      guestStatus: json['guest_status'] as String?,
+      guestMuted: json['muted'] as bool? ?? false,
     );
   }
 }

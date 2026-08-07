@@ -50,7 +50,15 @@ class ConversationListTile extends StatelessWidget {
         ? _typingText(conversation)
         : (displayTextFor(conversation.lastMessage) ?? '[system message]');
 
-    return Padding(
+    // guest-dm C3: a guest DM renders with the anti-spoofing title (alias wins,
+    // else `guest: <name>` in untrusted styling) - never the raw group name.
+    final isGuest = conversation.isGuestDm;
+    final title = isGuest ? conversation.guestTitle : conversation.displayName;
+    // An operator alias renders like a real contact; a guest self-name is
+    // visually marked untrusted so a guest naming itself "Chef" cannot pass as a
+    // real contact.
+    final untrustedName = isGuest && !conversation.hasGuestAlias;
+    final tile = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -83,15 +91,27 @@ class ConversationListTile extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          conversation.displayName,
+                          title,
                           style: tt.titleSmall?.copyWith(
                             fontWeight:
                                 unread ? FontWeight.w700 : FontWeight.w600,
+                            color: untrustedName
+                                ? SovereignColors.accentWarning
+                                : null,
+                            fontStyle:
+                                untrustedName ? FontStyle.italic : FontStyle.normal,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      // guest-dm C3: a Guest badge marks the row as an untrusted
+                      // guest DM even when an operator alias makes the title read
+                      // like a real contact.
+                      if (isGuest) ...[
+                        const SizedBox(width: 6),
+                        const _GuestChip(),
+                      ],
                       // Trust badge (injected). Renders only when the app fed
                       // trust data for this row; mirrors the app tile placing
                       // it right after the name, before the timestamp.
@@ -115,9 +135,21 @@ class ConversationListTile extends StatelessWidget {
                       const EncryptBadge(size: 11),
                       const SizedBox(width: 4),
                       Text(
-                        conversation.isGroup ? 'Group' : 'E2E',
+                        isGuest
+                            ? (conversation.isGuestRevoked
+                                ? 'Revoked'
+                                : conversation.isGuestExpired
+                                    ? 'Expired'
+                                    : 'Guest DM')
+                            : conversation.isGroup
+                                ? 'Group'
+                                : 'E2E',
                         style: tt.labelSmall?.copyWith(
-                          color: SovereignColors.accentEncrypt,
+                          color: conversation.isGuestInactive
+                              ? SovereignColors.textTertiary
+                              : isGuest
+                                  ? SovereignColors.accentWarning
+                                  : SovereignColors.accentEncrypt,
                           fontSize: 10,
                         ),
                       ),
@@ -164,6 +196,10 @@ class ConversationListTile extends StatelessWidget {
         ),
       ),
     );
+    // A revoked/expired guest DM is dimmed (still visible, no longer live).
+    return conversation.isGuestInactive
+        ? Opacity(opacity: 0.55, child: tile)
+        : tile;
   }
 
   /// Whether the last message was sent by the local user. Approximated from
@@ -201,6 +237,32 @@ class ConversationListTile extends StatelessWidget {
     final mm = local.month.toString().padLeft(2, '0');
     final dd = local.day.toString().padLeft(2, '0');
     return '$mm/$dd';
+  }
+}
+
+/// guest-dm C3: a small "Guest" chip marking an untrusted guest-DM row.
+class _GuestChip extends StatelessWidget {
+  const _GuestChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: SovereignColors.accentWarning.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+            color: SovereignColors.accentWarning.withValues(alpha: 0.4)),
+      ),
+      child: const Text(
+        'Guest',
+        style: TextStyle(
+          color: SovereignColors.accentWarning,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
   }
 }
 
