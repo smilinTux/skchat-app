@@ -71,9 +71,14 @@ class ConversationTile extends ConsumerWidget {
     // guest-dm C3: a guest DM renders with the anti-spoofing title (operator
     // alias wins, else `guest: <name>` in untrusted styling), a Guest badge, and
     // revoked/expired dimming - never the raw group name.
+    // guest-dm G6: a gdm's title is `guestTitle` too, but it resolves to the
+    // operator-set group name (there is no single guest to alias/spoof-check),
+    // so use `isUntrustedTitle` rather than the raw alias check - it is false
+    // for a gdm and the title renders trusted, while the Guest chip below
+    // still marks the room as holding untrusted people.
     final isGuest = conversation.isGuestDm;
     final title = isGuest ? conversation.guestTitle : conversation.displayName;
-    final untrustedName = isGuest && !conversation.hasGuestAlias;
+    final untrustedName = conversation.isUntrustedTitle;
 
     final tile = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -164,12 +169,19 @@ class ConversationTile extends ConsumerWidget {
                       const EncryptBadge(size: 11),
                       const SizedBox(width: 4),
                       Text(
+                        // guest-dm G6: a gdm has no single guest status (it's
+                        // group-shaped), so it gets its own label with the
+                        // member count instead of falling into the 1:1
+                        // revoked/expired/Guest-DM branches below.
                         isGuest
-                            ? (conversation.isGuestRevoked
-                                ? 'Revoked'
-                                : conversation.isGuestExpired
-                                    ? 'Expired'
-                                    : 'Guest DM')
+                            ? (conversation.isGdm
+                                ? 'Guest group, ${conversation.memberCount} '
+                                    '${conversation.memberCount == 1 ? 'member' : 'members'}'
+                                : conversation.isGuestRevoked
+                                    ? 'Revoked'
+                                    : conversation.isGuestExpired
+                                        ? 'Expired'
+                                        : 'Guest DM')
                             : conversation.isGroup
                                 ? 'Group'
                                 : 'E2E',

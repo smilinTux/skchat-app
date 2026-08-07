@@ -57,7 +57,11 @@ class ConversationListTile extends StatelessWidget {
     // An operator alias renders like a real contact; a guest self-name is
     // visually marked untrusted so a guest naming itself "Chef" cannot pass as a
     // real contact.
-    final untrustedName = isGuest && !conversation.hasGuestAlias;
+    // guest-dm G6: a gdm's `guestTitle` is the operator-set group name (no
+    // single guest to alias/spoof-check), so `isUntrustedTitle` is false for
+    // it and the title renders trusted even though the room is still
+    // guest-flavored via the Guest chip.
+    final untrustedName = conversation.isUntrustedTitle;
     final tile = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GlassCard(
@@ -135,12 +139,19 @@ class ConversationListTile extends StatelessWidget {
                       const EncryptBadge(size: 11),
                       const SizedBox(width: 4),
                       Text(
+                        // guest-dm G6: a gdm has no single guest status (it's
+                        // group-shaped), so it gets its own label with the
+                        // member count instead of falling into the 1:1
+                        // revoked/expired/Guest-DM branches below.
                         isGuest
-                            ? (conversation.isGuestRevoked
-                                ? 'Revoked'
-                                : conversation.isGuestExpired
-                                    ? 'Expired'
-                                    : 'Guest DM')
+                            ? (conversation.isGdm
+                                ? 'Guest group, ${conversation.memberCount} '
+                                    '${conversation.memberCount == 1 ? 'member' : 'members'}'
+                                : conversation.isGuestRevoked
+                                    ? 'Revoked'
+                                    : conversation.isGuestExpired
+                                        ? 'Expired'
+                                        : 'Guest DM')
                             : conversation.isGroup
                                 ? 'Group'
                                 : 'E2E',
