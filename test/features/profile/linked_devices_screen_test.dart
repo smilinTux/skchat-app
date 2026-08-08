@@ -22,6 +22,13 @@ class _FakeAdapter implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
   final List<Object?> listResponses = [];
   int listStatus = 200;
+
+  /// Queue for `GET .../devices/pending`, same drain-to-last-entry semantics
+  /// as [listResponses]. Defaults to an empty list so every existing test
+  /// that never touches pending devices keeps seeing no banner.
+  final List<Object?> pendingResponses = [];
+  int pendingStatus = 200;
+
   Object? unlinkBody = const <String, dynamic>{};
   int unlinkStatus = 200;
   Object? unlinkOthersBody = const {
@@ -33,6 +40,10 @@ class _FakeAdapter implements HttpClientAdapter {
   int unlinkOthersStatus = 200;
   Object? renameBody;
   int renameStatus = 200;
+  Object? approveBody;
+  int approveStatus = 200;
+  Object? denyBody = const <String, dynamic>{};
+  int denyStatus = 200;
 
   @override
   void close({bool force = false}) {}
@@ -42,6 +53,13 @@ class _FakeAdapter implements HttpClientAdapter {
     return listResponses.length > 1
         ? listResponses.removeAt(0)
         : listResponses.first;
+  }
+
+  Object? _nextPendingResponse() {
+    if (pendingResponses.isEmpty) return const {"devices": <dynamic>[]};
+    return pendingResponses.length > 1
+        ? pendingResponses.removeAt(0)
+        : pendingResponses.first;
   }
 
   @override
@@ -56,6 +74,14 @@ class _FakeAdapter implements HttpClientAdapter {
       return ResponseBody.fromString(
         jsonEncode(_nextListResponse()),
         listStatus,
+        headers: _jsonHeaders,
+      );
+    }
+    if (options.method == "GET" &&
+        path == "/api/v1/operator/devices/pending") {
+      return ResponseBody.fromString(
+        jsonEncode(_nextPendingResponse()),
+        pendingStatus,
         headers: _jsonHeaders,
       );
     }
@@ -81,8 +107,31 @@ class _FakeAdapter implements HttpClientAdapter {
         headers: _jsonHeaders,
       );
     }
+    if (options.method == "POST" && path.endsWith("/approve")) {
+      return ResponseBody.fromString(
+        jsonEncode(approveBody ?? _echoApprove(options)),
+        approveStatus,
+        headers: _jsonHeaders,
+      );
+    }
+    if (options.method == "POST" && path.endsWith("/deny")) {
+      return ResponseBody.fromString(
+        jsonEncode(denyBody),
+        denyStatus,
+        headers: _jsonHeaders,
+      );
+    }
     return ResponseBody.fromString("{}", 404, headers: _jsonHeaders);
   }
+}
+
+/// Default POST .../approve response when a test doesn't set
+/// [_FakeAdapter.approveBody]: echoes the fingerprint out of the path with
+/// `approved: true`, the way the real server does on a successful approve
+/// (`device_routes.py:approve`).
+Map<String, dynamic> _echoApprove(RequestOptions options) {
+  final fp = options.uri.pathSegments[options.uri.pathSegments.length - 2];
+  return _device(fp: fp, label: "", approved: true);
 }
 
 /// Default PATCH response when a test doesn't set [_FakeAdapter.renameBody]:
@@ -115,18 +164,21 @@ Map<String, dynamic> _device({
   required String label,
   String labelSource = "derived",
   String platform = "linux",
+  double enrolledAt = 1000.0,
   double lastSeen = 0,
   bool isCurrent = false,
+  bool approved = true,
 }) =>
     {
       "device_fp": fp,
       "label": label,
       "label_source": labelSource,
       "platform": platform,
-      "enrolled_at": 1000.0,
+      "enrolled_at": enrolledAt,
       "last_seen": lastSeen,
       "key_ids": <String>[],
       "is_current": isCurrent,
+      "approved": approved,
     };
 
 void main() {
@@ -349,8 +401,12 @@ void main() {
         expect(patchRequests.single.uri.path,
             "/api/v1/operator/devices/FP-OTHER");
         expect(patchRequests.single.data, {"label": "Chef's Desk"});
-        expect(adapter.requests.where((r) => r.method == "GET"),
-            hasLength(2));
+        expect(
+          adapter.requests.where(
+            (r) => r.method == "GET" && r.uri.path == "/api/v1/operator/devices",
+          ),
+          hasLength(2),
+        );
         expect(find.text("Chef's Desk"), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
@@ -509,6 +565,215 @@ void main() {
     );
   });
 
+  group("pending device approval", () {
+    testWidgets(
+      "the banner appears only when something is pending, naming the count",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({"devices": []})
+          ..pendingResponses.add({
+            "devices": [
+              _device(fp: "FP-NEW1", label: "New Phone", approved: false),
+              _device(fp: "FP-NEW2", label: "New Laptop", approved: false),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key("pending-devices-banner")),
+            findsOneWidget);
+        expect(find.textContaining("2 devices are waiting for approval"),
+            findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "no banner renders when nothing is pending",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-SELF", label: "This Laptop", isCurrent: true),
+            ],
+          })
+          ..pendingResponses.add({"devices": []});
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        expect(
+            find.byKey(const Key("pending-devices-banner")), findsNothing);
+      },
+    );
+
+    testWidgets(
+      "a pending device's label and wait time are shown",
+      (tester) async {
+        final fiveMinAgo = DateTime.now()
+                .subtract(const Duration(minutes: 5))
+                .millisecondsSinceEpoch /
+            1000;
+        final adapter = _FakeAdapter()
+          ..listResponses.add({"devices": []})
+          ..pendingResponses.add({
+            "devices": [
+              _device(
+                fp: "FP-NEW",
+                label: "New Phone",
+                platform: "android",
+                enrolledAt: fiveMinAgo,
+                approved: false,
+              ),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        expect(find.text("New Phone"), findsOneWidget);
+        expect(find.textContaining("android"), findsOneWidget);
+        expect(find.textContaining("waiting 5m ago"), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "Approve asks for confirmation naming the device and only calls the "
+      "service on confirm",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({"devices": []})
+          ..pendingResponses.addAll([
+            {
+              "devices": [
+                _device(fp: "FP-NEW", label: "New Phone", approved: false),
+              ],
+            },
+            {"devices": []},
+          ]);
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("approve-action-FP-NEW")));
+        await tester.pumpAndSettle();
+
+        expect(find.text("Approve this device?"), findsOneWidget);
+        expect(find.textContaining("New Phone"), findsWidgets);
+        expect(
+          adapter.requests
+              .where((r) => r.method == "POST" && r.uri.path.endsWith("/approve")),
+          isEmpty,
+        );
+
+        await tester.tap(find.byKey(const Key("approve-confirm-action")));
+        await tester.pumpAndSettle();
+
+        final approveRequests = adapter.requests
+            .where((r) => r.method == "POST" && r.uri.path.endsWith("/approve"))
+            .toList();
+        expect(approveRequests, hasLength(1));
+        expect(approveRequests.single.uri.path,
+            "/api/v1/operator/devices/FP-NEW/approve");
+        // Refreshed: the pending list is re-fetched and the device drops out
+        // of the banner.
+        expect(find.byKey(const Key("pending-devices-banner")),
+            findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "Cancelling the Approve confirmation calls no service and the device "
+      "stays pending",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({"devices": []})
+          ..pendingResponses.add({
+            "devices": [
+              _device(fp: "FP-NEW", label: "New Phone", approved: false),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("approve-action-FP-NEW")));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text("Cancel"));
+        await tester.pumpAndSettle();
+
+        expect(
+          adapter.requests
+              .where((r) => r.method == "POST" && r.uri.path.endsWith("/approve")),
+          isEmpty,
+        );
+        expect(find.byKey(const Key("pending-devices-banner")),
+            findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "Deny calls the service directly, no confirmation dialog, and "
+      "refreshes the list",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({"devices": []})
+          ..pendingResponses.addAll([
+            {
+              "devices": [
+                _device(fp: "FP-NEW", label: "New Phone", approved: false),
+              ],
+            },
+            {"devices": []},
+          ]);
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("deny-action-FP-NEW")));
+        await tester.pumpAndSettle();
+
+        final denyRequests = adapter.requests
+            .where((r) => r.method == "POST" && r.uri.path.endsWith("/deny"))
+            .toList();
+        expect(denyRequests, hasLength(1));
+        expect(denyRequests.single.uri.path,
+            "/api/v1/operator/devices/FP-NEW/deny");
+        expect(find.byKey(const Key("pending-devices-banner")),
+            findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "a deny server error surfaces as friendly text, never a raw exception",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({"devices": []})
+          ..pendingResponses.add({
+            "devices": [
+              _device(fp: "FP-NEW", label: "New Phone", approved: false),
+            ],
+          })
+          ..denyStatus = 404
+          ..denyBody = const {"detail": "device not found"};
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("deny-action-FP-NEW")));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining("already gone"), findsOneWidget);
+        expect(find.textContaining("DioException"), findsNothing);
+        expect(find.textContaining("Exception"), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
   group("unlink one device", () {
     testWidgets(
       "tapping Unlink opens a confirm dialog naming the device and only "
@@ -593,8 +858,12 @@ void main() {
 
         expect(find.text("Pixel 9"), findsNothing);
         expect(find.text("This Laptop"), findsOneWidget);
-        expect(adapter.requests.where((r) => r.method == "GET"),
-            hasLength(2));
+        expect(
+          adapter.requests.where(
+            (r) => r.method == "GET" && r.uri.path == "/api/v1/operator/devices",
+          ),
+          hasLength(2),
+        );
         expect(tester.takeException(), isNull);
       },
     );

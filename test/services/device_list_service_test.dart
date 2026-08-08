@@ -91,6 +91,181 @@ void main() {
     expect(await svc.list(), isEmpty);
   });
 
+  test("listPending() parses the devices envelope", () async {
+    final a = _RecordingAdapter()
+      ..body = const {
+        "devices": [
+          {
+            "device_fp": "FP-NEW",
+            "label": "Chrome on Linux",
+            "label_source": "derived",
+            "platform": "linux",
+            "enrolled_at": 1000.0,
+            "last_seen": 1000.0,
+            "key_ids": <String>[],
+            "is_current": false,
+            "approved": false,
+          },
+        ],
+      };
+    final svc = _service(a);
+
+    final devices = await svc.listPending();
+
+    expect(a.requests.single.method, "GET");
+    expect(a.requests.single.uri.path, "/api/v1/operator/devices/pending");
+    expect(devices, hasLength(1));
+    expect(devices.single.deviceFp, "FP-NEW");
+    expect(devices.single.approved, isFalse);
+  });
+
+  test("listPending() tolerates an empty envelope", () async {
+    final a = _RecordingAdapter()..body = const {"devices": <dynamic>[]};
+    final svc = _service(a);
+
+    expect(await svc.listPending(), isEmpty);
+  });
+
+  test("approve() POSTs the approve path and parses the updated row",
+      () async {
+    final a = _RecordingAdapter()
+      ..body = const {
+        "device_fp": "FP-NEW",
+        "label": "Chrome on Linux",
+        "label_source": "derived",
+        "platform": "linux",
+        "enrolled_at": 1000.0,
+        "last_seen": 1000.0,
+        "key_ids": <String>[],
+        "is_current": false,
+        "approved": true,
+      };
+    final svc = _service(a);
+
+    final device = await svc.approve("FP-NEW");
+
+    final req = a.requests.single;
+    expect(req.method, "POST");
+    expect(req.uri.path, "/api/v1/operator/devices/FP-NEW/approve");
+    expect(device.deviceFp, "FP-NEW");
+    expect(device.approved, isTrue);
+  });
+
+  test(
+      "approve() with no operator session surfaces a typed noOperatorSession "
+      "error, not a raw DioException", () async {
+    final a = _RecordingAdapter()
+      ..status = 400
+      ..body = const {
+        "detail":
+            "an operator session is required so only an already-approved "
+                "device can vouch for a new one",
+      };
+    final svc = _service(a);
+
+    try {
+      await svc.approve("FP-NEW");
+      fail("expected a DeviceApprovalException");
+    } on DeviceApprovalException catch (e) {
+      expect(e.reason, DeviceApprovalFailureReason.noOperatorSession);
+      expect(e.statusCode, 400);
+    }
+  });
+
+  test("approve() on an unknown fingerprint surfaces a typed notFound error",
+      () async {
+    final a = _RecordingAdapter()
+      ..status = 404
+      ..body = const {"detail": "device not found"};
+    final svc = _service(a);
+
+    try {
+      await svc.approve("FP-GHOST");
+      fail("expected a DeviceApprovalException");
+    } on DeviceApprovalException catch (e) {
+      expect(e.reason, DeviceApprovalFailureReason.notFound);
+      expect(e.statusCode, 404);
+    }
+  });
+
+  test("deny() POSTs the deny path and parses the unlink report", () async {
+    final a = _RecordingAdapter()
+      ..body = const {
+        "device_fp": "FP-NEW",
+        "sessions_revoked": true,
+        "slots_removed": <String>[],
+        "slots_failed": <String>[],
+        "registry_had_no_slots": true,
+        "store_removed": true,
+        "capauth_revoked": false,
+        "capauth_records_failed": 0,
+        "registry_marked": true,
+      };
+    final svc = _service(a);
+
+    final report = await svc.deny("FP-NEW");
+
+    final req = a.requests.single;
+    expect(req.method, "POST");
+    expect(req.uri.path, "/api/v1/operator/devices/FP-NEW/deny");
+    expect(report.deviceFp, "FP-NEW");
+    expect(report.sessionsRevoked, isTrue);
+  });
+
+  test(
+      "deny() on the caller's own device surfaces a typed selfDeny error, "
+      "distinct from noOperatorSession", () async {
+    final a = _RecordingAdapter()
+      ..status = 400
+      ..body = const {"detail": "cannot deny the device you are using"};
+    final svc = _service(a);
+
+    try {
+      await svc.deny("FP-SELF");
+      fail("expected a DeviceDenyException");
+    } on DeviceDenyException catch (e) {
+      expect(e.reason, DeviceDenyFailureReason.selfDeny);
+      expect(e.statusCode, 400);
+    }
+  });
+
+  test(
+      "deny() with no operator session surfaces a typed noOperatorSession "
+      "error, not a raw DioException", () async {
+    final a = _RecordingAdapter()
+      ..status = 400
+      ..body = const {
+        "detail":
+            "an operator session is required so only an already-approved "
+                "device can deny a new one",
+      };
+    final svc = _service(a);
+
+    try {
+      await svc.deny("FP-NEW");
+      fail("expected a DeviceDenyException");
+    } on DeviceDenyException catch (e) {
+      expect(e.reason, DeviceDenyFailureReason.noOperatorSession);
+      expect(e.statusCode, 400);
+    }
+  });
+
+  test("deny() on an unknown fingerprint surfaces a typed notFound error",
+      () async {
+    final a = _RecordingAdapter()
+      ..status = 404
+      ..body = const {"detail": "device not found"};
+    final svc = _service(a);
+
+    try {
+      await svc.deny("FP-GHOST");
+      fail("expected a DeviceDenyException");
+    } on DeviceDenyException catch (e) {
+      expect(e.reason, DeviceDenyFailureReason.notFound);
+      expect(e.statusCode, 404);
+    }
+  });
+
   test("rename() PATCHes the device-fp path with the label body and parses "
       "the updated row", () async {
     final a = _RecordingAdapter()
