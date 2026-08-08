@@ -15,13 +15,23 @@ import 'package:sk_pqc/sk_pqc.dart';
 ///      `test/fixtures/pqdm2_from_python.json`; every slot opens).
 ///   2. Dart seal -> Dart open round-trip (2-device fanout, each slot opens,
 ///      a non-recipient gets null).
-///   3. Dart seal -> Python open: emits `test/fixtures/pqdm2_from_dart.json`
-///      which the committed `skcomms/tests/test_pqdm2_interop.py` opens.
+///   3. Dart seal -> Python open: `test/fixtures/pqdm2_from_dart.json` is a
+///      PINNED Dart-sealed vector, committed byte-identical here and in
+///      `skcomms/tests/fixtures/`, where `test_pqdm2_interop.py` opens it.
+///   4. Dart open of that same pinned vector: proves TODAY's codec still opens
+///      what a past codec sealed. Without this, (3) only guards the Python side
+///      -- a Dart-side format change would sail through this repo's CI and only
+///      surface as a live decrypt failure.
+///
+/// Refreshing the pinned vector is deliberate, not a side effect of running the
+/// suite: re-emit with `SK_PQDM2_EMIT=1 flutter test` and copy the result to
+/// BOTH repos, or (3) and (4) start testing different bytes.
 ///
 /// Requires the native liboqs backend. If it is unavailable the KEM tests are
 /// skipped cleanly (the interop gate is run on a box that has liboqs).
 void main() {
   final pyFixture = File('test/fixtures/pqdm2_from_python.json');
+  final dartFixture = File('test/fixtures/pqdm2_from_dart.json');
 
   bool kemAvailable() {
     try {
@@ -113,10 +123,45 @@ void main() {
       expect(openedC, isNull);
     });
 
-    test('emits pqdm2_from_dart.json for the Python reverse-interop test',
+    test('opens the PINNED Dart-sealed vector (frozen wire-format guard)',
         () async {
       if (!kemAvailable()) {
         markTestSkipped('liboqs native backend unavailable');
+        return;
+      }
+      final f =
+          jsonDecode(dartFixture.readAsStringSync()) as Map<String, dynamic>;
+      final codec = PqDmCodec();
+
+      // Every slot of a vector sealed by an EARLIER build of this codec must
+      // still open under the current one. This is the same bytes the Python
+      // reverse gate opens, so a failure here localizes the drift to Dart.
+      for (final slot in (f['slots'] as List).cast<Map<String, dynamic>>()) {
+        final clear = await codec.openPqdm2(
+          f['token'] as String,
+          myKeyId: slot['key_id'] as String,
+          myPrivate: _hex(slot['private_hex'] as String),
+          sender: f['sender'] as String,
+          recipientId: f['recipient'] as String,
+        );
+        expect(clear, isNotNull,
+            reason: 'slot ${slot['key_id']} no longer opens -> Dart pqdm2 '
+                'wire format drifted from the pinned vector');
+        expect(utf8.decode(clear!), f['body'] as String);
+      }
+    });
+
+    test('re-emits pqdm2_from_dart.json (opt-in: SK_PQDM2_EMIT=1)', () async {
+      if (!kemAvailable()) {
+        markTestSkipped('liboqs native backend unavailable');
+        return;
+      }
+      // Opt-in ONLY. This test used to write on every run, which both dirtied
+      // the tree and overwrote the very vector the two tests above pin.
+      if (Platform.environment['SK_PQDM2_EMIT'] != '1') {
+        markTestSkipped(
+            'set SK_PQDM2_EMIT=1 to refresh the pinned Dart-sealed vector '
+            '(then copy it to skcomms/tests/fixtures/ too)');
         return;
       }
       final codec = PqDmCodec();
