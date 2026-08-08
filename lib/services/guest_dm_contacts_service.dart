@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
+import 'operator_auth_interceptor.dart';
+import 'operator_session_service.dart';
 import 'operator_token.dart' as op_token;
 
 String? _webOriginOrNull() {
@@ -79,13 +81,29 @@ class GuestContact {
 }
 
 /// Operator controls for individual guest-DM contacts (guest-dm C4), driven by
-/// the S4 `/api/v1/guest-dm/contacts` API. Operator-gated server-side
-/// (tailnet/loopback or the app-stored operator token). Mirrors
-/// [GuestInviteService]'s Dio + `X-Operator-Token` handling.
+/// the S4 `/api/v1/guest-dm/contacts` API.
+///
+/// **These routes need the operator SESSION, not just the pasted token.** They
+/// are capability-mapped server-side, so with `SKCHAT_DATAPLANE_AUTH=1` the
+/// data-plane gate runs first and only accepts `Authorization: Bearer <session>`
+/// or `X-CapAuth-Token`. It does NOT recognise `X-Operator-Token`, so a request
+/// carrying only the pasted token is rejected with 401 "capauth authentication
+/// required" BEFORE the route's own operator check ever runs, and every one of
+/// these calls (list, update, revoke, group expiry) fails identically.
+///
+/// So this attaches the session via [buildOperatorAuthInterceptor], the same way
+/// [DeviceListService] does. The pasted `X-Operator-Token` is still sent
+/// alongside it: it is what authorizes the gate-exempt routes, and it keeps
+/// this working if the data-plane gate is off.
 class GuestDmContactsService {
-  GuestDmContactsService({Dio? dio, String? webuiBaseUrl})
-      : _dio = dio ?? Dio(),
-        _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl);
+  GuestDmContactsService({
+    Dio? dio,
+    String? webuiBaseUrl,
+    OperatorSessionService? sessionService,
+  })  : _dio = dio ?? Dio(),
+        _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl) {
+    _dio.interceptors.add(buildOperatorAuthInterceptor(sessionService, () => _dio));
+  }
 
   final Dio _dio;
   final String _base;
@@ -187,4 +205,8 @@ class GuestDmContactsService {
 }
 
 final guestDmContactsServiceProvider = Provider<GuestDmContactsService>(
-    (ref) => GuestDmContactsService(webuiBaseUrl: _webOriginOrNull()));
+  (ref) => GuestDmContactsService(
+    webuiBaseUrl: _webOriginOrNull(),
+    sessionService: ref.read(operatorSessionServiceProvider),
+  ),
+);
