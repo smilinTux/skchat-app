@@ -25,6 +25,13 @@ String? _webOriginOrNull() {
 /// `time.time()` floats, not ISO strings). [isCurrent] is computed
 /// server-side from the caller's own operator session, so it reflects "the
 /// device making THIS request", not any client-local guess.
+///
+/// [approved] (Phase 3, approval-to-link) is explicit on every row the server
+/// sends now, both from `GET .../devices` and `GET .../devices/pending`
+/// (`device_routes.py`), so it defaults `true` here only for a body a test
+/// hand-writes without the field, never as a guess about a real payload.
+/// A device with `approved: false` cannot mint a session at all: it enrolled
+/// with the shared operator token but nobody has vouched for it yet.
 class LinkedDevice {
   const LinkedDevice({
     required this.deviceFp,
@@ -35,6 +42,7 @@ class LinkedDevice {
     required this.lastSeen,
     this.keyIds = const [],
     this.isCurrent = false,
+    this.approved = true,
   });
 
   final String deviceFp;
@@ -45,6 +53,7 @@ class LinkedDevice {
   final double lastSeen;
   final List<String> keyIds;
   final bool isCurrent;
+  final bool approved;
 
   factory LinkedDevice.fromJson(Map<String, dynamic> j) => LinkedDevice(
         deviceFp: j['device_fp'] as String? ?? '',
@@ -57,6 +66,7 @@ class LinkedDevice {
             .whereType<String>()
             .toList(),
         isCurrent: j['is_current'] as bool? ?? false,
+        approved: j['approved'] as bool? ?? true,
       );
 }
 
@@ -195,6 +205,74 @@ class DeviceUnlinkException implements Exception {
   String toString() => 'DeviceUnlinkException($reason, $statusCode): $message';
 }
 
+/// Why an approve call failed, distinguished so the UI can show the right
+/// message instead of a generic "something went wrong".
+///
+/// There is no self-approve case: approving is never rejected for matching
+/// the caller's own fingerprint, only for missing the session that lets the
+/// server identify a vouching device at all (`device_routes.py:approve`).
+enum DeviceApprovalFailureReason {
+  /// 400: the caller has no resolvable operator session, so the server
+  /// cannot tell that an already-approved device is doing the vouching.
+  noOperatorSession,
+
+  /// 404: no device with that fingerprint is enrolled at all.
+  notFound,
+
+  /// Any other non-2xx response, or a transport-level failure.
+  unknown,
+}
+
+/// Thrown by [DeviceListService.approve] on a non-2xx response, carrying a
+/// typed [reason] so the caller can branch instead of catching a raw
+/// [DioException].
+class DeviceApprovalException implements Exception {
+  const DeviceApprovalException(this.reason, this.message, {this.statusCode});
+
+  final DeviceApprovalFailureReason reason;
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() =>
+      'DeviceApprovalException($reason, $statusCode): $message';
+}
+
+/// Why a deny call failed, distinguished so the UI can show the right
+/// message instead of a generic "something went wrong".
+///
+/// Deny is a full unlink (`device_routes.py:deny` delegates to the same
+/// `unlink_device` as the single-device DELETE), so it carries the same
+/// self-lockout shape as [DeviceUnlinkFailureReason]: no session, and no
+/// denying the device making the call.
+enum DeviceDenyFailureReason {
+  /// 400: the caller has no resolvable operator session.
+  noOperatorSession,
+
+  /// 400: the target fingerprint is the device making the call.
+  selfDeny,
+
+  /// 404: no device with that fingerprint exists.
+  notFound,
+
+  /// Any other non-2xx response, or a transport-level failure.
+  unknown,
+}
+
+/// Thrown by [DeviceListService.deny] on a non-2xx response, carrying a
+/// typed [reason] so the caller can branch instead of catching a raw
+/// [DioException].
+class DeviceDenyException implements Exception {
+  const DeviceDenyException(this.reason, this.message, {this.statusCode});
+
+  final DeviceDenyFailureReason reason;
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => 'DeviceDenyException($reason, $statusCode): $message';
+}
+
 /// Why a rename call failed, distinguished so the UI can show the right
 /// message instead of a generic "something went wrong".
 ///
@@ -295,6 +373,75 @@ DeviceUnlinkException _mapUnlinkError(DioException e) {
   );
 }
 
+DeviceApprovalException _mapApprovalError(DioException e) {
+  final status = e.response?.statusCode;
+  final data = e.response?.data;
+  final detail = (data is Map && data['detail'] is String)
+      ? data['detail'] as String
+      : (e.message ?? 'device approve request failed');
+  if (status == 404) {
+    return DeviceApprovalException(
+      DeviceApprovalFailureReason.notFound,
+      detail,
+      statusCode: status,
+    );
+  }
+  if (status == 400) {
+    // approve() has no self-approve case, every 400 it can return is the
+    // missing-session one.
+    return DeviceApprovalException(
+      DeviceApprovalFailureReason.noOperatorSession,
+      detail,
+      statusCode: status,
+    );
+  }
+  return DeviceApprovalException(
+    DeviceApprovalFailureReason.unknown,
+    detail,
+    statusCode: status,
+  );
+}
+
+DeviceDenyException _mapDenyError(DioException e) {
+  final status = e.response?.statusCode;
+  final data = e.response?.data;
+  final detail = (data is Map && data['detail'] is String)
+      ? data['detail'] as String
+      : (e.message ?? 'device deny request failed');
+  if (status == 404) {
+    return DeviceDenyException(
+      DeviceDenyFailureReason.notFound,
+      detail,
+      statusCode: status,
+    );
+  }
+  if (status == 400) {
+    // Check the self-deny wording first: it is the more specific match,
+    // "cannot deny the device you are using" versus the no-session detail's
+    // generic "operator session" phrase, mirroring _mapUnlinkError's own
+    // ordering for the same reason.
+    if (detail.contains('cannot deny the device you are using')) {
+      return DeviceDenyException(
+        DeviceDenyFailureReason.selfDeny,
+        detail,
+        statusCode: status,
+      );
+    }
+    if (detail.contains('operator session')) {
+      return DeviceDenyException(
+        DeviceDenyFailureReason.noOperatorSession,
+        detail,
+        statusCode: status,
+      );
+    }
+  }
+  return DeviceDenyException(
+    DeviceDenyFailureReason.unknown,
+    detail,
+    statusCode: status,
+  );
+}
+
 /// Operator controls for the "Linked Devices" surface, driven by
 /// `/api/v1/operator/devices*` on the skchat web-UI.
 ///
@@ -347,6 +494,61 @@ class DeviceListService {
         .whereType<Map>()
         .map((m) => LinkedDevice.fromJson(m.cast<String, dynamic>()))
         .toList();
+  }
+
+  /// List every device that enrolled with the operator token but has not
+  /// been vouched for by an already-approved device yet
+  /// (`GET /api/v1/operator/devices/pending`, `device_routes.py:pending`).
+  /// Every row comes back with [LinkedDevice.approved] `false`, the server
+  /// sets it explicitly rather than leaving it to be inferred.
+  Future<List<LinkedDevice>> listPending() async {
+    final r = await _dio.get<Map<String, dynamic>>(
+      '$_base/api/v1/operator/devices/pending',
+      options: _opts(),
+    );
+    final rows = (r.data?['devices'] as List?) ?? const [];
+    return rows
+        .whereType<Map>()
+        .map((m) => LinkedDevice.fromJson(m.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// Vouch for a pending device by fingerprint, letting it mint a session.
+  /// Returns the updated row (`approved: true`).
+  ///
+  /// Throws [DeviceApprovalException] on a non-2xx response: 400 when the
+  /// caller has no operator session (only an already-approved device may
+  /// vouch for a new one), 404 when [deviceFp] is not enrolled at all.
+  Future<LinkedDevice> approve(String deviceFp) async {
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(
+        '$_base/api/v1/operator/devices/$deviceFp/approve',
+        data: const {},
+        options: _opts(),
+      );
+      return LinkedDevice.fromJson(r.data ?? const {});
+    } on DioException catch (e) {
+      throw _mapApprovalError(e);
+    }
+  }
+
+  /// Reject a pending device by fingerprint. This is a full unlink across
+  /// all four stores (same as [unlink]), the row is kept only for audit.
+  ///
+  /// Throws [DeviceDenyException] on a non-2xx response: 400 when the caller
+  /// has no operator session, 400 when [deviceFp] is the device making the
+  /// call, 404 when [deviceFp] is unknown.
+  Future<DeviceUnlinkReport> deny(String deviceFp) async {
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(
+        '$_base/api/v1/operator/devices/$deviceFp/deny',
+        data: const {},
+        options: _opts(),
+      );
+      return DeviceUnlinkReport.fromJson(r.data ?? const {});
+    } on DioException catch (e) {
+      throw _mapDenyError(e);
+    }
   }
 
   /// Rename one device by fingerprint. The server trims and caps [label] at

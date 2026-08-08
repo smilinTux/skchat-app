@@ -34,6 +34,13 @@ import '../../services/device_list_service.dart';
 ///    rename] (`PATCH /api/v1/operator/devices/{fp}`). The one source that
 ///    is both accurate and confirmed by a human looking at the device.
 ///
+/// Phase 3 (approval-to-link): [DeviceListService.listPending] surfaces every
+/// device that enrolled with the shared operator token but has not been
+/// approved by an already-approved device yet ([_PendingDevicesBanner]).
+/// Such a device cannot mint a session and can do nothing else on its own,
+/// so this is a security surface: an unrecognized row there is an intrusion
+/// attempt, not a chore, and the banner is styled and worded accordingly.
+///
 /// Only `"operator"` is trusted. `"client"` and `"derived"` both render with
 /// the SAME styling the rest of the app already uses for a self-asserted
 /// guest name (see `guestDisplayTitle` / `ConversationMember.isUntrustedName`
@@ -58,6 +65,7 @@ enum _LoadState { loading, loaded, error }
 class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
   _LoadState _state = _LoadState.loading;
   List<LinkedDevice> _devices = const [];
+  List<LinkedDevice> _pending = const [];
   String _errorMessage = '';
 
   /// Fingerprints currently mid-unlink: their row shows a spinner instead of
@@ -71,6 +79,13 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
   /// right one is in flight.
   final Set<String> _renamingFps = {};
 
+  /// Fingerprints currently mid-approve / mid-deny, tracked separately from
+  /// each other (and from [_busyFps]/[_renamingFps]) for the same reason:
+  /// each is its own request and a pending row should show the right one is
+  /// in flight, not a generic spinner on both actions at once.
+  final Set<String> _approvingFps = {};
+  final Set<String> _denyingFps = {};
+
   @override
   void initState() {
     super.initState();
@@ -80,10 +95,13 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
   Future<void> _load() async {
     setState(() => _state = _LoadState.loading);
     try {
-      final devices = await ref.read(deviceListServiceProvider).list();
+      final service = ref.read(deviceListServiceProvider);
+      final devices = await service.list();
+      final pending = await service.listPending();
       if (!mounted) return;
       setState(() {
         _devices = devices;
+        _pending = pending;
         _state = _LoadState.loaded;
       });
     } catch (_) {
@@ -303,6 +321,126 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
     }
   }
 
+  /// Approve is the deliberate action: it always goes through a confirmation
+  /// dialog naming the device, unlike [_deny], because approving is what
+  /// hands a stranger an operator session. A pending device linked using the
+  /// shared operator token; if the operator does not recognize it, that is
+  /// an intrusion attempt, not a chore, so nothing here defaults to "yes".
+  Future<void> _confirmApprove(LinkedDevice device) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SovereignColors.surfaceRaised,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Approve this device?'),
+        content: Text(
+          '"${_rowLabel(device)}" will be able to obtain an operator '
+          'session and use every operator-gated feature. Only approve it '
+          'if you recognize it as one of your own devices.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: SovereignColors.textTertiary),
+            ),
+          ),
+          FilledButton(
+            key: const Key('approve-confirm-action'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Approve'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _approve(device);
+  }
+
+  Future<void> _approve(LinkedDevice device) async {
+    setState(() => _approvingFps.add(device.deviceFp));
+    try {
+      await ref.read(deviceListServiceProvider).approve(device.deviceFp);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Approved ${_rowLabel(device)}')),
+      );
+      await _load();
+    } on DeviceApprovalException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_friendlyApprovalMessage(e))));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not approve this device. Try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _approvingFps.remove(device.deviceFp));
+    }
+  }
+
+  /// Typed [DeviceApprovalException] -> a short, friendly line, never the
+  /// raw server `detail` string or a bare exception toString().
+  String _friendlyApprovalMessage(DeviceApprovalException e) {
+    switch (e.reason) {
+      case DeviceApprovalFailureReason.noOperatorSession:
+        return 'You need an active operator session to approve devices.';
+      case DeviceApprovalFailureReason.notFound:
+        return 'That device is already gone.';
+      case DeviceApprovalFailureReason.unknown:
+        return 'Could not approve this device. Try again.';
+    }
+  }
+
+  /// Deny is deliberately NOT gated behind a confirmation dialog the way
+  /// [_confirmApprove] is: rejecting a device nobody vouched for should be
+  /// at least as easy to reach as approving it, not harder. It is a full
+  /// unlink server-side, but there is nothing to lose by acting fast, the
+  /// device never had a session to begin with.
+  Future<void> _deny(LinkedDevice device) async {
+    setState(() => _denyingFps.add(device.deviceFp));
+    try {
+      await ref.read(deviceListServiceProvider).deny(device.deviceFp);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Denied ${_rowLabel(device)}')),
+      );
+      await _load();
+    } on DeviceDenyException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_friendlyDenyMessage(e))));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not deny this device. Try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _denyingFps.remove(device.deviceFp));
+    }
+  }
+
+  /// Typed [DeviceDenyException] -> a short, friendly line, never the raw
+  /// server `detail` string or a bare exception toString().
+  String _friendlyDenyMessage(DeviceDenyException e) {
+    switch (e.reason) {
+      case DeviceDenyFailureReason.selfDeny:
+        return 'Cannot deny the device you are using right now.';
+      case DeviceDenyFailureReason.noOperatorSession:
+        return 'You need an active operator session to deny devices.';
+      case DeviceDenyFailureReason.notFound:
+        return 'That device is already gone.';
+      case DeviceDenyFailureReason.unknown:
+        return 'Could not deny this device. Try again.';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -323,7 +461,7 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
   }
 
   Widget _buildLoaded(BuildContext context) {
-    if (_devices.isEmpty) {
+    if (_devices.isEmpty && _pending.isEmpty) {
       return _EmptyView(onRefresh: _load);
     }
     final hasOthers = _devices.any((d) => !d.isCurrent);
@@ -340,6 +478,16 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
+          if (_pending.isNotEmpty) ...[
+            _PendingDevicesBanner(
+              pending: _pending,
+              approvingFps: _approvingFps,
+              denyingFps: _denyingFps,
+              onApprove: _confirmApprove,
+              onDeny: _deny,
+            ),
+            const SizedBox(height: 12),
+          ],
           if (!hasCurrent) ...[
             const _NoOperatorSessionBanner(),
             const SizedBox(height: 12),
@@ -559,6 +707,191 @@ class _RenameDialogState extends State<_RenameDialog> {
           child: const Text('Rename'),
         ),
       ],
+    );
+  }
+}
+
+/// The pending-approval banner: every device that enrolled with the shared
+/// operator token but has not been vouched for yet
+/// (`GET /api/v1/operator/devices/pending`, [DeviceListService.listPending]).
+///
+/// This is a security surface, not a chore list. A row here is a device
+/// nobody has confirmed belongs to the operator; if it is not recognized, it
+/// is an intrusion attempt. So this uses the screen's existing danger
+/// styling (the same [SovereignColors.accentDanger] the Unlink controls use)
+/// rather than the milder amber [_NoOperatorSessionBanner] uses, Deny sits
+/// at least as reachable as Approve on every row, and Approve is gated
+/// behind [_LinkedDevicesScreenState._confirmApprove]'s named confirmation,
+/// never a bare tap.
+class _PendingDevicesBanner extends StatelessWidget {
+  const _PendingDevicesBanner({
+    required this.pending,
+    required this.approvingFps,
+    required this.denyingFps,
+    required this.onApprove,
+    required this.onDeny,
+  });
+
+  final List<LinkedDevice> pending;
+  final Set<String> approvingFps;
+  final Set<String> denyingFps;
+  final void Function(LinkedDevice) onApprove;
+  final void Function(LinkedDevice) onDeny;
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final n = pending.length;
+    return Container(
+      key: const Key('pending-devices-banner'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: SovereignColors.accentDanger.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: SovereignColors.accentDanger.withValues(alpha: 0.4),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.gpp_maybe_rounded,
+                color: SovereignColors.accentDanger,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  n == 1
+                      ? '1 device is waiting for approval'
+                      : '$n devices are waiting for approval',
+                  style: tt.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: SovereignColors.accentDanger,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 30),
+            child: Text(
+              'Each one linked using the operator token, but nobody has '
+              'confirmed it belongs to you yet. If you do not recognize a '
+              'device below, deny it.',
+              style: tt.bodySmall
+                  ?.copyWith(color: SovereignColors.textSecondary),
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (final device in pending) ...[
+            _PendingDeviceRow(
+              key: ValueKey('pending-${device.deviceFp}'),
+              device: device,
+              approving: approvingFps.contains(device.deviceFp),
+              denying: denyingFps.contains(device.deviceFp),
+              onApprove: () => onApprove(device),
+              onDeny: () => onDeny(device),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingDeviceRow extends StatelessWidget {
+  const _PendingDeviceRow({
+    super.key,
+    required this.device,
+    required this.approving,
+    required this.denying,
+    required this.onApprove,
+    required this.onDeny,
+  });
+
+  final LinkedDevice device;
+  final bool approving;
+  final bool denying;
+  final VoidCallback onApprove;
+  final VoidCallback onDeny;
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final label = deviceRowTitle(device);
+    final platformLabel =
+        device.platform.isNotEmpty ? device.platform : 'unknown';
+    final busy = approving || denying;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: SovereignColors.surfaceRaised,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _platformIcon(device.platform),
+            color: SovereignColors.textTertiary,
+            size: 18,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$platformLabel · waiting ${relativeLastSeen(device.enrolledAt)}',
+                  style: tt.labelSmall
+                      ?.copyWith(color: SovereignColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          denying
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : TextButton(
+                  key: Key('deny-action-${device.deviceFp}'),
+                  onPressed: busy ? null : onDeny,
+                  style: TextButton.styleFrom(
+                    foregroundColor: SovereignColors.accentDanger,
+                  ),
+                  child: const Text('Deny'),
+                ),
+          const SizedBox(width: 4),
+          approving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : OutlinedButton(
+                  key: Key('approve-action-${device.deviceFp}'),
+                  onPressed: busy ? null : onApprove,
+                  child: const Text('Approve'),
+                ),
+        ],
+      ),
     );
   }
 }
