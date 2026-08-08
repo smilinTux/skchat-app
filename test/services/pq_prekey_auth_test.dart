@@ -48,6 +48,11 @@ class _FakeSessionService extends OperatorSessionService {
     return next as String;
   }
 
+  /// The interceptor now consumes the full credential bundle (hs256 path here).
+  @override
+  Future<OperatorCredentials> ensureCredentials() async =>
+      OperatorCredentials(sessionToken: await ensureSession());
+
   @override
   void clearSession() {}
 }

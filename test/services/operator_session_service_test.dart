@@ -614,4 +614,125 @@ void main() {
       },
     );
   });
+
+  // ── CR-3.4 PR4: operator-audience credential + issuer policy ──────────────
+  group("ensureCredentials (CR-3.4 PR4)", () {
+    test("carries the audience token + issuer_policy the server sends", () async {
+      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+      final hs = _fakeJwt(future);
+      adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N", "exp": future};
+      adapter.routes["/api/v1/auth/session"] = {
+        "session_token": hs,
+        "expires_at": future,
+        "audience_token": "AUD-WIRE-TOKEN",
+        "audience_expires_at": "2026-08-08T00:00:00+00:00",
+        "issuer_policy": "prefer-audience",
+      };
+
+      final creds = await svc.ensureCredentials();
+
+      expect(creds.sessionToken, hs);
+      expect(creds.audienceToken, "AUD-WIRE-TOKEN");
+      expect(creds.issuerPolicy, "prefer-audience");
+      // The legacy ensureSession() contract is unchanged: still the HS256 token.
+      expect(await svc.ensureSession(), hs);
+    });
+
+    test(
+      "defaults issuer_policy to hs256 and audienceToken null, and keeps the "
+      "stored value a BARE JWT, when the server omits the new fields "
+      "(byte-identical to the live hs256 path)",
+      () async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final hs = _fakeJwt(future);
+        adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N", "exp": future};
+        adapter.routes["/api/v1/auth/session"] = {
+          "session_token": hs,
+          "expires_at": future,
+        };
+
+        final creds = await svc.ensureCredentials();
+
+        expect(creds.sessionToken, hs);
+        expect(creds.audienceToken, isNull);
+        expect(creds.issuerPolicy, "hs256");
+        // No envelope: the slot holds the raw JWT exactly as before this change.
+        expect(store.value, hs);
+      },
+    );
+
+    test(
+      "persists the audience envelope so a reload restores the full bundle "
+      "with no handshake",
+      () async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final hs = _fakeJwt(future);
+        adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N", "exp": future};
+        adapter.routes["/api/v1/auth/session"] = {
+          "session_token": hs,
+          "expires_at": future,
+          "audience_token": "AUD-WIRE",
+          "audience_expires_at": "2026-08-08T00:00:00+00:00",
+          "issuer_policy": "prefer-audience",
+        };
+
+        await svc.ensureCredentials();
+
+        // A fresh service instance reading the SAME persisted slot (a page
+        // reload / app relaunch) restores everything without a network call.
+        final adapter2 = _CannedAdapter({});
+        final dio2 = Dio()..httpClientAdapter = adapter2;
+        final reloaded = OperatorSessionService(
+          dio: dio2,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+          tokenReader: store.read,
+          tokenWriter: store.write,
+        );
+
+        final creds = await reloaded.ensureCredentials();
+
+        expect(creds.sessionToken, hs);
+        expect(creds.audienceToken, "AUD-WIRE");
+        expect(creds.issuerPolicy, "prefer-audience");
+        expect(adapter2.requests, isEmpty);
+      },
+    );
+
+    test("reads a legacy bare-JWT stored value as hs256 with no audience", () async {
+      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+      store.value = _fakeJwt(future); // pre-PR4 stored shape
+
+      final creds = await svc.ensureCredentials();
+
+      expect(creds.sessionToken, _fakeJwt(future));
+      expect(creds.issuerPolicy, "hs256");
+      expect(creds.audienceToken, isNull);
+      expect(adapter.requests, isEmpty);
+    });
+
+    test("an unknown issuer_policy value is treated as hs256", () async {
+      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+      final hs = _fakeJwt(future);
+      adapter.routes["/api/v1/auth/challenge"] = {"nonce": "N", "exp": future};
+      adapter.routes["/api/v1/auth/session"] = {
+        "session_token": hs,
+        "expires_at": future,
+        "issuer_policy": "banana",
+      };
+
+      final creds = await svc.ensureCredentials();
+
+      expect(creds.issuerPolicy, "hs256");
+    });
+  });
+
+  group("audience fallback counter (CR-3.4 PR4)", () {
+    test("starts at zero and increments on recordAudienceFallback", () {
+      expect(svc.audienceFallbackCount, 0);
+      svc.recordAudienceFallback();
+      svc.recordAudienceFallback();
+      expect(svc.audienceFallbackCount, 2);
+    });
+  });
 }

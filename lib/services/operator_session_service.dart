@@ -94,6 +94,42 @@ int? _jwtExpClaim(String jwt) {
   return null;
 }
 
+/// The issuer policies the server may echo in the session response
+/// (`issuer_policy`), driving which credential the client attaches. Any value
+/// outside this set is normalized to `hs256`, the safe default (attach the
+/// proven HS256 session), so a server typo can never silently disable auth.
+const _kValidIssuerPolicies = {"hs256", "prefer-audience", "audience-only"};
+
+const _kDefaultIssuerPolicy = "hs256";
+
+String _normalizeIssuerPolicy(Object? value) =>
+    (value is String && _kValidIssuerPolicies.contains(value))
+        ? value
+        : _kDefaultIssuerPolicy;
+
+/// The full operator credential bundle a session handshake yields (CR-3.4 PR4).
+///
+/// [sessionToken] is the HS256 session JWT (always present, the historical
+/// credential and the automatic fallback). [audienceToken] is the parallel
+/// capauth audience token minted for `operator:<device_fp>` when the server has
+/// `SKCHAT_OPERATOR_AUDIENCE_ISSUE` on (else null). [issuerPolicy] is the
+/// server-echoed preference (`hs256` default / `prefer-audience` /
+/// `audience-only`) so the client's choice is server-driven and reversible with
+/// no app rebuild.
+class OperatorCredentials {
+  const OperatorCredentials({
+    required this.sessionToken,
+    this.audienceToken,
+    this.audienceExpiresAt,
+    this.issuerPolicy = _kDefaultIssuerPolicy,
+  });
+
+  final String sessionToken;
+  final String? audienceToken;
+  final String? audienceExpiresAt;
+  final String issuerPolicy;
+}
+
 /// Client-side operator-auth handshake: proves this device holds the
 /// enrolled device key and exchanges that proof for a short-lived bearer
 /// session JWT, the token every operator-gated daemon route will require
@@ -204,10 +240,28 @@ class OperatorSessionService {
   @visibleForTesting
   String? Function() get debugOperatorTokenReader => _readOperatorToken;
 
-  /// Set (only while a handshake is running) so concurrent [ensureSession]
-  /// calls await the SAME in-flight future instead of each starting their
-  /// own handshake.
-  Future<String>? _inFlightHandshake;
+  /// Set (only while a handshake is running) so concurrent [ensureSession] /
+  /// [ensureCredentials] calls await the SAME in-flight future instead of each
+  /// starting their own handshake.
+  Future<OperatorCredentials>? _inFlightHandshake;
+
+  /// Count of times the interceptor fell back from the audience token to the
+  /// HS256 session after a 401/403 (CR-3.4 PR4). Surfaced read-only via
+  /// [audienceFallbackCount] for the operator status UI and the Phase 3 soak
+  /// gate ("fallback counter stays zero across seat devices"). A pure counter:
+  /// the structured log line the interceptor emits carries the detail.
+  int _audienceFallbackCount = 0;
+
+  /// How many audience->HS256 fallbacks this service has recorded. Zero on a
+  /// healthy `prefer-audience` seat.
+  int get audienceFallbackCount => _audienceFallbackCount;
+
+  /// Record one audience->HS256 fallback. Called by the operator-auth
+  /// interceptor when an audience-credential request 401/403s and it retries
+  /// with the HS256 session.
+  void recordAudienceFallback() {
+    _audienceFallbackCount += 1;
+  }
 
   /// When non-null and still in the future, a recent handshake failed and
   /// [ensureSession] short-circuits with [_negativeCacheError] instead of
@@ -225,9 +279,19 @@ class OperatorSessionService {
   ///    last [_kNegativeCacheWindow], this call rethrows that failure
   ///    immediately without hitting the network again. A successful call,
   ///    [clearSession], or a successful [enroll], resets the negative cache.
-  Future<String> ensureSession() async {
-    final cached = _readToken();
-    if (cached != null && cached.isNotEmpty && _isUnexpired(cached)) {
+  Future<String> ensureSession() async =>
+      (await ensureCredentials()).sessionToken;
+
+  /// The full [OperatorCredentials] bundle (HS256 session + optional audience
+  /// token + server-echoed issuer policy). Returns a cached, unexpired bundle
+  /// if one is stored; otherwise runs the challenge-response handshake, caches
+  /// the result, and returns it. Cache validity keys off the HS256 session
+  /// token's own `exp` (the audience token shares its 12h TTL), so the same
+  /// single stored value survives a reload. The two perf guards ([ensureSession]
+  /// doc) sit in front of the handshake unchanged.
+  Future<OperatorCredentials> ensureCredentials() async {
+    final cached = _parseStored(_readToken());
+    if (cached != null && _isUnexpired(cached.sessionToken)) {
       return cached;
     }
 
@@ -248,10 +312,10 @@ class OperatorSessionService {
     final handshake = _runHandshake();
     _inFlightHandshake = handshake;
     try {
-      final token = await handshake;
+      final creds = await handshake;
       _negativeCacheUntil = null;
       _negativeCacheError = null;
-      return token;
+      return creds;
     } catch (e) {
       _negativeCacheUntil = _now().add(_kNegativeCacheWindow);
       _negativeCacheError = e;
@@ -261,10 +325,63 @@ class OperatorSessionService {
     }
   }
 
+  /// Parse the stored credential slot, which is EITHER a bare HS256 JWT (the
+  /// pre-PR4 and hs256-path shape, kept byte-identical so nothing about the
+  /// live seat changes) OR a JSON envelope carrying the audience token + issuer
+  /// policy (written only once the server actually issues an audience token).
+  /// Returns null for an empty or malformed slot, which forces a fresh
+  /// handshake.
+  OperatorCredentials? _parseStored(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.trimLeft().startsWith("{")) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          final session = decoded["session_token"];
+          if (session is String && session.isNotEmpty) {
+            final audience = decoded["audience_token"];
+            final audienceExp = decoded["audience_expires_at"];
+            return OperatorCredentials(
+              sessionToken: session,
+              audienceToken: (audience is String && audience.isNotEmpty)
+                  ? audience
+                  : null,
+              audienceExpiresAt: audienceExp is String ? audienceExp : null,
+              issuerPolicy: _normalizeIssuerPolicy(decoded["issuer_policy"]),
+            );
+          }
+        }
+      } catch (_) {
+        // Malformed envelope: treat as no cache (re-handshake), never trust it.
+      }
+      return null;
+    }
+    // Legacy / hs256-path bare JWT.
+    return OperatorCredentials(sessionToken: raw);
+  }
+
+  /// Serialize an [OperatorCredentials] bundle for the storage slot. With NO
+  /// audience token (the hs256 path) this is the bare session JWT, byte-for-byte
+  /// what the pre-PR4 code stored; existing readers and tests are unaffected.
+  /// With an audience token it is a compact JSON envelope.
+  String _serializeCredentials(OperatorCredentials creds) {
+    final audience = creds.audienceToken;
+    if (audience == null || audience.isEmpty) {
+      return creds.sessionToken;
+    }
+    return jsonEncode({
+      "session_token": creds.sessionToken,
+      "audience_token": audience,
+      if (creds.audienceExpiresAt != null)
+        "audience_expires_at": creds.audienceExpiresAt,
+      "issuer_policy": creds.issuerPolicy,
+    });
+  }
+
   /// The actual challenge-response wire exchange, factored out of
   /// [ensureSession] so the negative-cache / in-flight bookkeeping there
   /// stays focused on caching concerns, not the handshake mechanics.
-  Future<String> _runHandshake() async {
+  Future<OperatorCredentials> _runHandshake() async {
     final kp = await _identity.ensure();
     final deviceFp = kp.fingerprint;
 
@@ -289,7 +406,8 @@ class OperatorSessionService {
       "/api/v1/auth/session",
       data: {"device_fp": deviceFp, "nonce": nonce, "sig": sig},
     );
-    final token = sessionResp.data?["session_token"] as String?;
+    final data = sessionResp.data;
+    final token = data?["session_token"] as String?;
     if (token == null || token.isEmpty) {
       // Same reasoning: an empty token must not be cached or handed to the
       // interceptor as a real Bearer value.
@@ -299,8 +417,20 @@ class OperatorSessionService {
       );
     }
 
-    _writeToken(token);
-    return token;
+    // CR-3.4 PR4: the response ADDITIONALLY carries a parallel capauth audience
+    // token and the server's issuer policy when parallel issuance is on. All
+    // three are optional and additive; a pre-PR4 server (or the flag off) omits
+    // them and the bundle degrades to the pure HS256 credential.
+    final audience = data?["audience_token"] as String?;
+    final creds = OperatorCredentials(
+      sessionToken: token,
+      audienceToken: (audience != null && audience.isNotEmpty) ? audience : null,
+      audienceExpiresAt: data?["audience_expires_at"] as String?,
+      issuerPolicy: _normalizeIssuerPolicy(data?["issuer_policy"]),
+    );
+
+    _writeToken(_serializeCredentials(creds));
+    return creds;
   }
 
   /// Drop the cached session token, forcing the next [ensureSession] call to
@@ -338,8 +468,8 @@ class OperatorSessionService {
   /// the negative cache for [_kNegativeCacheWindow], which would then also
   /// block the FOLLOW-UP [ensureSession] call inside the enrollment flow).
   bool hasLiveSession() {
-    final cached = _readToken();
-    return cached != null && cached.isNotEmpty && _isUnexpired(cached);
+    final cached = _parseStored(_readToken());
+    return cached != null && _isUnexpired(cached.sessionToken);
   }
 
   /// True when [token] is a decodable JWT-shaped string whose `exp` claim is
