@@ -421,10 +421,12 @@ void main() {
     verifyNever(() => svc.setMicEnabled(true));
 
     // Server flips the grant (mutual consent: hand_raised AND invited). No
-    // rejoin, no new connectWithToken call, just a fresh snapshot.
+    // rejoin, no new connectWithToken call, just a fresh snapshot. A freshly
+    // promoted speaker has NOT published a mic yet, so ground truth is
+    // isMuted:true (starts MUTED, never auto-unmuted).
     controller.add(<LiveKitParticipantSnapshot>[
       _snap("chef@dk.skworld", canPublish: true),
-      _snap("alice@dk.skworld", isLocal: true, canPublish: true),
+      _snap("alice@dk.skworld", isLocal: true, canPublish: true, isMuted: true),
     ]);
     await tester.pump(const Duration(milliseconds: 50));
 
@@ -448,9 +450,10 @@ void main() {
         StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
     addTearDown(controller.close);
     // Non-host speaker joining (or rejoining) with a pre-authorized publish
-    // grant already on their snapshot.
+    // grant already on their snapshot. Starts MUTED (host-only connect-time
+    // auto-publish), so ground truth is isMuted:true (no live mic yet).
     final live = <LiveKitParticipantSnapshot>[
-      _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+      _snap("dana@dk.skworld", isLocal: true, canPublish: true, isMuted: true),
       _snap("chef@dk.skworld", canPublish: true),
     ];
     when(() => svc.participants).thenAnswer((_) => controller.stream);
@@ -488,6 +491,83 @@ void main() {
     expect(find.text("Mute"), findsNothing);
     expect(find.text("Unmute"), findsNothing);
     verify(() => svc.setMicEnabled(false)).called(1);
+  });
+
+  // ── HOTMIC: the control-bar label MUST follow the real mic track ──────────
+  //
+  // Privacy-critical (inc-31cfd2da): the mic button rendered "muted" while the
+  // real LiveKit mic track was live, on both host and promoted guest. Root
+  // cause: SpaceRoomState.isMicEnabled was inferred from mic EVENTS
+  // (micEnabledChanges / the external-mute reconciliation) that only ever flip
+  // the label DOWN to muted and never re-sync it back up, so any stray or
+  // transient mute signal left a live mic rendering as muted. The fix makes the
+  // notifier reconcile isMicEnabled to GROUND TRUTH — the local snapshot's real
+  // mic state (isMuted == !isMicrophoneEnabled(), re-emitted on both
+  // TrackMuted AND TrackUnmuted) — on every participants emission, so a live
+  // mic can never render as muted and a muted mic can never render as live.
+
+  group("HOTMIC ground-truth mic label", () {
+    testWidgets(
+        "a live local mic never renders as muted even after a stray mute "
+        "signal drifts isMicEnabled false (anti hot-mic)", (tester) async {
+      final partCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      final micCtl = StreamController<bool>.broadcast();
+      addTearDown(partCtl.close);
+      addTearDown(micCtl.close);
+      when(() => svc.participants).thenAnswer((_) => partCtl.stream);
+      when(() => svc.micEnabledChanges).thenAnswer((_) => micCtl.stream);
+      // Host with a LIVE mic (isMuted:false is ground truth = mic on the wire).
+      final live = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isMuted: false),
+      ];
+      when(() => svc.currentParticipants).thenReturn(live);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      partCtl.add(live);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text("Mute"), findsOneWidget);
+
+      // A stray external mute signal flips the inferred flag false WITHOUT the
+      // real track muting (exactly the desync that produced the hot mic).
+      micCtl.add(false);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // The next authoritative snapshot still reports the mic LIVE, so the
+      // label MUST re-sync to "Mute". A live mic can never be left muted.
+      partCtl.add(live);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text("Mute"), findsOneWidget,
+          reason: "a live mic must never render as muted");
+      expect(find.text("Unmute"), findsNothing);
+    });
+
+    testWidgets(
+        "a genuinely muted local mic renders as Unmute from ground truth "
+        "(isMuted:true), no manual tap needed", (tester) async {
+      final partCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(partCtl.close);
+      when(() => svc.participants).thenAnswer((_) => partCtl.stream);
+      // A non-host speaker who has NOT unmuted has no live mic publication:
+      // ground truth isMuted == true.
+      final muted = <LiveKitParticipantSnapshot>[
+        _snap("dana@dk.skworld",
+            isLocal: true, canPublish: true, isMuted: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.currentParticipants).thenReturn(muted);
+
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      partCtl.add(muted);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Unmute"), findsOneWidget);
+      expect(find.text("Mute"), findsNothing);
+    });
   });
 
   // ── IF1: system-audio mutual exclusion must not desync the mic label ──────
@@ -689,9 +769,14 @@ void main() {
       // plus the default-mute setMicEnabled(false)).
       clearInteractions(svc);
 
-      // Content share stops.
+      // Content share stops. The mic stayed muted through the echo-default
+      // (X model: only an explicit tap unmutes), so ground truth is
+      // isMuted:true on this emission.
       when(() => svc.isSharingSystemAudio).thenReturn(false);
-      partCtl.add(roster);
+      partCtl.add(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isSpeaking: true, isMuted: true),
+      ]);
       await tester.pump(const Duration(milliseconds: 50));
 
       // X model: nothing auto-unmutes. The mic is still muted (only the
@@ -1812,8 +1897,13 @@ void main() {
           StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
       addTearDown(controller.close);
       final live = <LiveKitParticipantSnapshot>[
+        // dana shares camera but her mic is muted (isMuted:true is ground
+        // truth): the end-state asserts "Unmute" is still available.
         _snap("dana@dk.skworld",
-            isLocal: true, canPublish: true, isCameraEnabled: true),
+            isLocal: true,
+            canPublish: true,
+            isCameraEnabled: true,
+            isMuted: true),
         _snap("chef@dk.skworld", canPublish: true),
       ];
       when(() => svc.participants).thenAnswer((_) => controller.stream);
@@ -1836,7 +1926,8 @@ void main() {
             isLocal: true,
             canPublish: true,
             isCameraEnabled: true,
-            canPublishVideo: false),
+            canPublishVideo: false,
+            isMuted: true),
         _snap("chef@dk.skworld", canPublish: true),
       ]);
       await tester.pump(const Duration(milliseconds: 50));
@@ -1861,8 +1952,12 @@ void main() {
           StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
       addTearDown(controller.close);
       final live = <LiveKitParticipantSnapshot>[
+        // dana screen-shares but her mic is muted (isMuted:true ground truth).
         _snap("dana@dk.skworld",
-            isLocal: true, canPublish: true, isScreenSharing: true),
+            isLocal: true,
+            canPublish: true,
+            isScreenSharing: true,
+            isMuted: true),
         _snap("chef@dk.skworld", canPublish: true),
       ];
       when(() => svc.participants).thenAnswer((_) => controller.stream);
@@ -1880,7 +1975,8 @@ void main() {
             isLocal: true,
             canPublish: true,
             isScreenSharing: true,
-            canPublishVideo: false),
+            canPublishVideo: false,
+            isMuted: true),
         _snap("chef@dk.skworld", canPublish: true),
       ]);
       await tester.pump(const Duration(milliseconds: 50));
