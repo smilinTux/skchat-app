@@ -14,16 +14,26 @@ import '../../services/device_list_service.dart';
 /// ([DeviceUnlinkFailureReason.selfUnlink]), so offering the action here
 /// would put an affordance on screen for something that cannot succeed.
 ///
-/// A device's [LinkedDevice.label] is self-asserted by that device unless
-/// [LinkedDevice.labelSource] is `"operator"` (today the server only ever
-/// records `"client"` or `"derived"`, see `operator_auth_routes.py`'s
-/// `_record_enrollment`, both self-asserted; `"operator"` is left open for a
-/// future operator-set rename). Anything not `"operator"` renders with the
-/// SAME untrusted styling the rest of the app already uses for a
-/// self-asserted guest name (see `guestDisplayTitle` /
-/// `ConversationMember.isUntrustedName` in `packages/skchat_ui`, and the
-/// mirrored per-row style in `group_info_screen.dart`): amber, italic. No new
-/// styling is invented here.
+/// A device's [LinkedDevice.label] comes from one of three sources
+/// (`operator_auth_routes.py`'s `_record_enrollment`):
+///  - `"client"`: the DEVICE named itself (the value R2 signs, see
+///    `operator_session_service.dart:enroll`'s doc). Self-asserted and
+///    therefore spoofable, e.g. a device could sign the label `Chef's
+///    MacBook (verified)`.
+///  - `"derived"`: the SERVER parsed a name from the enrolling request's
+///    User-Agent (`_derive_label`). Not spoofable by the device, the client
+///    never got a vote.
+///  - `"operator"`: reserved for a future operator-set rename; the server
+///    does not emit this yet.
+///
+/// Only `"client"` is untrusted. It renders with the SAME styling the rest of
+/// the app already uses for a self-asserted guest name (see
+/// `guestDisplayTitle` / `ConversationMember.isUntrustedName` in
+/// `packages/skchat_ui`, and the mirrored per-row style in
+/// `group_info_screen.dart`): amber, italic, PLUS a text-level `self-named:`
+/// marker (see [deviceRowTitle]) mirroring `guestDisplayTitle`'s `guest:`
+/// prefix, so a self-asserted label cannot visually pass as one the server
+/// assigned. `"derived"` and `"operator"` render trusted, with no marker.
 class LinkedDevicesScreen extends ConsumerStatefulWidget {
   const LinkedDevicesScreen({super.key});
 
@@ -240,11 +250,23 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
       return _EmptyView(onRefresh: _load);
     }
     final hasOthers = _devices.any((d) => !d.isCurrent);
+    // `is_current` is computed server-side from the caller's operator
+    // SESSION. A caller authenticating with only a shared X-Operator-Token
+    // has no session, so the server marks no row current: every row then
+    // shows an Unlink control (including the device in the operator's own
+    // hand) and unlink-others appears, none of which can succeed (the server
+    // 400s "no operator session"). Rather than let the operator discover
+    // that by tapping, say so up front.
+    final hasCurrent = _devices.any((d) => d.isCurrent);
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
+          if (!hasCurrent) ...[
+            const _NoOperatorSessionBanner(),
+            const SizedBox(height: 12),
+          ],
           for (final device in _devices) ...[
             _DeviceRow(
               key: ValueKey(device.deviceFp),
@@ -299,8 +321,12 @@ class _DeviceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-    final untrusted = device.labelSource != 'operator';
-    final label = device.label.isNotEmpty ? device.label : device.deviceFp;
+    // Only a CLIENT-asserted label is untrusted (see the class doc): the
+    // device named itself, and nothing stops it signing any string it likes.
+    // "derived" (server-parsed from the User-Agent) and "operator" (a future
+    // operator-set rename) are both server-controlled and render trusted.
+    final untrusted = device.labelSource == 'client';
+    final label = deviceRowTitle(device);
     final platformLabel = device.platform.isNotEmpty ? device.platform : 'unknown';
 
     return GlassCard(
@@ -367,6 +393,47 @@ class _DeviceRow extends StatelessWidget {
   }
 }
 
+class _NoOperatorSessionBanner extends StatelessWidget {
+  const _NoOperatorSessionBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key("no-operator-session-banner"),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: SovereignColors.accentWarning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: SovereignColors.accentWarning.withValues(alpha: 0.4),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: SovereignColors.accentWarning,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'No row here is marked "This device": you are connected with a '
+              'shared operator token, not a signed-in operator session, so '
+              'the actions below cannot succeed yet. Sign in with an '
+              'operator session on this device to manage linked devices.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ThisDeviceChip extends StatelessWidget {
   const _ThisDeviceChip();
 
@@ -405,6 +472,20 @@ IconData _platformIcon(String platform) {
     default:
       return Icons.devices_other_rounded;
   }
+}
+
+/// This row's display title, with the same anti-spoof text-level marker
+/// `guestDisplayTitle` (`packages/skchat_ui`) applies to a self-asserted
+/// guest name: a `labelSource == 'client'` label is self-asserted by the
+/// device itself, so it is prefixed `self-named:` in addition to the amber
+/// italic styling ([_DeviceRow] applies that separately), never styling
+/// alone, so the row cannot visually pass as one the server named even in a
+/// place (a screen reader, a copy-pasted screenshot) that drops color.
+/// Exposed (not private) so this can be unit-tested directly, same reasoning
+/// as [relativeLastSeen].
+String deviceRowTitle(LinkedDevice device) {
+  final label = device.label.isNotEmpty ? device.label : device.deviceFp;
+  return device.labelSource == 'client' ? 'self-named: $label' : label;
 }
 
 /// Short "Xs/m/h/d ago" rendering of a `last_seen` epoch-seconds value

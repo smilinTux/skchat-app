@@ -188,8 +188,9 @@ void main() {
     );
 
     testWidgets(
-      "a non-operator labelSource renders with untrusted (amber, italic) "
-      "styling; an operator-set label does not",
+      "labelSource == client renders untrusted (amber, italic) with a "
+      "self-named: marker; derived and operator sources render trusted with "
+      "no marker",
       (tester) async {
         final adapter = _FakeAdapter()
           ..listResponses.add({
@@ -199,6 +200,11 @@ void main() {
                 fp: "FP-CLIENT",
                 label: "Self-Named Device",
                 labelSource: "client",
+              ),
+              _device(
+                fp: "FP-DERIVED",
+                label: "Derived Device",
+                labelSource: "derived",
               ),
               _device(
                 fp: "FP-OPERATOR",
@@ -211,14 +217,64 @@ void main() {
         await tester.pumpWidget(_wrap(_service(adapter)));
         await tester.pumpAndSettle();
 
+        // Client-asserted: untrusted styling AND a text-level marker, so a
+        // device signing itself e.g. "Chef's MacBook (verified)" cannot pass
+        // as a row the server named.
         final untrustedText =
-            tester.widget<Text>(find.text("Self-Named Device"));
+            tester.widget<Text>(find.text("self-named: Self-Named Device"));
         expect(untrustedText.style?.fontStyle, FontStyle.italic);
         expect(untrustedText.style?.color, isNotNull);
+        expect(find.text("Self-Named Device"), findsNothing);
 
+        // Server-derived (parsed from the User-Agent, not spoofable by the
+        // device): trusted, no marker.
+        final derivedText = tester.widget<Text>(find.text("Derived Device"));
+        expect(derivedText.style?.fontStyle, isNot(FontStyle.italic));
+
+        // Operator-set (reserved for a future phase): trusted, no marker.
         final trustedText =
             tester.widget<Text>(find.text("Operator-Set Name"));
         expect(trustedText.style?.fontStyle, isNot(FontStyle.italic));
+      },
+    );
+  });
+
+  group("no operator session banner (shared X-Operator-Token, no session)", () {
+    testWidgets(
+      "shows an explanatory banner when no row is marked current",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-A", label: "Device A"),
+              _device(fp: "FP-B", label: "Device B"),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key("no-operator-session-banner")),
+            findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "the banner is absent once a row is marked current",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-SELF", label: "This Laptop", isCurrent: true),
+              _device(fp: "FP-OTHER", label: "Pixel 9"),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key("no-operator-session-banner")),
+            findsNothing);
       },
     );
   });
