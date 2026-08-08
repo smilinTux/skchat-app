@@ -195,6 +195,65 @@ class DeviceUnlinkException implements Exception {
   String toString() => 'DeviceUnlinkException($reason, $statusCode): $message';
 }
 
+/// Why a rename call failed, distinguished so the UI can show the right
+/// message instead of a generic "something went wrong".
+///
+/// `device_routes.py:rename` never returns a machine-readable error code
+/// either, so these are told apart purely by HTTP status: 400 covers every
+/// shape of invalid label (empty, whitespace-only, missing, or non-string),
+/// 404 an unknown fingerprint.
+enum DeviceRenameFailureReason {
+  /// 400: the label was empty, whitespace-only, missing, or not a string.
+  invalidLabel,
+
+  /// 404: no device with that fingerprint exists.
+  notFound,
+
+  /// Any other non-2xx response, or a transport-level failure.
+  unknown,
+}
+
+/// Thrown by [DeviceListService.rename] on a non-2xx response, carrying a
+/// typed [reason] so the caller can branch instead of catching a raw
+/// [DioException].
+class DeviceRenameException implements Exception {
+  const DeviceRenameException(this.reason, this.message, {this.statusCode});
+
+  final DeviceRenameFailureReason reason;
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => 'DeviceRenameException($reason, $statusCode): $message';
+}
+
+DeviceRenameException _mapRenameError(DioException e) {
+  final status = e.response?.statusCode;
+  final data = e.response?.data;
+  final detail = (data is Map && data['detail'] is String)
+      ? data['detail'] as String
+      : (e.message ?? 'device rename request failed');
+  if (status == 404) {
+    return DeviceRenameException(
+      DeviceRenameFailureReason.notFound,
+      detail,
+      statusCode: status,
+    );
+  }
+  if (status == 400) {
+    return DeviceRenameException(
+      DeviceRenameFailureReason.invalidLabel,
+      detail,
+      statusCode: status,
+    );
+  }
+  return DeviceRenameException(
+    DeviceRenameFailureReason.unknown,
+    detail,
+    statusCode: status,
+  );
+}
+
 DeviceUnlinkException _mapUnlinkError(DioException e) {
   final status = e.response?.statusCode;
   final data = e.response?.data;
@@ -288,6 +347,28 @@ class DeviceListService {
         .whereType<Map>()
         .map((m) => LinkedDevice.fromJson(m.cast<String, dynamic>()))
         .toList();
+  }
+
+  /// Rename one device by fingerprint. The server trims and caps [label] at
+  /// 64 characters and, on success, sets `label_source` to `"operator"`
+  /// (`device_routes.py:rename`), so this is the only way a row earns the
+  /// trusted rendering [LinkedDevicesScreen]'s class doc describes. Returns
+  /// the updated device row so the caller can refresh in place.
+  ///
+  /// Throws [DeviceRenameException] on a non-2xx response: 400 when [label]
+  /// is empty, whitespace-only, or not a string, 404 when [deviceFp] is
+  /// unknown.
+  Future<LinkedDevice> rename(String deviceFp, String label) async {
+    try {
+      final r = await _dio.patch<Map<String, dynamic>>(
+        '$_base/api/v1/operator/devices/$deviceFp',
+        data: {'label': label},
+        options: _opts(),
+      );
+      return LinkedDevice.fromJson(r.data ?? const {});
+    } on DioException catch (e) {
+      throw _mapRenameError(e);
+    }
   }
 
   /// Unlink one device by fingerprint.

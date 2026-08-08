@@ -31,6 +31,8 @@ class _FakeAdapter implements HttpClientAdapter {
     "degraded": <String>[],
   };
   int unlinkOthersStatus = 200;
+  Object? renameBody;
+  int renameStatus = 200;
 
   @override
   void close({bool force = false}) {}
@@ -64,6 +66,13 @@ class _FakeAdapter implements HttpClientAdapter {
         headers: _jsonHeaders,
       );
     }
+    if (options.method == "PATCH") {
+      return ResponseBody.fromString(
+        jsonEncode(renameBody ?? _echoRename(options)),
+        renameStatus,
+        headers: _jsonHeaders,
+      );
+    }
     if (options.method == "POST" &&
         path == "/api/v1/operator/devices/unlink-others") {
       return ResponseBody.fromString(
@@ -74,6 +83,19 @@ class _FakeAdapter implements HttpClientAdapter {
     }
     return ResponseBody.fromString("{}", 404, headers: _jsonHeaders);
   }
+}
+
+/// Default PATCH response when a test doesn't set [_FakeAdapter.renameBody]:
+/// echoes the fingerprint out of the path and the label out of the request
+/// body, with `label_source` "operator", the way the real server does on a
+/// successful rename (`device_routes.py:rename`).
+Map<String, dynamic> _echoRename(RequestOptions options) {
+  final fp = options.uri.pathSegments.last;
+  final data = options.data;
+  final label = (data is Map && data["label"] is String)
+      ? data["label"] as String
+      : "";
+  return _device(fp: fp, label: label, labelSource: "operator");
 }
 
 DeviceListService _service(_FakeAdapter a) => DeviceListService(
@@ -188,9 +210,9 @@ void main() {
     );
 
     testWidgets(
-      "labelSource == client renders untrusted (amber, italic) with a "
-      "self-named: marker; derived and operator sources render trusted with "
-      "no marker",
+      "client and derived sources render untrusted (amber, italic); only "
+      "client also gets a self-named: marker; operator renders trusted with "
+      "neither",
       (tester) async {
         final adapter = _FakeAdapter()
           ..listResponses.add({
@@ -227,14 +249,222 @@ void main() {
         expect(find.text("Self-Named Device"), findsNothing);
 
         // Server-derived (parsed from the User-Agent, not spoofable by the
-        // device): trusted, no marker.
+        // device, but not necessarily accurate either): untrusted styling
+        // too, since only an operator-confirmed rename earns the trusted
+        // look, but no "self-named:" marker, the device never claimed it.
         final derivedText = tester.widget<Text>(find.text("Derived Device"));
-        expect(derivedText.style?.fontStyle, isNot(FontStyle.italic));
+        expect(derivedText.style?.fontStyle, FontStyle.italic);
+        expect(derivedText.style?.color, isNotNull);
 
-        // Operator-set (reserved for a future phase): trusted, no marker.
+        // Operator-set (a confirmed rename): trusted, no marker, no
+        // untrusted styling.
         final trustedText =
             tester.widget<Text>(find.text("Operator-Set Name"));
         expect(trustedText.style?.fontStyle, isNot(FontStyle.italic));
+      },
+    );
+  });
+
+  group("rename device", () {
+    testWidgets(
+      "the rename affordance exists on every row, including the current "
+      "device",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-SELF", label: "This Laptop", isCurrent: true),
+              _device(fp: "FP-OTHER", label: "Pixel 9"),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key("rename-action-FP-SELF")), findsOneWidget);
+        expect(
+            find.byKey(const Key("rename-action-FP-OTHER")), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "tapping it opens a dialog pre-filled with the current label",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-OTHER", label: "Pixel 9"),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("rename-action-FP-OTHER")));
+        await tester.pumpAndSettle();
+
+        expect(find.text("Rename device"), findsOneWidget);
+        final field =
+            tester.widget<TextField>(find.byKey(const Key("rename-input-field")));
+        expect(field.controller?.text, "Pixel 9");
+      },
+    );
+
+    testWidgets(
+      "confirming calls the service with the new label and refreshes the "
+      "list",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.addAll([
+            {
+              "devices": [
+                _device(fp: "FP-OTHER", label: "Pixel 9", labelSource: "derived"),
+              ],
+            },
+            {
+              "devices": [
+                _device(
+                  fp: "FP-OTHER",
+                  label: "Chef's Desk",
+                  labelSource: "operator",
+                ),
+              ],
+            },
+          ]);
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("rename-action-FP-OTHER")));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+            find.byKey(const Key("rename-input-field")), "Chef's Desk");
+        await tester.tap(find.byKey(const Key("rename-confirm-action")));
+        await tester.pumpAndSettle();
+
+        final patchRequests =
+            adapter.requests.where((r) => r.method == "PATCH").toList();
+        expect(patchRequests, hasLength(1));
+        expect(patchRequests.single.uri.path,
+            "/api/v1/operator/devices/FP-OTHER");
+        expect(patchRequests.single.data, {"label": "Chef's Desk"});
+        expect(adapter.requests.where((r) => r.method == "GET"),
+            hasLength(2));
+        expect(find.text("Chef's Desk"), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "empty input is rejected client-side without calling the service",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-OTHER", label: "Pixel 9"),
+            ],
+          });
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("rename-action-FP-OTHER")));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+            find.byKey(const Key("rename-input-field")), "   ");
+        await tester.tap(find.byKey(const Key("rename-confirm-action")));
+        await tester.pumpAndSettle();
+
+        expect(find.text("Name cannot be empty"), findsOneWidget);
+        expect(adapter.requests.where((r) => r.method == "PATCH"), isEmpty);
+        // Dialog stays open so the operator can fix the input.
+        expect(find.text("Rename device"), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "a server error surfaces as friendly text, never a raw exception",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.add({
+            "devices": [
+              _device(fp: "FP-OTHER", label: "Pixel 9"),
+            ],
+          })
+          ..renameStatus = 404
+          ..renameBody = const {"detail": "device not found"};
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key("rename-action-FP-OTHER")));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+            find.byKey(const Key("rename-input-field")), "New Name");
+        await tester.tap(find.byKey(const Key("rename-confirm-action")));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining("already gone"), findsOneWidget);
+        expect(find.textContaining("DioException"), findsNothing);
+        expect(find.textContaining("Exception"), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "a row whose labelSource is operator renders WITHOUT the untrusted "
+      "styling or marker, while client and derived rows still render with "
+      "it, after a rename flips one to operator",
+      (tester) async {
+        final adapter = _FakeAdapter()
+          ..listResponses.addAll([
+            {
+              "devices": [
+                _device(
+                    fp: "FP-CLIENT", label: "Self-Named", labelSource: "client"),
+                _device(
+                    fp: "FP-DERIVED", label: "Chrome on Linux",
+                    labelSource: "derived"),
+              ],
+            },
+            {
+              "devices": [
+                _device(
+                    fp: "FP-CLIENT", label: "Self-Named", labelSource: "client"),
+                _device(
+                    fp: "FP-DERIVED", label: "Chef's Desk",
+                    labelSource: "operator"),
+              ],
+            },
+          ]);
+
+        await tester.pumpWidget(_wrap(_service(adapter)));
+        await tester.pumpAndSettle();
+
+        // Before renaming: derived renders untrusted (italic), no marker.
+        final beforeText =
+            tester.widget<Text>(find.text("Chrome on Linux"));
+        expect(beforeText.style?.fontStyle, FontStyle.italic);
+
+        await tester.tap(find.byKey(const Key("rename-action-FP-DERIVED")));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+            find.byKey(const Key("rename-input-field")), "Chef's Desk");
+        await tester.tap(find.byKey(const Key("rename-confirm-action")));
+        await tester.pumpAndSettle();
+
+        // After the rename round-trips through the server (label_source
+        // "operator"), the row renders trusted: no italic, no marker.
+        final afterText = tester.widget<Text>(find.text("Chef's Desk"));
+        expect(afterText.style?.fontStyle, isNot(FontStyle.italic));
+
+        // The untouched client row is still untrusted with its marker.
+        expect(find.text("self-named: Self-Named"), findsOneWidget);
+        expect(tester.takeException(), isNull);
       },
     );
   });
