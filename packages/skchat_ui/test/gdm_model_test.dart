@@ -162,5 +162,36 @@ void main() {
       expect(c.ringing, isTrue);
       expect(c.ringingCaller, isNull);
     });
+
+    group('whole-room expiry', () {
+      double _epoch(Duration offset) =>
+          DateTime.now().add(offset).millisecondsSinceEpoch / 1000;
+
+      test('a room with no schedule reports no expiry', () {
+        final c = parse({'mode': 'gdm'});
+        expect(c.expiresAt, isNull);
+        expect(c.hasGroupExpiry, isFalse);
+        expect(c.hasExpired, isFalse);
+      });
+
+      test('a future schedule is set but has not run out', () {
+        final c = parse({'mode': 'gdm', 'expires_at': _epoch(const Duration(days: 2))});
+        expect(c.hasGroupExpiry, isTrue);
+        expect(c.hasExpired, isFalse);
+      });
+
+      test('a past schedule reads as expired, not as a live countdown', () {
+        final c = parse({'mode': 'gdm', 'expires_at': _epoch(const Duration(days: -1))});
+        expect(c.hasGroupExpiry, isTrue);
+        expect(c.hasExpired, isTrue);
+      });
+
+      test('clearExpiry actually clears it (a null copyWith arg cannot)', () {
+        final c = parse({'mode': 'gdm', 'expires_at': _epoch(const Duration(days: 1))});
+        expect(c.copyWith(expiresAt: null).expiresAt, isNotNull);
+        expect(c.copyWith(clearExpiry: true).expiresAt, isNull);
+        expect(c.copyWith(clearExpiry: true).hasGroupExpiry, isFalse);
+      });
+    });
   });
 }

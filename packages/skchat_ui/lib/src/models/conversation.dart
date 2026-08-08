@@ -158,6 +158,7 @@ class Conversation {
     this.ringTs,
     this.mode,
     this.ringers = const [],
+    this.expiresAt,
   });
 
   final String peerId;
@@ -222,6 +223,23 @@ class Conversation {
   /// guest-dm G7: guests currently ringing this room, newest first. Empty for a
   /// 1:1 guest DM, where [ringing] alone already identifies the caller.
   final List<GuestRinger> ringers;
+
+  /// The room's WHOLE-GROUP expiry as epoch seconds, or null when unset. Once
+  /// it passes, every guest of the room is locked out (`group_expired`); the
+  /// operator's own history is untouched. Distinct from the per-CONTACT expiry
+  /// on the guest contact sheet, which expires one person everywhere.
+  final double? expiresAt;
+
+  /// True when a schedule is set and has NOT yet passed. A room whose expiry is
+  /// already in the past reads as [hasExpired] instead, so the roster can say
+  /// "expired" rather than showing a countdown that ran out.
+  bool get hasGroupExpiry => expiresAt != null;
+
+  bool get hasExpired {
+    final e = expiresAt;
+    if (e == null) return false;
+    return DateTime.now().millisecondsSinceEpoch / 1000 >= e;
+  }
 
   /// Who to name on an incoming gdm ring, or null when the room is not a gdm
   /// or the server named nobody. Never guessed client-side: an unnamed ring
@@ -296,6 +314,10 @@ class Conversation {
     double? ringTs,
     String? mode,
     List<GuestRinger>? ringers,
+    double? expiresAt,
+    // `expiresAt: null` cannot mean "clear" in a copyWith, so clearing the
+    // room's schedule is an explicit flag (same idiom as GuestContact).
+    bool clearExpiry = false,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -323,6 +345,7 @@ class Conversation {
       ringTs: ringTs ?? this.ringTs,
       mode: mode ?? this.mode,
       ringers: ringers ?? this.ringers,
+      expiresAt: clearExpiry ? null : (expiresAt ?? this.expiresAt),
     );
   }
 
@@ -364,6 +387,7 @@ class Conversation {
               .map((e) => GuestRinger.fromJson(e.cast<String, dynamic>()))
               .toList() ??
           const [],
+      expiresAt: (json['expires_at'] as num?)?.toDouble(),
     );
   }
 }

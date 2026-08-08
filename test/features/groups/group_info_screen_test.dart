@@ -65,6 +65,17 @@ class _RecordingAdapter implements HttpClientAdapter {
   }
 }
 
+/// A daemon that refuses every write, so the UI's failure path is exercised
+/// rather than assumed.
+class _FailingAdapter extends _RecordingAdapter {
+  @override
+  Future<ResponseBody> fetch(RequestOptions options, Stream<List<int>>? rs,
+      Future<void>? cf) async {
+    requests.add(options);
+    throw DioException(requestOptions: options, message: 'daemon offline');
+  }
+}
+
 Map<String, dynamic> _body(Object? data) => data is String
     ? jsonDecode(data) as Map<String, dynamic>
     : (data as Map).cast<String, dynamic>();
@@ -92,6 +103,9 @@ Widget _wrapInfo({
   required List<GroupMemberInfo> members,
   String groupId = 'g-1',
   List<Override> extraOverrides = const [],
+  // Seed a specific conversation (a promoted gdm, a room already on a
+  // schedule) instead of the plain group most cases want.
+  Conversation? group,
 }) {
   final router = GoRouter(
     initialLocation: '/groups/$groupId/info',
@@ -113,7 +127,8 @@ Widget _wrapInfo({
       // Fixed local identity so the admin gate is deterministic (no Hive).
       daemonServiceProvider
           .overrideWithValue(DaemonService(identity: 'chef@skworld.io')),
-      groupsProvider.overrideWith(() => _FakeGroupsNotifier([_group(groupId)])),
+      groupsProvider
+          .overrideWith(() => _FakeGroupsNotifier([group ?? _group(groupId)])),
       groupMembersProvider(groupId).overrideWith((ref) async => members),
       ...extraOverrides,
     ],
@@ -899,6 +914,163 @@ void main() {
       final postReq = adapter.requests.firstWhere((r) => r.method == 'POST');
       expect(postReq.uri.path, '/api/v1/guest-dm/contacts/FP-ALICE/revoke');
       expect(_body(postReq.data)['group_id'], 'g-1');
+    });
+  });
+
+  // guest-dm: the whole-room expiry control. The server has enforced
+  // `expires_at` since S3 and the writer route landed with the G7 follow-up,
+  // but nothing in the app ever called it, so a schedule was settable over HTTP
+  // and nowhere else. These pin the surface that closes that gap.
+  group('room access expiry (gdm)', () {
+    late _MockClient client;
+    late _MockRepo repo;
+
+    setUp(() {
+      client = _MockClient();
+      repo = _MockRepo();
+      when(() => repo.save(any())).thenAnswer((_) async {});
+    });
+
+    Conversation gdm({double? expiresAt}) => Conversation(
+          peerId: 'g-1',
+          displayName: 'Ops room',
+          lastMessage: '',
+          lastMessageTime: DateTime(2026),
+          isGroup: true,
+          memberCount: 3,
+          mode: 'gdm',
+          isGuestDm: true,
+          expiresAt: expiresAt,
+        );
+
+    const roster = [
+      GroupMemberInfo(
+        identityUri: 'chef@skworld.io',
+        displayName: 'Chef',
+        role: MemberRole.admin,
+      ),
+    ];
+
+    Widget wrap(Conversation conv, _RecordingAdapter adapter) => _wrapInfo(
+          client: client,
+          repo: repo,
+          members: roster,
+          group: conv,
+          extraOverrides: [
+            guestDmContactsServiceProvider.overrideWithValue(
+              GuestDmContactsService(
+                dio: Dio()..httpClientAdapter = adapter,
+                webuiBaseUrl: 'https://h.test',
+              ),
+            ),
+          ],
+        );
+
+    testWidgets('a promoted guest room offers the expiry control',
+        (tester) async {
+      await tester.pumpWidget(wrap(gdm(), _RecordingAdapter()));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('group-expiry-action')), findsOneWidget);
+      expect(find.text('No expiry - this room stays open'), findsOneWidget);
+    });
+
+    testWidgets('an ordinary group does NOT offer it', (tester) async {
+      // The server refuses `expires_at` on a non-dm-family group (the
+      // chokepoint would never read it), so offering the control here would be
+      // a button that always errors.
+      await tester.pumpWidget(_wrapInfo(
+        client: client,
+        repo: repo,
+        members: roster,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('group-expiry-action')), findsNothing);
+    });
+
+    testWidgets('a room already on a schedule reads its expiry back',
+        (tester) async {
+      final at = DateTime.now().add(const Duration(days: 7));
+      await tester.pumpWidget(wrap(
+        gdm(expiresAt: at.millisecondsSinceEpoch / 1000),
+        _RecordingAdapter(),
+      ));
+      await tester.pumpAndSettle();
+
+      // A write-only control is untrustworthy: what is set must be visible.
+      expect(find.textContaining('Expires in '), findsOneWidget);
+    });
+
+    testWidgets('a room whose schedule already ran out says so', (tester) async {
+      final at = DateTime.now().subtract(const Duration(days: 1));
+      await tester.pumpWidget(wrap(
+        gdm(expiresAt: at.millisecondsSinceEpoch / 1000),
+        _RecordingAdapter(),
+      ));
+      await tester.pumpAndSettle();
+
+      // Not a countdown that quietly went negative.
+      expect(find.text('Expired - guests are locked out'), findsOneWidget);
+    });
+
+    testWidgets('picking a window PATCHes the group route with a seconds TTL',
+        (tester) async {
+      final adapter = _RecordingAdapter();
+      await tester.pumpWidget(wrap(gdm(), adapter));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('group-expiry-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('In 7 days'));
+      await tester.pumpAndSettle();
+
+      final req = adapter.requests.firstWhere((r) => r.method == 'PATCH');
+      expect(req.uri.path, '/api/v1/guest-dm/groups/g-1');
+      expect(_body(req.data)['group_ttl'], 7 * 86400);
+      expect(find.textContaining('lose access to this room in 7 days'),
+          findsOneWidget);
+    });
+
+    testWidgets('"No expiry" clears the schedule with an explicit null',
+        (tester) async {
+      final adapter = _RecordingAdapter();
+      await tester.pumpWidget(wrap(
+        gdm(expiresAt:
+            DateTime.now().add(const Duration(days: 3)).millisecondsSinceEpoch /
+                1000),
+        adapter,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('group-expiry-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('No expiry'));
+      await tester.pumpAndSettle();
+
+      final req = adapter.requests.firstWhere((r) => r.method == 'PATCH');
+      final body = _body(req.data);
+      expect(body.containsKey('expires_at'), isTrue);
+      expect(body['expires_at'], isNull);
+      expect(find.textContaining('Room expiry cleared'), findsOneWidget);
+    });
+
+    testWidgets('a failed write says nothing changed, never claims success',
+        (tester) async {
+      final adapter = _FailingAdapter();
+      await tester.pumpWidget(wrap(gdm(), adapter));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('group-expiry-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('In 1 day'));
+      await tester.pumpAndSettle();
+
+      // Believing a room is timed out when it is not is the failure that
+      // actually costs something here.
+      expect(find.textContaining('Could not update the room expiry'),
+          findsOneWidget);
+      expect(find.textContaining('lose access'), findsNothing);
     });
   });
 }

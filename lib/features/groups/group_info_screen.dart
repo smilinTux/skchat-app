@@ -248,7 +248,8 @@ class GroupInfoScreen extends ConsumerWidget {
           ),
           SliverToBoxAdapter(child: _buildAddMemberButton(context, ref, tt)),
           SliverToBoxAdapter(
-              child: _buildActions(context, ref, tt, isAdmin: iAmAdmin)),
+              child: _buildActions(context, ref, tt,
+                  isAdmin: iAmAdmin, group: group)),
           const SliverToBoxAdapter(child: SizedBox(height: 40)),
         ],
       ),
@@ -472,11 +473,20 @@ class GroupInfoScreen extends ConsumerWidget {
     WidgetRef ref,
     TextTheme tt, {
     required bool isAdmin,
+    required Conversation group,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         children: [
+          // guest-dm: a promoted guest room can be put on a schedule. Only a
+          // gdm gets this - the server refuses `expires_at` on a plain group
+          // (the chokepoint would never read it), so offering the control there
+          // would be a button that always errors.
+          if (group.isGdm) ...[
+            _buildGroupExpiryCard(context, ref, tt, group),
+            const SizedBox(height: 12),
+          ],
           GlassCard(
             onTap: () => _shareInviteLink(context, ref),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -550,6 +560,129 @@ class GroupInfoScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// guest-dm: the whole-room expiry control for a promoted guest group.
+  ///
+  /// The server has enforced `metadata.expires_at` since S3 (every guest of an
+  /// expired room gets a 403 with reason `group_expired`) and the writer landed
+  /// with `PATCH /guest-dm/groups/{id}`, but nothing in the app ever called it,
+  /// so "this room stops working on Friday" was expressible over HTTP and
+  /// nowhere else. This is that missing surface.
+  ///
+  /// Deliberately a separate verb from revoking a guest: expiry closes the ROOM
+  /// to everyone on a schedule, touches no contact row, and deletes nothing -
+  /// the operator keeps their own history of it.
+  Widget _buildGroupExpiryCard(
+    BuildContext context,
+    WidgetRef ref,
+    TextTheme tt,
+    Conversation group,
+  ) {
+    final (label, color) = switch (group) {
+      _ when group.hasExpired => (
+          'Expired - guests are locked out',
+          SovereignColors.accentDanger,
+        ),
+      _ when group.hasGroupExpiry => (
+          'Expires ${_formatExpiry(group.expiresAt!)}',
+          SovereignColors.textSecondary,
+        ),
+      _ => ('No expiry - this room stays open', SovereignColors.textTertiary),
+    };
+
+    return GlassCard(
+      key: const Key('group-expiry-action'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule_rounded,
+              color: SovereignColors.soulLumina, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Room access expiry',
+                  style: tt.titleSmall?.copyWith(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(label,
+                    style: tt.bodySmall?.copyWith(color: color, fontSize: 12)),
+              ],
+            ),
+          ),
+          PopupMenuButton<int>(
+            key: const Key('group-expiry-menu'),
+            icon: const Icon(Icons.edit_calendar_outlined,
+                color: SovereignColors.textTertiary, size: 20),
+            color: SovereignColors.surfaceRaised,
+            tooltip: 'Set room expiry',
+            onSelected: (days) => _setGroupExpiry(context, ref, group, days),
+            itemBuilder: (_) => const [
+              PopupMenuItem<int>(value: 1, child: Text('In 1 day')),
+              PopupMenuItem<int>(value: 7, child: Text('In 7 days')),
+              PopupMenuItem<int>(value: 30, child: Text('In 30 days')),
+              PopupMenuItem<int>(value: 0, child: Text('No expiry')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Render an absolute epoch expiry as something an operator can act on. Kept
+  /// coarse on purpose: the exact second is never the useful fact.
+  static String _formatExpiry(double epochSeconds) {
+    final at =
+        DateTime.fromMillisecondsSinceEpoch((epochSeconds * 1000).round());
+    final left = at.difference(DateTime.now());
+    if (left.inDays >= 1) {
+      return 'in ${left.inDays} day${left.inDays == 1 ? '' : 's'}';
+    }
+    if (left.inHours >= 1) {
+      return 'in ${left.inHours} hour${left.inHours == 1 ? '' : 's'}';
+    }
+    return 'in under an hour';
+  }
+
+  /// Write the room's expiry ([days] of 0 clears it) and reflect the server's
+  /// answer locally, so the card shows the real stored schedule rather than
+  /// what we hoped it would be.
+  Future<void> _setGroupExpiry(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation group,
+    int days,
+  ) async {
+    final svc = ref.read(guestDmContactsServiceProvider);
+    final notifier = ref.read(groupsProvider.notifier);
+    String message;
+    try {
+      if (days == 0) {
+        await svc.clearGroupExpiry(groupId);
+        await notifier.updateGroup(group.copyWith(clearExpiry: true));
+        message = 'Room expiry cleared. This room stays open.';
+      } else {
+        final at = await svc.setGroupExpiry(groupId, groupTtl: days * 86400);
+        await notifier.updateGroup(group.copyWith(expiresAt: at));
+        message = 'Guests lose access to this room in $days '
+            'day${days == 1 ? '' : 's'}.';
+      }
+    } on Object {
+      // Never leave the operator believing a schedule was set when it was not:
+      // an expiry that silently failed is exactly the kind of thing you only
+      // discover when the room is still open to people you meant to time out.
+      message = 'Could not update the room expiry. Nothing was changed.';
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   /// Mint a shareable guest invite link for this group and show it to copy.
