@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
+import 'operator_auth_interceptor.dart';
+import 'operator_session_service.dart';
 import 'operator_token.dart' as op_token;
 
 String? _webOriginOrNull() {
@@ -235,13 +237,30 @@ DeviceUnlinkException _mapUnlinkError(DioException e) {
 }
 
 /// Operator controls for the "Linked Devices" surface, driven by
-/// `/api/v1/operator/devices*` on the skchat web-UI (operator-gated
-/// server-side, same as [GuestDmContactsService]'s Dio + `X-Operator-Token`
-/// handling, which this mirrors).
+/// `/api/v1/operator/devices*` on the skchat web-UI.
+///
+/// **These routes need the operator SESSION, not just the pasted token.** They
+/// are capability-mapped server-side, so with `SKCHAT_DATAPLANE_AUTH=1` the
+/// data-plane gate runs first and only accepts `Authorization: Bearer <session>`
+/// or `X-CapAuth-Token`. It does NOT recognise `X-Operator-Token`, so a request
+/// carrying only the pasted token is rejected with 401 "capauth authentication
+/// required" BEFORE the route's own operator check ever runs, and the whole
+/// screen fails to load.
+///
+/// So this attaches the session via [buildOperatorAuthInterceptor], the same way
+/// [SkcommsClient] and [SkcapstoneClient] do. The pasted `X-Operator-Token` is
+/// still sent alongside it: it is what authorizes the gate-exempt enrollment
+/// routes, and it keeps this working if the data-plane gate is off.
+///
+/// The unlink routes additionally REQUIRE a session on the server side, since a
+/// caller with no device identity cannot be told apart from the device it would
+/// be unlinking, so the self-lockout guard could not fire.
 class DeviceListService {
-  DeviceListService({Dio? dio, String? webuiBaseUrl})
+  DeviceListService({Dio? dio, String? webuiBaseUrl, OperatorSessionService? sessionService})
       : _dio = dio ?? Dio(),
-        _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl);
+        _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl) {
+    _dio.interceptors.add(buildOperatorAuthInterceptor(sessionService, () => _dio));
+  }
 
   final Dio _dio;
   final String _base;
@@ -308,4 +327,8 @@ class DeviceListService {
 }
 
 final deviceListServiceProvider = Provider<DeviceListService>(
-    (ref) => DeviceListService(webuiBaseUrl: _webOriginOrNull()));
+  (ref) => DeviceListService(
+    webuiBaseUrl: _webOriginOrNull(),
+    sessionService: ref.read(operatorSessionServiceProvider),
+  ),
+);
