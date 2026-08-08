@@ -153,6 +153,37 @@ class GuestDmContactsService {
       options: _opts(),
     );
   }
+
+  /// Set the WHOLE-ROOM expiry on a dm-family group: after [groupTtl] seconds
+  /// every guest of this room is locked out with reason `group_expired`.
+  ///
+  /// Distinct from [updateContact]'s `contactTtl`, which expires ONE person
+  /// everywhere. This expires ONE room for everyone, touches nobody's contact
+  /// row, and deletes nothing (the operator keeps their own history).
+  ///
+  /// Returns the absolute epoch-seconds expiry the server stored, so the caller
+  /// can render the new state without a refetch.
+  Future<double?> setGroupExpiry(String groupId, {required int groupTtl}) async {
+    final r = await _dio.patch<Map<String, dynamic>>(
+      '$_base/api/v1/guest-dm/groups/$groupId',
+      data: {'group_ttl': groupTtl},
+      options: _opts(),
+    );
+    return (r.data?['expires_at'] as num?)?.toDouble();
+  }
+
+  /// Clear a room's whole-group expiry so it stops expiring.
+  ///
+  /// Unlike the per-contact case (whose route has no clear, so the sheet writes
+  /// a far-future TTL), the group route takes an explicit `expires_at: null`
+  /// and REMOVES the field, so "no expiry" here really means unset.
+  Future<void> clearGroupExpiry(String groupId) async {
+    await _dio.patch<Map<String, dynamic>>(
+      '$_base/api/v1/guest-dm/groups/$groupId',
+      data: const {'expires_at': null},
+      options: _opts(),
+    );
+  }
 }
 
 final guestDmContactsServiceProvider = Provider<GuestDmContactsService>(
