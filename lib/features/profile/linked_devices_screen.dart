@@ -6,34 +6,45 @@ import '../../services/device_list_service.dart';
 
 /// "Linked Devices" screen: every device enrolled to this operator identity
 /// (`GET /api/v1/operator/devices`, via [DeviceListService.list]), with a
-/// per-device Unlink action and a bulk "Unlink all other devices" action.
+/// per-device Rename action, a per-device Unlink action, and a bulk "Unlink
+/// all other devices" action.
 ///
 /// THIS device (server-computed [LinkedDevice.isCurrent]) never renders an
 /// Unlink control, that is a safety property, not decoration: the server
 /// rejects a self-unlink with a 400
 /// ([DeviceUnlinkFailureReason.selfUnlink]), so offering the action here
 /// would put an affordance on screen for something that cannot succeed.
+/// Renaming carries no such self-lockout risk, so it is offered on EVERY
+/// row, including this device.
 ///
 /// A device's [LinkedDevice.label] comes from one of three sources
-/// (`operator_auth_routes.py`'s `_record_enrollment`):
+/// (`operator_auth_routes.py`'s `_record_enrollment`, and
+/// `device_routes.py:rename` for the third):
 ///  - `"client"`: the DEVICE named itself (the value R2 signs, see
 ///    `operator_session_service.dart:enroll`'s doc). Self-asserted and
 ///    therefore spoofable, e.g. a device could sign the label `Chef's
 ///    MacBook (verified)`.
 ///  - `"derived"`: the SERVER parsed a name from the enrolling request's
-///    User-Agent (`_derive_label`). Not spoofable by the device, the client
-///    never got a vote.
-///  - `"operator"`: reserved for a future operator-set rename; the server
-///    does not emit this yet.
+///    User-Agent (`_derive_label`). Not spoofable by the device, but not
+///    reliable either: a browser cannot read its own machine's hostname, so
+///    two different Linux desktops both surface as "Chrome on Linux" with no
+///    way to tell them apart. That ambiguity is the entire reason renaming
+///    exists.
+///  - `"operator"`: the operator typed a real name via [DeviceListService.
+///    rename] (`PATCH /api/v1/operator/devices/{fp}`). The one source that
+///    is both accurate and confirmed by a human looking at the device.
 ///
-/// Only `"client"` is untrusted. It renders with the SAME styling the rest of
-/// the app already uses for a self-asserted guest name (see
-/// `guestDisplayTitle` / `ConversationMember.isUntrustedName` in
-/// `packages/skchat_ui`, and the mirrored per-row style in
-/// `group_info_screen.dart`): amber, italic, PLUS a text-level `self-named:`
-/// marker (see [deviceRowTitle]) mirroring `guestDisplayTitle`'s `guest:`
-/// prefix, so a self-asserted label cannot visually pass as one the server
-/// assigned. `"derived"` and `"operator"` render trusted, with no marker.
+/// Only `"operator"` is trusted. `"client"` and `"derived"` both render with
+/// the SAME styling the rest of the app already uses for a self-asserted
+/// guest name (see `guestDisplayTitle` / `ConversationMember.isUntrustedName`
+/// in `packages/skchat_ui`, and the mirrored per-row style in
+/// `group_info_screen.dart`): amber, italic. `"client"` additionally gets a
+/// text-level `self-named:` marker (see [deviceRowTitle]) mirroring
+/// `guestDisplayTitle`'s `guest:` prefix, so a self-asserted label cannot
+/// visually pass as one the server assigned; `"derived"` gets the amber
+/// italic styling only, since the device never claimed that name, the server
+/// only guessed it. Renaming a device is what earns it the trusted
+/// `"operator"` styling, that is the visible payoff for typing a real name.
 class LinkedDevicesScreen extends ConsumerStatefulWidget {
   const LinkedDevicesScreen({super.key});
 
@@ -53,6 +64,12 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
   /// the Unlink button, so a slow request cannot be double-tapped.
   final Set<String> _busyFps = {};
   bool _busyAll = false;
+
+  /// Fingerprints currently mid-rename: their row shows a spinner instead of
+  /// the Rename button. Tracked separately from [_busyFps] since rename and
+  /// unlink are different requests and a row should be able to show the
+  /// right one is in flight.
+  final Set<String> _renamingFps = {};
 
   @override
   void initState() {
@@ -84,6 +101,66 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
 
   String _rowLabel(LinkedDevice device) =>
       device.label.isNotEmpty ? device.label : device.deviceFp;
+
+  /// Opens a dialog pre-filled with [device]'s current label, capped at 64
+  /// characters to match the server's own cap. Empty input is rejected right
+  /// here, before anything is sent, so a blank submit never round-trips to
+  /// the server just to bounce off its 400.
+  ///
+  /// The dialog's [TextEditingController] is owned by [_RenameDialog], a
+  /// StatefulWidget, rather than created and manually disposed here: a
+  /// controller created in this method and disposed the instant `showDialog`
+  /// resolves races the dialog's own exit-transition animation, which can
+  /// still be building the TextField after the route has "finished"
+  /// resolving. Letting the framework own the controller's lifecycle via
+  /// `State.dispose()` disposes it only once the element is truly unmounted.
+  Future<void> _confirmRename(LinkedDevice device) async {
+    final newLabel = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _RenameDialog(initialLabel: device.label),
+    );
+    if (newLabel == null) return;
+    await _rename(device, newLabel);
+  }
+
+  Future<void> _rename(LinkedDevice device, String label) async {
+    setState(() => _renamingFps.add(device.deviceFp));
+    try {
+      final updated =
+          await ref.read(deviceListServiceProvider).rename(device.deviceFp, label);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Renamed to ${_rowLabel(updated)}')),
+      );
+      await _load();
+    } on DeviceRenameException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_friendlyRenameMessage(e))));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not rename this device. Try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _renamingFps.remove(device.deviceFp));
+    }
+  }
+
+  /// Typed [DeviceRenameException] -> a short, friendly line, never the raw
+  /// server `detail` string or a bare exception toString().
+  String _friendlyRenameMessage(DeviceRenameException e) {
+    switch (e.reason) {
+      case DeviceRenameFailureReason.invalidLabel:
+        return 'Enter a name for this device.';
+      case DeviceRenameFailureReason.notFound:
+        return 'That device is already gone.';
+      case DeviceRenameFailureReason.unknown:
+        return 'Could not rename this device. Try again.';
+    }
+  }
 
   Future<void> _confirmUnlink(LinkedDevice device) async {
     final confirmed = await showDialog<bool>(
@@ -272,7 +349,9 @@ class _LinkedDevicesScreenState extends ConsumerState<LinkedDevicesScreen> {
               key: ValueKey(device.deviceFp),
               device: device,
               busy: _busyFps.contains(device.deviceFp),
+              renaming: _renamingFps.contains(device.deviceFp),
               onUnlink: () => _confirmUnlink(device),
+              onRename: () => _confirmRename(device),
             ),
             const SizedBox(height: 10),
           ],
@@ -311,21 +390,26 @@ class _DeviceRow extends StatelessWidget {
     super.key,
     required this.device,
     required this.busy,
+    required this.renaming,
     required this.onUnlink,
+    required this.onRename,
   });
 
   final LinkedDevice device;
   final bool busy;
+  final bool renaming;
   final VoidCallback onUnlink;
+  final VoidCallback onRename;
 
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-    // Only a CLIENT-asserted label is untrusted (see the class doc): the
-    // device named itself, and nothing stops it signing any string it likes.
-    // "derived" (server-parsed from the User-Agent) and "operator" (a future
-    // operator-set rename) are both server-controlled and render trusted.
-    final untrusted = device.labelSource == 'client';
+    // Anything short of an operator-confirmed rename renders untrusted (see
+    // the class doc): "client" is spoofable by the device itself, "derived"
+    // is merely the server's best guess from the User-Agent, right or wrong.
+    // Only "operator" -- a human who typed the name after looking at the
+    // device -- earns the trusted styling.
+    final untrusted = device.labelSource != 'operator';
     final label = deviceRowTitle(device);
     final platformLabel = device.platform.isNotEmpty ? device.platform : 'unknown';
 
@@ -368,6 +452,22 @@ class _DeviceRow extends StatelessWidget {
               ],
             ),
           ),
+          // Renaming carries no self-lockout risk (see the class doc), so
+          // every row gets this control, including THIS device.
+          const SizedBox(width: 8),
+          renaming
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  key: Key('rename-action-${device.deviceFp}'),
+                  onPressed: onRename,
+                  tooltip: 'Rename',
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  color: SovereignColors.textTertiary,
+                ),
           // Safety property: THIS device never gets an Unlink control, the
           // server would reject it with a 400 anyway (see the class doc).
           if (!device.isCurrent) ...[
@@ -389,6 +489,76 @@ class _DeviceRow extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// The "Rename device" dialog content, pre-filled with [initialLabel] and
+/// capped at 64 characters to match the server's own cap
+/// (`device_routes.py:rename`). A StatefulWidget so its
+/// [TextEditingController] is disposed by the framework itself once the
+/// element genuinely unmounts, see [_LinkedDevicesScreenState._confirmRename]
+/// for why that matters.
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.initialLabel});
+
+  final String initialLabel;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialLabel);
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final trimmed = _controller.text.trim();
+    if (trimmed.isEmpty) {
+      setState(() => _errorText = 'Name cannot be empty');
+      return;
+    }
+    Navigator.of(context).pop(trimmed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('Rename device'),
+      content: TextField(
+        key: const Key('rename-input-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 64,
+        decoration: InputDecoration(
+          hintText: 'Device name',
+          errorText: _errorText,
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: SovereignColors.textTertiary),
+          ),
+        ),
+        FilledButton(
+          key: const Key('rename-confirm-action'),
+          onPressed: _submit,
+          child: const Text('Rename'),
+        ),
+      ],
     );
   }
 }
@@ -481,8 +651,11 @@ IconData _platformIcon(String platform) {
 /// italic styling ([_DeviceRow] applies that separately), never styling
 /// alone, so the row cannot visually pass as one the server named even in a
 /// place (a screen reader, a copy-pasted screenshot) that drops color.
-/// Exposed (not private) so this can be unit-tested directly, same reasoning
-/// as [relativeLastSeen].
+/// `"derived"` gets the amber italic styling too (see [_DeviceRow]) but no
+/// text marker here, the device never claimed that name, the server only
+/// guessed it, so there is nothing to call out as self-asserted. Exposed
+/// (not private) so this can be unit-tested directly, same reasoning as
+/// [relativeLastSeen].
 String deviceRowTitle(LinkedDevice device) {
   final label = device.label.isNotEmpty ? device.label : device.deviceFp;
   return device.labelSource == 'client' ? 'self-named: $label' : label;

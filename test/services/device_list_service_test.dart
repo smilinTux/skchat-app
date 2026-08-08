@@ -91,6 +91,66 @@ void main() {
     expect(await svc.list(), isEmpty);
   });
 
+  test("rename() PATCHes the device-fp path with the label body and parses "
+      "the updated row", () async {
+    final a = _RecordingAdapter()
+      ..body = const {
+        "device_fp": "FP1",
+        "label": "Chef's Desk",
+        "label_source": "operator",
+        "platform": "linux",
+        "enrolled_at": 1000.0,
+        "last_seen": 2000.0,
+        "key_ids": <String>[],
+        "is_current": false,
+      };
+    final svc = _service(a);
+
+    final device = await svc.rename("FP1", "Chef's Desk");
+
+    final req = a.requests.single;
+    expect(req.method, "PATCH");
+    expect(req.uri.path, "/api/v1/operator/devices/FP1");
+    expect(req.data, {"label": "Chef's Desk"});
+    expect(device.deviceFp, "FP1");
+    expect(device.label, "Chef's Desk");
+    expect(device.labelSource, "operator");
+  });
+
+  test(
+      "rename() with an invalid label surfaces a typed invalidLabel error, "
+      "not a raw DioException", () async {
+    final a = _RecordingAdapter()
+      ..status = 400
+      ..body = const {"detail": "label must be a non-empty string"};
+    final svc = _service(a);
+
+    try {
+      await svc.rename("FP1", "   ");
+      fail("expected a DeviceRenameException");
+    } on DeviceRenameException catch (e) {
+      expect(e.reason, DeviceRenameFailureReason.invalidLabel);
+      expect(e.statusCode, 400);
+      expect(e.message, contains("non-empty string"));
+    }
+  });
+
+  test("rename() on an unknown fingerprint surfaces a typed notFound error",
+      () async {
+    final a = _RecordingAdapter()
+      ..status = 404
+      ..body = const {"detail": "device not found"};
+    final svc = _service(a);
+
+    try {
+      await svc.rename("FP-GHOST", "New Name");
+      fail("expected a DeviceRenameException");
+    } on DeviceRenameException catch (e) {
+      expect(e.reason, DeviceRenameFailureReason.notFound);
+      expect(e.statusCode, 404);
+    }
+  });
+
   test("unlink() issues DELETE to the device-fp path and parses the report",
       () async {
     final a = _RecordingAdapter()
