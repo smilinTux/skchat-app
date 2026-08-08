@@ -215,6 +215,21 @@ class ProfileScreen extends ConsumerWidget {
           // device key is only a real WebCrypto key on the web build).
           _SectionLabel(label: 'Operator'),
           const OperatorEnrollmentSection(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: GlassCard(
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                key: const Key('linked-devices-entry'),
+                leading: const Icon(Icons.devices_other_rounded),
+                title: const Text('Linked Devices'),
+                subtitle:
+                    const Text('Manage every device linked to this operator'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => context.push(AppRoutes.linkedDevices),
+              ),
+            ),
+          ),
           const SizedBox(height: 20),
 
           // ── Device recovery ──────────────────────────────────────────

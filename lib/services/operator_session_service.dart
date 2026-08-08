@@ -32,17 +32,48 @@ const _kNegativeCacheWindow = Duration(seconds: 30);
 /// than the server expects.
 ///
 /// Note: Python's `json.dumps` defaults to `ensure_ascii=True`, which escapes
-/// any non-ASCII character to a `\uXXXX` sequence. Dart's `jsonEncode` does
-/// NOT do this by default, it emits UTF-8 bytes as-is. Every field currently
-/// signed through this function (`device_fp`, `nonce`, `device_pubkey`) is
-/// ASCII-only (hex fingerprints, base64, server-issued nonces), so the two
-/// encodings agree today. If a future signed payload ever carries a
-/// non-ASCII value, this function would need to escape it the same way
-/// (`\uXXXX`, matching Python) or the client and server would sign/verify
-/// different byte strings for the same logical value.
+/// every non-ASCII character to a `\uXXXX` sequence (an astral character,
+/// e.g. an emoji, becomes a UTF-16 surrogate PAIR of two such escapes,
+/// because `ensure_ascii` encodes through UTF-16, not UTF-32). Dart's
+/// `jsonEncode` does NOT do this by default, it emits non-ASCII characters as
+/// literal UTF-8 text. This function closes that gap itself (see
+/// [_asciiEscape]) rather than relying on every caller's payload staying
+/// ASCII-only forever: `label` (introduced for device enrollment) is
+/// self-asserted free text and WILL contain non-ASCII values in practice
+/// (accented names, CJK, emoji), and a byte mismatch here means the client
+/// signs one string while the server verifies a different one, an
+/// unrecoverable 401 with no way for the affected user to work around it.
 String canonicalJson(Object? value) {
   final buf = StringBuffer();
   _writeCanonical(value, buf);
+  return buf.toString();
+}
+
+/// Re-escape an already-`jsonEncode`d string literal (quotes and JSON's own
+/// control-character escapes already applied) so every UTF-16 code unit
+/// above `0x7F` is ALSO rendered as a lowercase `\uXXXX` sequence, matching
+/// Python's `json.dumps(..., ensure_ascii=True)` byte-for-byte. Walking UTF-16
+/// CODE UNITS (not Unicode scalar values / runes) is what reproduces Python
+/// correctly for BOTH the BMP (one code unit per character) AND astral
+/// characters (a surrogate pair, each half escaped on its own): Python's
+/// `ensure_ascii` itself encodes an astral codepoint as that same UTF-16
+/// surrogate pair: Python's json.dumps of a single emoji codepoint yields
+/// TWO six-character escapes, one per surrogate half (backslash-u-d83d
+/// followed by backslash-u-de00 for the grinning-face emoji), not one wider
+/// escape. Safe to run on ANY `jsonEncode` output, not just strings:
+/// numbers/booleans/null render as pure ASCII already, so this is a no-op
+/// for them.
+String _asciiEscape(String jsonEncoded) {
+  final buf = StringBuffer();
+  for (final unit in jsonEncoded.codeUnits) {
+    if (unit > 0x7F) {
+      buf
+        ..write("\\u")
+        ..write(unit.toRadixString(16).padLeft(4, "0"));
+    } else {
+      buf.writeCharCode(unit);
+    }
+  }
   return buf.toString();
 }
 
@@ -52,7 +83,7 @@ void _writeCanonical(Object? value, StringBuffer buf) {
     final keys = value.keys.map((k) => k.toString()).toList()..sort();
     for (var i = 0; i < keys.length; i++) {
       if (i > 0) buf.write(",");
-      buf.write(jsonEncode(keys[i]));
+      buf.write(_asciiEscape(jsonEncode(keys[i])));
       buf.write(":");
       _writeCanonical(value[keys[i]], buf);
     }
@@ -66,10 +97,40 @@ void _writeCanonical(Object? value, StringBuffer buf) {
     buf.write("]");
   } else {
     // Leaf: string / num / bool / null. jsonEncode already renders these with
-    // no extraneous whitespace and matches Python's json.dumps for these types
-    // (lowercase true/false/null, no NaN/Infinity in our payloads).
-    buf.write(jsonEncode(value));
+    // no extraneous whitespace and matches Python's json.dumps for these
+    // types (lowercase true/false/null, no NaN/Infinity in our payloads);
+    // _asciiEscape closes the remaining gap for non-ASCII string content.
+    buf.write(_asciiEscape(jsonEncode(value)));
   }
+}
+
+/// Trim and truncate a device label to at most 64 chars, matching the
+/// server's `label.strip()[:64]` (`operator_auth_routes.py:enroll`), so this
+/// client signs exactly the value the server will verify against. Returns
+/// null for an empty or whitespace-only [raw], the caller's signal to omit
+/// the `label` field entirely rather than sign an empty string, the server
+/// only adds `label` to its own signed claims when the body's label, after
+/// `.strip()`, is non-empty.
+String? _normalizeSignedLabel(String? raw) {
+  final trimmed = raw?.trim() ?? "";
+  if (trimmed.isEmpty) return null;
+  if (trimmed.length <= 64) return trimmed;
+  // A plain `substring(0, 64)` slices UTF-16 CODE UNITS, not characters: an
+  // astral character (e.g. an emoji) is TWO code units, and a cut that lands
+  // between them leaves a lone high surrogate in the stored label. That
+  // value still signs and verifies fine (the signature covers whatever bytes
+  // it covers) and persists to disk fine, but the server's device-list
+  // response is a Starlette `JSONResponse`, which renders with
+  // `ensure_ascii=False` and `.encode("utf-8")` and RAISES
+  // `UnicodeEncodeError` on a lone surrogate, taking down `GET
+  // /api/v1/operator/devices` for every device, not just this one. Back the
+  // cut off by one code unit so the whole trailing character is dropped
+  // instead of half of it.
+  var cut = 64;
+  final unitAtCut = trimmed.codeUnitAt(cut - 1);
+  final splitsHighSurrogate = unitAtCut >= 0xD800 && unitAtCut <= 0xDBFF;
+  if (splitsHighSurrogate) cut -= 1;
+  return trimmed.substring(0, cut);
 }
 
 /// Decode the `exp` (unix seconds) claim out of a JWT's payload segment
@@ -484,10 +545,23 @@ class OperatorSessionService {
   }
 
   /// One-time device-key enrollment: sign the canonical
-  /// `{device_pubkey, nonce: windowNonce}` with this device's key and POST it
-  /// to bind the key server-side. The server's returned `device_fp` is
-  /// expected to equal [GuestIdentity]'s own `fingerprint` derivation (both
-  /// sides fingerprint the same SPKI base64 string identically).
+  /// `{device_pubkey, nonce: windowNonce}` (or, when [label] is given, the
+  /// canonical `{device_pubkey, label, nonce}`) with this device's key and
+  /// POST it to bind the key server-side. The server's returned `device_fp`
+  /// is expected to equal [GuestIdentity]'s own `fingerprint` derivation
+  /// (both sides fingerprint the same SPKI base64 string identically).
+  ///
+  /// [label] is an optional, self-asserted name for this device (e.g. "Linux
+  /// (chef-laptop)"). When present it is signed ALONGSIDE the pubkey and
+  /// nonce (`operator_auth_routes.py:enroll`'s R2 behavior), so a proxy
+  /// cannot rewrite what a device calls itself without invalidating the
+  /// signature. Trimmed and truncated to 64 chars before signing, matching
+  /// the server's own `label.strip()[:64]`, the exact value it verifies
+  /// against; a whitespace-only or empty [label] is treated as absent. When
+  /// [label] is omitted (or empty), the signed payload stays the original
+  /// two-field shape, the server's documented backwards-compatible path for
+  /// a client that sends no label at all, so this call keeps working
+  /// unchanged for any caller that does not pass one.
   ///
   /// A successful enroll invalidates any negative cache armed by earlier
   /// pre-enrollment [ensureSession] failures (every gated request runs
@@ -497,12 +571,15 @@ class OperatorSessionService {
   /// UI's link flow would rethrow that stale failure instead of running a
   /// fresh handshake against the now-enrolled device, even though enrollment
   /// itself just succeeded.
-  Future<void> enroll(String windowNonce) async {
+  Future<void> enroll(String windowNonce, {String? label}) async {
     final kp = await _identity.ensure();
-    final signed = canonicalJson({
+    final signedLabel = _normalizeSignedLabel(label);
+    final claims = <String, Object?>{
       "device_pubkey": kp.publicKeyB64,
       "nonce": windowNonce,
-    });
+      if (signedLabel != null) "label": signedLabel,
+    };
+    final signed = canonicalJson(claims);
     final sig = await _identity.sign(signed);
     await _dio.post<Map<String, dynamic>>(
       "/api/v1/auth/enroll",
@@ -510,6 +587,7 @@ class OperatorSessionService {
         "device_pubkey": kp.publicKeyB64,
         "window_nonce": windowNonce,
         "sig": sig,
+        if (signedLabel != null) "label": signedLabel,
       },
     );
     _resetNegativeCache();

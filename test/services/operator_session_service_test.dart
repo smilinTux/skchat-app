@@ -152,6 +152,42 @@ void main() {
       });
       expect(out, '{"a":{"b":3,"y":2},"list":[3,1,2],"z":1}');
     });
+
+    // CRITICAL 1 regression: Dart's jsonEncode emits non-ASCII as literal
+    // UTF-8 text, but the server canonicalizes with Python's
+    // json.dumps(ensure_ascii=True), which escapes every non-ASCII character
+    // to \uXXXX. Before the fix these two disagreed for any non-ASCII value,
+    // so a device label with an accent, CJK, or emoji made enrollment fail
+    // with an unrecoverable 401. Expected bytes verified against the real
+    // server's _canon() (operator_auth_routes.py), see
+    // app-fix-report.md for the full byte-comparison table.
+    test(
+      "escapes a BMP accent as lowercase \\uXXXX, matching Python's "
+      "json.dumps(ensure_ascii=True)",
+      () {
+        final out = canonicalJson({"label": "Café (chef-laptop)"});
+        expect(out, '{"label":"Caf\\u00e9 (chef-laptop)"}');
+      },
+    );
+
+    test(
+      "escapes CJK characters as lowercase \\uXXXX, matching Python's "
+      "json.dumps(ensure_ascii=True)",
+      () {
+        final out = canonicalJson({"label": "Linux (中文主机)"});
+        expect(out, '{"label":"Linux (\\u4e2d\\u6587\\u4e3b\\u673a)"}');
+      },
+    );
+
+    test(
+      "escapes an astral character (emoji) as a UTF-16 surrogate PAIR of "
+      "\\uXXXX escapes, matching Python's json.dumps(ensure_ascii=True) "
+      "(which also encodes through UTF-16, not UTF-32)",
+      () {
+        final out = canonicalJson({"label": "Linux 😀 box"});
+        expect(out, '{"label":"Linux \\ud83d\\ude00 box"}');
+      },
+    );
   });
 
   group("ensureSession", () {
@@ -257,6 +293,178 @@ void main() {
         expect(body["device_pubkey"], "PUB-KEY-B64");
         expect(body["window_nonce"], "WINDOW-NONCE-1");
         expect(body["sig"], isNotEmpty);
+        // No label passed: the body carries no "label" key at all, matching
+        // the server's documented backwards-compatible path for a
+        // label-less client.
+        expect(body.containsKey("label"), isFalse);
+      },
+    );
+
+    test(
+      "with a label, signs the canonical {device_pubkey, label, nonce} "
+      "payload, sorted keys and no whitespace, matching the server's "
+      "json.dumps(sort_keys=True, separators=(\",\", \":\"))",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-NONCE-2", label: "Chef's Laptop");
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"Chef\'s Laptop",'
+          '"nonce":"WINDOW-NONCE-2"}',
+        );
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["device_pubkey"], "PUB-KEY-B64");
+        expect(body["window_nonce"], "WINDOW-NONCE-2");
+        expect(body["label"], "Chef's Laptop");
+        expect(body["sig"], isNotEmpty);
+      },
+    );
+
+    test(
+      "a label over 64 chars is trimmed+truncated before signing, matching "
+      "the server's label.strip()[:64]",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+        final longLabel = "  ${"x" * 80}  "; // 80 x's, padded with whitespace
+        final truncated = "x" * 64;
+
+        await svc.enroll("WINDOW-NONCE-3", label: longLabel);
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"$truncated",'
+          '"nonce":"WINDOW-NONCE-3"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["label"], truncated);
+        expect((body["label"] as String).length, 64);
+      },
+    );
+
+    test(
+      "a whitespace-only label is treated as absent, same as omitting it",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-NONCE-4", label: "   ");
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","nonce":"WINDOW-NONCE-4"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body.containsKey("label"), isFalse);
+      },
+    );
+
+    // CRITICAL 1 regression: every OTHER enroll test in this group uses pure
+    // ASCII, exactly the input set where the buggy (pre-fix) and correct
+    // implementations agree. These pin the exact canonical bytes for
+    // non-ASCII labels so a regression here is caught before it reaches a
+    // live device (a real user hits this with an accented name, e.g. "José's
+    // iPhone"). Expected bytes verified against the real server's _canon()
+    // (operator_auth_routes.py), see app-fix-report.md for the full
+    // byte-comparison table.
+    test(
+      "a label with a BMP accent is escaped as \\uXXXX before signing, "
+      "matching the server's json.dumps(sort_keys=True, ensure_ascii=True)",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-NONCE-ACCENT", label: "Café (chef-laptop)");
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"Caf\\u00e9 (chef-laptop)",'
+          '"nonce":"WINDOW-NONCE-ACCENT"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["label"], "Café (chef-laptop)");
+      },
+    );
+
+    test(
+      "a label with an emoji is escaped as a UTF-16 surrogate pair before "
+      "signing, matching the server's "
+      "json.dumps(sort_keys=True, ensure_ascii=True)",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-NONCE-EMOJI", label: "Linux 😀 box");
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"Linux \\ud83d\\ude00 box",'
+          '"nonce":"WINDOW-NONCE-EMOJI"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["label"], "Linux 😀 box");
+      },
+    );
+
+    // MINOR 4 regression: a plain substring(0, 64) slices UTF-16 code units,
+    // not characters. An astral character (emoji) is two code units, so a
+    // label whose 64th code unit lands mid-pair must back the cut off by one
+    // rather than leave a lone high surrogate (which the server's device-list
+    // JSONResponse cannot re-encode, 500ing the whole list).
+    test(
+      "a label whose 64-code-unit truncation boundary lands mid-surrogate-"
+      "pair backs off by one instead of splitting the pair",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+        // 63 ASCII 'x' + one emoji (2 UTF-16 code units) = 65 code units
+        // total. A naive substring(0, 64) would keep only the emoji's high
+        // surrogate.
+        final label = "${"x" * 63}😀";
+        expect(label.length, 65);
+        final expectedTruncated = "x" * 63; // whole emoji dropped, not split
+
+        await svc.enroll("WINDOW-NONCE-SURROGATE", label: label);
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"$expectedTruncated",'
+          '"nonce":"WINDOW-NONCE-SURROGATE"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["label"], expectedTruncated);
+        // No lone surrogate anywhere in the value actually sent.
+        for (final unit in (body["label"] as String).codeUnits) {
+          expect(unit < 0xD800 || unit > 0xDFFF, isTrue);
+        }
       },
     );
   });
