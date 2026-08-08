@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
 import 'guest_identity.dart';
+import 'operator_auth_interceptor.dart';
+import 'operator_session_service.dart';
 import 'operator_token.dart' as op_token;
 import 'pq_dm_codec.dart';
 
@@ -412,10 +414,29 @@ final guestGroupServiceProvider = Provider<GuestGroupService>(
 /// (tailnet/loopback or SKCHAT_GUEST_OPERATOR_TOKEN). Returns the relative
 /// join_url + token. Requires SKCHAT_GUEST_LINKS_ENABLED on the server (404
 /// when off, surfaced to the caller as an error).
+///
+/// **This route needs the operator SESSION, not just the pasted token.** It is
+/// capability-mapped server-side, so with `SKCHAT_DATAPLANE_AUTH=1` the
+/// data-plane gate runs first and only accepts `Authorization: Bearer <session>`
+/// or `X-CapAuth-Token`. It does NOT recognise `X-Operator-Token`, so a request
+/// carrying only the pasted token is rejected with 401 "capauth authentication
+/// required" BEFORE the route's own operator check ever runs, and every invite
+/// mint (guest_group_mint_sheet, group_info_screen, invite_to_dm_sheet) fails
+/// identically.
+///
+/// So this attaches the session via [buildOperatorAuthInterceptor], the same way
+/// [DeviceListService] does. The pasted `X-Operator-Token` is still sent
+/// alongside it: it is what authorizes the gate-exempt routes, and it keeps
+/// this working if the data-plane gate is off.
 class GuestInviteService {
-  GuestInviteService({Dio? dio, String? webuiBaseUrl})
-      : _dio = dio ?? Dio(),
-        _base = GuestGroupService._strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl);
+  GuestInviteService({
+    Dio? dio,
+    String? webuiBaseUrl,
+    OperatorSessionService? sessionService,
+  })  : _dio = dio ?? Dio(),
+        _base = GuestGroupService._strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl) {
+    _dio.interceptors.add(buildOperatorAuthInterceptor(sessionService, () => _dio));
+  }
 
   final Dio _dio;
   final String _base;
@@ -505,4 +526,8 @@ class GuestInviteService {
 }
 
 final guestInviteServiceProvider = Provider<GuestInviteService>(
-    (ref) => GuestInviteService(webuiBaseUrl: _webOriginOrNull()));
+  (ref) => GuestInviteService(
+    webuiBaseUrl: _webOriginOrNull(),
+    sessionService: ref.read(operatorSessionServiceProvider),
+  ),
+);
