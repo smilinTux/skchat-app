@@ -72,6 +72,19 @@ void _writeCanonical(Object? value, StringBuffer buf) {
   }
 }
 
+/// Trim and truncate a device label to at most 64 chars, matching the
+/// server's `label.strip()[:64]` (`operator_auth_routes.py:enroll`), so this
+/// client signs exactly the value the server will verify against. Returns
+/// null for an empty or whitespace-only [raw], the caller's signal to omit
+/// the `label` field entirely rather than sign an empty string, the server
+/// only adds `label` to its own signed claims when the body's label, after
+/// `.strip()`, is non-empty.
+String? _normalizeSignedLabel(String? raw) {
+  final trimmed = raw?.trim() ?? "";
+  if (trimmed.isEmpty) return null;
+  return trimmed.length > 64 ? trimmed.substring(0, 64) : trimmed;
+}
+
 /// Decode the `exp` (unix seconds) claim out of a JWT's payload segment
 /// without verifying the signature. Client-side use only, to decide whether a
 /// CACHED token is worth reusing; the daemon is the one true verifier of the
@@ -484,10 +497,23 @@ class OperatorSessionService {
   }
 
   /// One-time device-key enrollment: sign the canonical
-  /// `{device_pubkey, nonce: windowNonce}` with this device's key and POST it
-  /// to bind the key server-side. The server's returned `device_fp` is
-  /// expected to equal [GuestIdentity]'s own `fingerprint` derivation (both
-  /// sides fingerprint the same SPKI base64 string identically).
+  /// `{device_pubkey, nonce: windowNonce}` (or, when [label] is given, the
+  /// canonical `{device_pubkey, label, nonce}`) with this device's key and
+  /// POST it to bind the key server-side. The server's returned `device_fp`
+  /// is expected to equal [GuestIdentity]'s own `fingerprint` derivation
+  /// (both sides fingerprint the same SPKI base64 string identically).
+  ///
+  /// [label] is an optional, self-asserted name for this device (e.g. "Linux
+  /// (chef-laptop)"). When present it is signed ALONGSIDE the pubkey and
+  /// nonce (`operator_auth_routes.py:enroll`'s R2 behavior), so a proxy
+  /// cannot rewrite what a device calls itself without invalidating the
+  /// signature. Trimmed and truncated to 64 chars before signing, matching
+  /// the server's own `label.strip()[:64]`, the exact value it verifies
+  /// against; a whitespace-only or empty [label] is treated as absent. When
+  /// [label] is omitted (or empty), the signed payload stays the original
+  /// two-field shape, the server's documented backwards-compatible path for
+  /// a client that sends no label at all, so this call keeps working
+  /// unchanged for any caller that does not pass one.
   ///
   /// A successful enroll invalidates any negative cache armed by earlier
   /// pre-enrollment [ensureSession] failures (every gated request runs
@@ -497,12 +523,15 @@ class OperatorSessionService {
   /// UI's link flow would rethrow that stale failure instead of running a
   /// fresh handshake against the now-enrolled device, even though enrollment
   /// itself just succeeded.
-  Future<void> enroll(String windowNonce) async {
+  Future<void> enroll(String windowNonce, {String? label}) async {
     final kp = await _identity.ensure();
-    final signed = canonicalJson({
+    final signedLabel = _normalizeSignedLabel(label);
+    final claims = <String, Object?>{
       "device_pubkey": kp.publicKeyB64,
       "nonce": windowNonce,
-    });
+      if (signedLabel != null) "label": signedLabel,
+    };
+    final signed = canonicalJson(claims);
     final sig = await _identity.sign(signed);
     await _dio.post<Map<String, dynamic>>(
       "/api/v1/auth/enroll",
@@ -510,6 +539,7 @@ class OperatorSessionService {
         "device_pubkey": kp.publicKeyB64,
         "window_nonce": windowNonce,
         "sig": sig,
+        if (signedLabel != null) "label": signedLabel,
       },
     );
     _resetNegativeCache();

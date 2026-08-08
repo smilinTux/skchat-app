@@ -16,6 +16,7 @@ import '../../features/chats/peer_picker_screen.dart';
 import '../../features/profile/qr_login_screen.dart';
 import '../../features/profile/modules_settings_screen.dart';
 import '../../features/profile/manage_models_screen.dart';
+import '../../features/profile/linked_devices_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
@@ -128,6 +129,10 @@ class AppRoutes {
 
   /// Restore this device's identity from a recovery phrase: /identity/restore
   static const restoreFromPhrase = '/identity/restore';
+
+  /// Linked Devices: every device enrolled to this operator identity, with
+  /// per-device Unlink + "Unlink all other devices": /devices/linked
+  static const linkedDevices = '/devices/linked';
 
   static String conversationPath(String peerId) => '/chats/$peerId';
   static String identityPath(String peerId) => '/identity/$peerId';
@@ -469,6 +474,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.restoreFromPhrase,
         builder: (context, state) => const RestoreFromPhraseScreen(),
+      ),
+
+      // ── Linked Devices (operator device management) ─────────────────────
+      GoRoute(
+        path: AppRoutes.linkedDevices,
+        builder: (context, state) => const LinkedDevicesScreen(),
       ),
 
       // ── skos full-screen media viewer (above the shell) ─────────────────

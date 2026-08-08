@@ -4,6 +4,7 @@ import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../core/theme/theme.dart";
+import "../../../services/device_label.dart";
 import "../../../services/operator_session_service.dart";
 import "../../../services/operator_token.dart" as op_token;
 import "../../../services/self_identity_provider.dart";
@@ -163,7 +164,11 @@ class _OperatorEnrollmentSectionState
       // success; ensureSession() below relies on that so it retries the
       // handshake fresh instead of rethrowing a failure recorded before this
       // device was enrolled.
-      await service.enroll(windowNonce);
+      // guessDeviceLabel() is best-effort and returns null on web / a failed
+      // platform read; enroll() treats a null label as "send none", which
+      // keeps the original two-field signed payload, the documented
+      // backwards-compatible path.
+      await service.enroll(windowNonce, label: guessDeviceLabel());
       await service.ensureSession();
       final kp = await service.identity.ensure();
       // This device just went from unenrolled to a live operator session:

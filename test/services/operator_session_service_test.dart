@@ -257,6 +257,85 @@ void main() {
         expect(body["device_pubkey"], "PUB-KEY-B64");
         expect(body["window_nonce"], "WINDOW-NONCE-1");
         expect(body["sig"], isNotEmpty);
+        // No label passed: the body carries no "label" key at all, matching
+        // the server's documented backwards-compatible path for a
+        // label-less client.
+        expect(body.containsKey("label"), isFalse);
+      },
+    );
+
+    test(
+      "with a label, signs the canonical {device_pubkey, label, nonce} "
+      "payload, sorted keys and no whitespace, matching the server's "
+      "json.dumps(sort_keys=True, separators=(\",\", \":\"))",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-NONCE-2", label: "Chef's Laptop");
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"Chef\'s Laptop",'
+          '"nonce":"WINDOW-NONCE-2"}',
+        );
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["device_pubkey"], "PUB-KEY-B64");
+        expect(body["window_nonce"], "WINDOW-NONCE-2");
+        expect(body["label"], "Chef's Laptop");
+        expect(body["sig"], isNotEmpty);
+      },
+    );
+
+    test(
+      "a label over 64 chars is trimmed+truncated before signing, matching "
+      "the server's label.strip()[:64]",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+        final longLabel = "  ${"x" * 80}  "; // 80 x's, padded with whitespace
+        final truncated = "x" * 64;
+
+        await svc.enroll("WINDOW-NONCE-3", label: longLabel);
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","label":"$truncated",'
+          '"nonce":"WINDOW-NONCE-3"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["label"], truncated);
+        expect((body["label"] as String).length, 64);
+      },
+    );
+
+    test(
+      "a whitespace-only label is treated as absent, same as omitting it",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-NONCE-4", label: "   ");
+
+        expect(
+          id.lastSigned,
+          '{"device_pubkey":"PUB-KEY-B64","nonce":"WINDOW-NONCE-4"}',
+        );
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body.containsKey("label"), isFalse);
       },
     );
   });
