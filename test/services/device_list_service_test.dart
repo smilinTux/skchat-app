@@ -3,6 +3,8 @@ import "dart:convert";
 import "package:dio/dio.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:skchat/services/device_list_service.dart";
+import "package:skchat/services/guest_identity.dart";
+import "package:skchat/services/operator_session_service.dart";
 
 /// Records every request and answers with a configurable [status] + [body].
 /// Mirrors `guest_dm_contacts_service_test.dart`'s `_RecordingAdapter`, plus a
@@ -264,4 +266,87 @@ void main() {
       expect(e.statusCode, 400);
     }
   });
+
+  group("data-plane credential", () {
+    test("the request carries a session Bearer, not only the pasted token", () async {
+      // The regression this pins. These routes are capability-mapped
+      // server-side, so with SKCHAT_DATAPLANE_AUTH=1 the data-plane gate runs
+      // FIRST and only accepts `Authorization: Bearer <session>` or
+      // `X-CapAuth-Token`. It does NOT recognise `X-Operator-Token`. Sending
+      // only the pasted token drew a 401 "capauth authentication required"
+      // before the route's own operator check ever ran, so the whole screen
+      // failed with "Could not load linked devices" against a healthy server.
+      final adapter = _RecordingAdapter()..body = const {"devices": []};
+      final svc = DeviceListService(
+        dio: Dio()..httpClientAdapter = adapter,
+        webuiBaseUrl: "https://h.test",
+        sessionService: _sessionYielding(hs256: "SESSION-JWT"),
+      );
+
+      await svc.list();
+
+      final auth =
+          (adapter.requests.last.headers["Authorization"] ?? "").toString();
+      expect(auth, contains("SESSION-JWT"),
+          reason: "the data-plane gate reads Authorization / X-CapAuth-Token only");
+    });
+  });
+}
+
+/// A session service whose handshake yields a fixed HS256 credential. The
+/// helpers below are lifted from `operator_auth_interceptor_test.dart`, which
+/// already proves this shape drives a real handshake.
+OperatorSessionService _sessionYielding({required String hs256}) {
+  final dio = Dio()
+    ..httpClientAdapter = _SessionAdapter(
+        {"session_token": hs256, "expires_at": 0, "issuer_policy": "hs256"}, "NONCE");
+  return OperatorSessionService(
+    dio: dio,
+    baseUrl: "http://localhost:9384",
+    identity: _FakeIdentity(),
+    tokenReader: _MemSlot().read,
+    tokenWriter: _MemSlot().write,
+  );
+}
+
+class _MemSlot {
+  static String? _v;
+  String? read() => _v;
+  void write(String? v) => _v = (v == null || v.isEmpty) ? null : v;
+}
+
+class _SessionAdapter implements HttpClientAdapter {
+  _SessionAdapter(this.sessionBody, this.nonce);
+  final Map<String, Object?> sessionBody;
+  final String nonce;
+  @override
+  void close({bool force = false}) {}
+  @override
+  Future<ResponseBody> fetch(
+      RequestOptions o, Stream<List<int>>? s, Future<void>? c) async {
+    final body =
+        o.uri.path.endsWith("/challenge") ? {"nonce": nonce, "exp": 0} : sessionBody;
+    return ResponseBody.fromString(jsonEncode(body), 200, headers: {
+      Headers.contentTypeHeader: [Headers.jsonContentType],
+    });
+  }
+}
+
+class _FakeIdentity implements GuestIdentity {
+  bool _cached = false;
+  @override
+  Future<bool> hasCached() async => _cached;
+  @override
+  Future<GuestKeypair> ensure() async {
+    _cached = true;
+    return const GuestKeypair(
+      publicKeyB64: "PUB-KEY-B64",
+      fingerprint: "deadbeefdeadbeef",
+    );
+  }
+
+  @override
+  Future<String> sign(String data) async => "SIG";
+  @override
+  Future<void> clear() async => _cached = false;
 }
