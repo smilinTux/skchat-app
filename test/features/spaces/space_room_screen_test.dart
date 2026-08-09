@@ -125,6 +125,9 @@ void main() {
     when(() => svc.setScreenShareEnabled(any(),
         systemAudioDeviceId: any(named: "systemAudioDeviceId"),
         sourceId: any(named: "sourceId"))).thenAnswer((_) async {});
+    // Content audio for the control-bar share. Default to "this platform has
+    // no system-audio source"; the desktop-audio case below overrides it.
+    when(() => svc.defaultSystemAudioSource()).thenAnswer((_) async => null);
     // CAM: camera go-live / flip default stubs. Individual tests override
     // these to simulate a permission-deny / no-camera failure.
     when(() => svc.setCameraEnabled(any(),
@@ -1054,6 +1057,66 @@ void main() {
       expect(resolverCalls, 1);
       verify(() => svc.setScreenShareEnabled(true,
           systemAudioDeviceId: null, sourceId: "screen:9")).called(1);
+    });
+
+    testWidgets(
+        "Go live then Screen share CARRIES DESKTOP AUDIO: the auto-selected "
+        "system-audio device is passed, so content audio rides its own track",
+        (tester) async {
+      // The control bar is the primary way a host goes live in a Space, but it
+      // used to publish video only, with no systemAudioDeviceId. Listeners then
+      // heard nothing but the host's microphone, which drove hosts to point the
+      // MIC input at the loopback device as a workaround. That collapses both
+      // into one track: muting the mic then kills the content audio, and the
+      // real microphone stops working. Content audio must be its own track.
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+              BuildContext context) async =>
+          (proceed: true, sourceId: "screen:9");
+
+      when(() => svc.defaultSystemAudioSource()).thenAnswer((_) async =>
+          MediaDevice("c41d0a9b77e2", "Kodi-Cast-Loopback", "audioinput", null));
+
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Screen share"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setScreenShareEnabled(true,
+          systemAudioDeviceId: "c41d0a9b77e2",
+          sourceId: "screen:9")).called(1);
+    });
+
+    testWidgets(
+        "a failure resolving the system-audio device still starts the share",
+        (tester) async {
+      // Content audio is best effort: no desktop audio is worse than no share.
+      Future<({bool proceed, String? sourceId})> fakeResolver(
+              BuildContext context) async =>
+          (proceed: true, sourceId: "screen:9");
+
+      when(() => svc.defaultSystemAudioSource())
+          .thenThrow(Exception("enumerateDevices blew up"));
+
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Go live"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Screen share"));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      verify(() => svc.setScreenShareEnabled(true,
+          systemAudioDeviceId: null, sourceId: "screen:9")).called(1);
+      expect(find.textContaining("Screen share failed"), findsNothing);
     });
 
     testWidgets(

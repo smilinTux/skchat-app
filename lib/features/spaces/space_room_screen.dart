@@ -1762,7 +1762,26 @@ class _ControlBar extends ConsumerWidget {
         final resolve = ref.read(screenShareSourceResolverProvider);
         final picked = await resolve(context);
         if (!picked.proceed) return;
-        await notifier.toggleScreenShare(true, sourceId: picked.sourceId);
+        // Content audio. This is the PRIMARY way a host goes live in a Space,
+        // so it has to carry desktop audio the same way the Screen share panel
+        // does. It used to publish video only, and listeners heard nothing but
+        // the host's microphone. The workaround that invites is pointing the
+        // MIC input at the loopback device, which collapses content and voice
+        // into a single track: muting the mic then also kills the content, and
+        // the real microphone stops working. Keep them separate tracks.
+        String? systemAudioDeviceId;
+        try {
+          systemAudioDeviceId = (await ref
+                  .read(liveKitCallServiceProvider)
+                  .defaultSystemAudioSource())
+              ?.deviceId;
+        } catch (_) {
+          // Best effort, exactly like the panel: a share with no desktop audio
+          // is still better than no share at all.
+        }
+        await notifier.toggleScreenShare(true,
+            systemAudioDeviceId: systemAudioDeviceId,
+            sourceId: picked.sourceId);
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
