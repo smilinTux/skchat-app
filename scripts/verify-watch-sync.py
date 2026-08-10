@@ -312,6 +312,23 @@ def resolve_endpoint(spec: str, ssh_connect_timeout: float) -> ResolvedEndpoint:
             stderr=subprocess.PIPE,
         )
 
+        def cleanup():
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        # Registered BEFORE the readiness wait below, not after it succeeds.
+        # subprocess.Popen objects do not terminate their child on garbage
+        # collection, so if an exception (in particular the hard wall-clock
+        # watchdog in main(), which can fire at any point) interrupts the
+        # wait, an atexit hook registered only after a successful wait would
+        # never have existed for that interrupted run, and the ssh process
+        # would be orphaned. Registering first means every exit path,
+        # including one that never reaches "return" below, still cleans up.
+        atexit.register(cleanup)
+
         # Wait for the tunnel to actually accept connections rather than a
         # fixed sleep: ssh -N prints nothing on success, so "can we connect"
         # is the only reliable readiness signal.
@@ -336,14 +353,6 @@ def resolve_endpoint(spec: str, ssh_connect_timeout: float) -> ResolvedEndpoint:
                 f"ssh tunnel to {ssh_target} for port {remote_port} never became reachable: {last_err}"
             )
 
-        def cleanup():
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-
-        atexit.register(cleanup)
         return ResolvedEndpoint("127.0.0.1", local_port, cleanup=cleanup)
 
     raise ValueError(f"unrecognized endpoint spec (want local:PORT or ssh:user@host:PORT): {spec!r}")
@@ -357,7 +366,10 @@ def list_page_targets(endpoint: ResolvedEndpoint, timeout: float):
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.load(resp)
-    except (urllib.error.URLError, OSError, TimeoutError):
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+        # ValueError covers json.JSONDecodeError, in case a candidate port
+        # answers HTTP but with a non-JSON body. Same "just skip it" outcome
+        # as any other unreachable-candidate case.
         return []
 
 
@@ -394,6 +406,16 @@ DISCOVERY_BUDGET_SECONDS = 20.0
 # timeout at a time: that is a real connectivity failure, and the human
 # running this needs to know NOW, not after paying for every remaining tick.
 CONSECUTIVE_SAMPLE_FAILURE_LIMIT = 3
+
+# The consecutive-failure breaker above catches a connection that goes dark
+# for several ticks straight, but not one that drops roughly every other
+# sample without ever stringing 3 misses together: that run could finish
+# with half its data missing and still reach the drift gates below with
+# whatever thin scattering of real samples it did get, passing as healthy
+# on too little evidence. This default (about a third of attempted samples)
+# is deliberately independent of the consecutive-failure count so the two
+# checks catch different shapes of flakiness.
+DEFAULT_MISSED_FRACTION_GATE = 1.0 / 3.0
 
 FIND_WATCH_IFRAME_JS = f"""
 (function() {{
@@ -525,11 +547,18 @@ class BrowserSide:
                 break
 
             _set_step(f"{self.label}: probing {tgt.get('url')}")
+            probe = None
             try:
                 probe = CdpSession(ep.host, ep.port, tgt["webSocketDebuggerUrl"], connect_timeout=CONNECT_TIMEOUT)
                 src = probe.eval(FIND_WATCH_IFRAME_JS, timeout=DISCOVERY_EVAL_TIMEOUT)
-            except (OSError, RuntimeError, TimeoutError, EOFError) as exc:
+            except (OSError, RuntimeError, TimeoutError, EOFError, ValueError) as exc:
+                # ValueError covers json.JSONDecodeError: a timeout that
+                # interrupts a read mid-frame can desync the byte stream and
+                # hand json.loads a truncated payload. Treated the same as
+                # any other "this target did not answer usably" outcome.
                 checked.append(f"  - {tgt.get('url')} (did not answer within the discovery timeout: {exc})")
+                if probe is not None:
+                    probe.close()
                 continue
 
             if not src:
@@ -600,8 +629,11 @@ def linreg_slope(xs, ys):
     return num / den
 
 
-def format_report(samples, dead_band, max_drift_gate, growth_slope_threshold):
-    """samples: list of (elapsed_seconds, drift_seconds). Returns (report_text, ok: bool)."""
+def format_report(samples, attempted_ticks, dead_band, max_drift_gate, growth_slope_threshold, missed_fraction_gate):
+    """samples: list of (elapsed_seconds, drift_seconds).
+    attempted_ticks: how many sampling ticks were actually run (may be less
+    than the planned tick count if the consecutive-failure breaker fired).
+    Returns (report_text, ok: bool)."""
     if not samples:
         # Zero samples is a hard failure, never a silent pass: it means every
         # single poll round trip failed, which is a broken measurement run,
@@ -620,11 +652,22 @@ def format_report(samples, dead_band, max_drift_gate, growth_slope_threshold):
     # the two players is opening roughly in lockstep with wall time, which
     # is exactly what happens when nothing is correcting it (see module
     # docstring). Bounded jitter around the dead band has a slope near zero
-    # even though individual samples bounce around.
+    # even though individual samples bounce around. Known limit: a runaway
+    # that only starts in the final few ticks may not have accumulated
+    # enough samples to move the fitted slope past the threshold within a
+    # single window. This is judged acceptable rather than worth chasing,
+    # because the max-drift gate below is likely to already be over its
+    # limit by then, and a follow-up run started shortly after would show
+    # the growth from its very first tick.
     growing_unbounded = slope > growth_slope_threshold
 
+    missing_ticks = max(0, attempted_ticks - n)
+    missing_fraction = (missing_ticks / attempted_ticks) if attempted_ticks else 0.0
+    flaky = missing_fraction > missed_fraction_gate
+
     lines = [
-        f"Samples collected: {n}",
+        f"Samples collected: {n} of {attempted_ticks} attempted "
+        f"({missing_ticks} missing, {missing_fraction:.0%})",
         f"Max drift: {max_drift:.3f}s",
         f"Mean drift: {mean_drift:.3f}s",
         f"Samples over the {dead_band:.1f}s dead band: {over_band}/{n}",
@@ -640,6 +683,13 @@ def format_report(samples, dead_band, max_drift_gate, growth_slope_threshold):
         lines.append(
             f"FAIL: drift is growing at {slope:.4f}s/s, above the {growth_slope_threshold:.4f}s/s "
             "threshold. This is the signature of the heartbeat not being applied."
+        )
+        ok = False
+    if flaky:
+        lines.append(
+            f"FAIL: {missing_ticks}/{attempted_ticks} samples ({missing_fraction:.0%}) were missing, "
+            f"above the {missed_fraction_gate:.0%} gate. A connection that drops most of its samples "
+            "must not pass as healthy sync just because the samples it did get looked fine."
         )
         ok = False
     if ok:
@@ -674,6 +724,12 @@ def parse_args(argv):
         type=float,
         default=0.1,
         help="drift growth rate (seconds/second) above which the run is flagged as unbounded",
+    )
+    p.add_argument(
+        "--missed-fraction-gate",
+        type=float,
+        default=DEFAULT_MISSED_FRACTION_GATE,
+        help="fail if more than this fraction of attempted samples were missing (default 1/3)",
     )
     p.add_argument("--ssh-connect-timeout", type=float, default=15.0, help="seconds to wait for an ssh tunnel to come up")
     p.add_argument(
@@ -737,6 +793,7 @@ def run(args) -> int:
         consecutive_missed_a = 0
         consecutive_missed_b = 0
         aborted_early = None
+        attempted_ticks = 0
 
         for i in range(n_ticks):
             target_time = start + i * args.interval
@@ -745,18 +802,27 @@ def run(args) -> int:
                 _set_step(f"pacing to sample tick {i}")
                 time.sleep(target_time - now)
 
+            attempted_ticks += 1
             elapsed = time.monotonic() - start
             _set_step(f"{side_a.label}: sampling tick {i}")
+            # ValueError (json.JSONDecodeError) is caught alongside the
+            # transport errors for the same reason as in find_watch_surface:
+            # a timeout on this long-lived reused session can interrupt a
+            # read mid-frame and desync the byte stream, which surfaces as a
+            # malformed payload rather than a socket-level error. Without
+            # this it would crash with a raw traceback instead of the
+            # otherwise consistent "this sample failed" message, even though
+            # both paths already exit non-zero.
             try:
                 a = side_a.sample()
-            except (OSError, RuntimeError, TimeoutError, EOFError) as exc:
+            except (OSError, RuntimeError, TimeoutError, EOFError, ValueError) as exc:
                 print(f"  [{elapsed:6.1f}s] {side_a.label} sample failed: {exc}", file=sys.stderr)
                 a = None
 
             _set_step(f"{side_b.label}: sampling tick {i}")
             try:
                 b = side_b.sample()
-            except (OSError, RuntimeError, TimeoutError, EOFError) as exc:
+            except (OSError, RuntimeError, TimeoutError, EOFError, ValueError) as exc:
                 print(f"  [{elapsed:6.1f}s] {side_b.label} sample failed: {exc}", file=sys.stderr)
                 b = None
 
@@ -804,7 +870,14 @@ def run(args) -> int:
                 "above, means the connection to that browser is not healthy.",
             )
 
-        report, ok = format_report(samples, args.dead_band, args.max_drift, args.growth_slope_threshold)
+        report, ok = format_report(
+            samples,
+            attempted_ticks,
+            args.dead_band,
+            args.max_drift,
+            args.growth_slope_threshold,
+            args.missed_fraction_gate,
+        )
         print(report)
         if aborted_early:
             ok = False
