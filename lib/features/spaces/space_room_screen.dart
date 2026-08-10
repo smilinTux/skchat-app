@@ -701,6 +701,11 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // Flutter's own handle, not the decorative Container each panel draws.
+      // A lane panel is mostly gesture-handling widgets (text fields, buttons,
+      // scrollables), and any drag that starts on one of those never reaches
+      // the sheet, so there was no reliable place to grab and lower it.
+      showDragHandle: true,
       builder: (_) => Padding(
         padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -1415,9 +1420,22 @@ class _WatchTogetherStage extends ConsumerWidget {
         aspectRatio: 16 / 9,
         child: Stack(
           children: [
+            // Stop taking pointers whenever something is pushed over the room
+            // (a lane panel, the go-live chooser, any dialog).
+            //
+            // On web this surface is a platform view, a REAL DOM element, not
+            // canvas. DOM elements win pointer events over their own area
+            // regardless of what Flutter has drawn on top, so while a bottom
+            // sheet is open every drag and tap landing over the video goes to
+            // the iframe instead of to the sheet or its scrim. That is a sheet
+            // the user cannot lower or dismiss. isCurrent is false exactly
+            // while another route sits above this one.
             Positioned.fill(
-              child: WatchVideo(
-                controller: session.controller as WatchVideoController,
+              child: IgnorePointer(
+                ignoring: !(ModalRoute.of(context)?.isCurrent ?? true),
+                child: WatchVideo(
+                  controller: session.controller as WatchVideoController,
+                ),
               ),
             ),
             Positioned(
