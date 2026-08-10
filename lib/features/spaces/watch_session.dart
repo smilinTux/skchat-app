@@ -95,6 +95,13 @@ class WatchSessionState {
   final bool isPlaying;
   final bool isHostOfVideo;
 
+  /// A video is loaded, so the stage has something to show. Drives
+  /// [StageKind.watch]/[resolveStageKind] (stage_content.dart): the stage
+  /// only claims space for Watch Together once a URL has actually been
+  /// loaded, not the instant the session/provider itself comes into
+  /// existence.
+  bool get isActive => url != null;
+
   WatchSessionState copyWith({
     String? url,
     bool? isPlaying,

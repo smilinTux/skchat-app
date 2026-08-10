@@ -19,6 +19,9 @@ import "space_chat_panel.dart";
 import "watch_panel.dart";
 import "screen_share_panel.dart";
 import "screen_share_helper.dart";
+import "stage_content.dart";
+import "watch_session.dart";
+import "watch_video_stub.dart" if (dart.library.html) "watch_video_web.dart";
 import "fullscreen_video_stage.dart";
 import "terminal_panel.dart";
 import "doc_panel.dart";
@@ -1003,12 +1006,45 @@ class _Stage extends ConsumerWidget {
         resolveStageVideos(ref.read(liveKitCallServiceProvider).room,
             state.participants);
 
+    // Watch Together: same shared session the "Watch together" lane tile
+    // (WatchPanel) targets, watched here so the stage learns the moment a
+    // video is loaded/cleared. See resolveStageKind (stage_content.dart) for
+    // why live video outranks it.
+    final watchArgs =
+        WatchSessionArgs(spaceId: join.spaceId, identity: join.identity);
+    final watchActive = ref.watch(watchSessionProvider(watchArgs)).isActive;
+    final kind = resolveStageKind(videos: videos, watchActive: watchActive);
+    final liveVideoOnTop = kind == StageKind.liveVideo;
+    // Whether the Watch Together surface belongs in the tree at all right
+    // now: either it OWNS the stage (kind == watch) or live video has taken
+    // over ON TOP of an already-active watch session, in which case it stays
+    // mounted (see _WatchTogetherStage's Offstage wrapper below) instead of
+    // being torn down and rebuilt from scratch the next time video ends.
+    final watchMounted = kind == StageKind.watch || (liveVideoOnTop && watchActive);
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
-        if (videos.isNotEmpty) ...[
+        if (liveVideoOnTop) ...[
           _WatchStage(videos: videos),
           const SizedBox(height: 24),
+        ],
+        if (watchMounted) ...[
+          // Keyed so this stays the SAME element (and therefore the same
+          // WatchVideo State) whether it renders right here (kind == watch)
+          // or, offstage, after the live-video block above (kind ==
+          // liveVideo). Without a stable key, the live-video block above
+          // being added/removed shifts this widget's position in the list,
+          // which Flutter would (with no key to match on) treat as an
+          // unrelated widget appearing at that new slot: it would tear down
+          // the old element and mount a fresh one instead of reusing it,
+          // exactly the remount this Offstage wrapper exists to prevent.
+          Offstage(
+            key: ValueKey("watch-together-${join.spaceId}"),
+            offstage: liveVideoOnTop,
+            child: _WatchTogetherStage(join: join),
+          ),
+          if (!liveVideoOnTop) const SizedBox(height: 24),
         ],
         if (join.isHost && raisedHands.isNotEmpty) ...[
           _sectionLabel("Raised hands", raisedHands.length),
@@ -1340,6 +1376,80 @@ class _WatchStage extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// The Watch Together surface on the main stage: the shared video (YouTube /
+/// Rumble / direct file) at 16:9, driven by the room's shared
+/// [watchSessionProvider] so playback and sync are the SAME session the
+/// "Watch together" lane tile (WatchPanel) can also drive, not a second,
+/// disconnected player.
+///
+/// [session.controller]'s declared type is the platform-neutral
+/// [WatchController] interface (watch_sync.dart), but the object behind it is
+/// always the concrete, platform-specific `WatchVideoController` (the
+/// `watchControllerFactoryProvider` default builds one, see
+/// watch_session.dart); [WatchVideo] itself needs that concrete type, not
+/// just the interface, since its native build() reads fields
+/// (`isFilePlayerReady`, `fileController`, `url`) that [WatchController]
+/// deliberately does not expose.
+class _WatchTogetherStage extends ConsumerWidget {
+  const _WatchTogetherStage({required this.join});
+
+  final SpaceJoin join;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final args =
+        WatchSessionArgs(spaceId: join.spaceId, identity: join.identity);
+    final session = ref.watch(watchSessionProvider(args).notifier);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: WatchVideo(
+                controller: session.controller as WatchVideoController,
+              ),
+            ),
+            Positioned(
+              left: 10,
+              top: 10,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color:
+                          SovereignColors.accentEncrypt.withValues(alpha: 0.6)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.smart_display_outlined,
+                        size: 14, color: SovereignColors.textPrimary),
+                    SizedBox(width: 6),
+                    Text(
+                      "Watching together",
+                      style: TextStyle(
+                        color: SovereignColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

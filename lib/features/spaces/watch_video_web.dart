@@ -332,6 +332,18 @@ class _WatchVideoState extends State<WatchVideo> {
     super.initState();
     _viewType = "watch-video-${identityHashCode(widget.controller)}";
 
+    // A remount reuses the SAME controller instance (the Space stage keeps
+    // this surface's controller alive underneath an Offstage while live
+    // video takes the stage on top of it; see _WatchTogetherStage in
+    // space_room_screen.dart). The registered view factory below closed over
+    // the container built on the FIRST mount; rebuilding fresh DOM elements
+    // here and reassigning them to widget.controller would leave that
+    // factory returning an orphaned node forever (an empty box) instead of
+    // the live iframe/video, and for a YouTube iframe specifically, tearing
+    // it down and rebuilding a fresh one on every remount would stop and
+    // reload the movie. Reuse what is already there instead.
+    if (widget.controller.container != null) return;
+
     final container = html.DivElement()
       ..style.position = "relative"
       ..style.width = "100%"
