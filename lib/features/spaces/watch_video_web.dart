@@ -62,6 +62,11 @@ class WatchVideoController implements WatchController {
 
   bool get _ready => container != null;
 
+  /// Web plays YouTube and Rumble inline via iframe (see class doc), so
+  /// there is never an embed-only picture gap here the way there is on
+  /// native; exists so both controllers satisfy the same shape.
+  bool get isEmbedOnly => false;
+
   /// Wire the window-level postMessage listener that receives YouTube IFrame
   /// API `infoDelivery` frames, and the iframe `onLoad` listener that re-sends
   /// the `{"event":"listening"}` handshake on every load. Called once, from

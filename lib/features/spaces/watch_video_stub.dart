@@ -38,6 +38,11 @@ class WatchVideoController extends ChangeNotifier
   /// for the sync lane even when we are not actually decoding the media.
   double _shadowPos = 0;
 
+  /// True when the loaded source is YouTube/Rumble: no inline picture on this
+  /// platform, only sync propagation. Lets the UI say so plainly instead of
+  /// leaving a blank stage the viewer has to puzzle out.
+  bool get isEmbedOnly => _mode == _WatchMode.embedOnly;
+
   /// Whether the controllable player is initialized and ready for commands.
   bool get isFilePlayerReady =>
       _mode == _WatchMode.file &&
@@ -243,9 +248,11 @@ class _WatchVideoState extends State<WatchVideo> {
             ? "Load a video URL to watch together."
             : loadingFile
                 ? "Loading…\n$url"
-                : "▶ Now playing (synced across the room):\n$url\n\n"
-                    "Embedded YouTube/Rumble playback is on the web client; "
-                    "play/pause/seek still sync here.",
+                : "$url\n\n"
+                    "This device keeps play, pause and seek in sync with the "
+                    "room, but does not show the picture: inline YouTube "
+                    "playback is on the web client. Open this Space in a "
+                    "browser to see it.",
         textAlign: TextAlign.center,
         style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),

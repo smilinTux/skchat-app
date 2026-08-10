@@ -139,5 +139,13 @@ void main() {
       c.seekTo(42.5);
       expect(c.position, 42.5);
     });
+
+    test("native YouTube reports embed-only so the UI can say so", () {
+      final c = WatchVideoController();
+      c.load("https://youtu.be/abc");
+      expect(c.isEmbedOnly, isTrue);
+      c.load("https://example.com/clip.mp4");
+      expect(c.isEmbedOnly, isFalse);
+    });
   });
 }
