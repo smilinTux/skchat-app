@@ -2,12 +2,9 @@ import "package:flutter_test/flutter_test.dart";
 import "package:skchat/features/spaces/watch_drift.dart";
 
 PlaybackSnapshot snap(double p,
-        {bool playing = true, bool buffering = false, bool rateIsNormal = true}) =>
+        {bool playing = true, bool buffering = false, double rate = 1.0}) =>
     PlaybackSnapshot(
-        position: p,
-        playing: playing,
-        buffering: buffering,
-        rateIsNormal: rateIsNormal);
+        position: p, playing: playing, buffering: buffering, rate: rate);
 
 void main() {
   test("small drift inside the dead band is left alone", () {
@@ -54,24 +51,51 @@ void main() {
   });
 
   test(
-      "a non-normal playback rate suppresses correction even at large drift",
-      () {
-    // A viewer who bumps the YouTube embed to 1.5x is racing ahead on
-    // purpose, not drifting out of sync with the room: seek-yanking them
-    // back every heartbeat fights the user instead of helping, the same
-    // reasoning that leaves a buffering player alone.
+      "a local rate that disagrees with the session's agreed rate suppresses "
+      "correction even at large drift", () {
+    // A viewer who bumps the YouTube embed's own speed menu to 1.5x while
+    // the room is still agreed on 1x is racing ahead on purpose, not
+    // drifting out of sync: seek-yanking them back every heartbeat fights
+    // the choice they just made instead of helping, the same reasoning that
+    // leaves a buffering player alone. The next "rate" lane event resettles
+    // this once it lands.
     expect(
         resolveDrift(
-            local: snap(500.0, rateIsNormal: false),
+            local: snap(500.0, rate: 1.5),
             hostPosition: 100.0,
-            hostPlaying: true),
+            hostPlaying: true,
+            sessionRate: 1.0),
         DriftAction.none);
     expect(
         resolveDrift(
-            local: snap(500.0, playing: false, rateIsNormal: false),
+            local: snap(500.0, playing: false, rate: 1.5),
             hostPosition: 100.0,
-            hostPlaying: true),
+            hostPlaying: true,
+            sessionRate: 1.0),
         DriftAction.none);
+  });
+
+  test(
+      "drift correction keeps running normally when local and session rate "
+      "AGREE, even at a non-1x shared speed", () {
+    // This is the regression the whole feature turns on: once speed is
+    // shared room state, everyone running at the same non-1x rate is the
+    // NORMAL case, not a suspicious one, so ordinary drift correction must
+    // still apply.
+    expect(
+        resolveDrift(
+            local: snap(90.0, rate: 1.5),
+            hostPosition: 100.0,
+            hostPlaying: true,
+            sessionRate: 1.5),
+        DriftAction.seekAndPlay);
+    expect(
+        resolveDrift(
+            local: snap(100.2, playing: false, rate: 1.5),
+            hostPosition: 100.0,
+            hostPlaying: true,
+            sessionRate: 1.5),
+        DriftAction.playOnly);
   });
 
   test("dead band is configurable and boundary is inclusive", () {

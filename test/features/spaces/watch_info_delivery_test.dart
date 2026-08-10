@@ -29,11 +29,18 @@ void main() {
     }
   });
 
-  test("a non-1.0 playback rate is reported so sync can skip the tick", () {
+  test("the actual playback rate is reported for drift's rate-mismatch check",
+      () {
     const raw =
         '{"event":"infoDelivery","info":{"playerState":1,"currentTime":5.0,'
         '"playbackRate":1.5}}';
-    expect(parseYouTubeInfo(raw)!.rateIsNormal, isFalse);
+    expect(parseYouTubeInfo(raw)!.rate, 1.5);
+  });
+
+  test("a missing playbackRate defaults to 1.0", () {
+    const raw =
+        '{"event":"infoDelivery","info":{"playerState":1,"currentTime":5.0}}';
+    expect(parseYouTubeInfo(raw)!.rate, 1.0);
   });
 
   test("unrelated or malformed frames return null instead of throwing", () {

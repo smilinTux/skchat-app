@@ -36,6 +36,6 @@ PlaybackSnapshot? parseYouTubeInfo(String raw) {
     position: time.toDouble(),
     playing: state.toInt() == _kPlaying,
     buffering: state.toInt() == _kBuffering,
-    rateIsNormal: rate is! num || (rate.toDouble() - 1.0).abs() < 0.01,
+    rate: rate is num ? rate.toDouble() : 1.0,
   );
 }
