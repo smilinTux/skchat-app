@@ -9,11 +9,18 @@ class PlaybackSnapshot {
     required this.position,
     required this.playing,
     this.buffering = false,
+    this.rateIsNormal = true,
   });
 
   final double position;
   final bool playing;
   final bool buffering;
+
+  /// False when the player reports a playbackRate other than 1.0, so the
+  /// sync loop can skip drift-correcting a position that is legitimately
+  /// racing ahead or behind because the local viewer sped up or slowed down
+  /// the player, not because it drifted out of sync with the room.
+  final bool rateIsNormal;
 }
 
 enum DriftAction { none, seekAndPlay, seekAndPause, playOnly, pauseOnly }

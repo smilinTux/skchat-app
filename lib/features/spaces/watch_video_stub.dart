@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:video_player/video_player.dart";
 
+import "watch_drift.dart";
 import "watch_sync.dart";
 
 /// Native (mobile / desktop) watch-together video surface.
@@ -152,6 +153,16 @@ class WatchVideoController extends ChangeNotifier
     }
     return _shadowPos;
   }
+
+  /// Real state for `video_player` sources; for YouTube/Rumble embed-only
+  /// mode there is no native player to read, so this mirrors [position]'s
+  /// shadow-value fallback and reports not-playing (parity with the web
+  /// controller's pre-handshake fallback).
+  PlaybackSnapshot get playbackSnapshot => PlaybackSnapshot(
+        position: position,
+        playing: _vp?.value.isPlaying ?? false,
+        buffering: _vp?.value.isBuffering ?? false,
+      );
 
   void _disposePlayer() {
     final old = _vp;

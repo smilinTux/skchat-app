@@ -1,10 +1,13 @@
+import "dart:async";
 import "dart:convert";
 import "dart:html" as html;
 import "dart:ui_web" as ui_web;
 
 import "package:flutter/material.dart";
 
+import "watch_drift.dart";
 import "watch_sync.dart";
+import "watch_yt_info.dart";
 
 /// Web watch-together video surface.
 ///
@@ -38,12 +41,52 @@ class WatchVideoController implements WatchPlaybackTarget {
   _WatchMode _mode = _WatchMode.none;
   String? _currentUrl;
 
-  /// Last position we set on a non-controllable (iframe) source, so [position]
-  /// returns something sensible for the sync lane even when we can't read the
-  /// real player time cross-origin.
+  /// Stable id for the `{"event":"listening"}` handshake. Set once by
+  /// [_WatchVideoState.initState] alongside [iframeEl]; the YouTube IFrame
+  /// API doesn't require this id to mean anything, it just needs to be
+  /// present.
+  String? viewType;
+
+  /// Latest parsed `infoDelivery` frame. Null until the first frame arrives
+  /// after the listening handshake (or after a fresh [load] swaps the
+  /// player out from under it).
+  PlaybackSnapshot? _latest;
+
+  StreamSubscription<html.MessageEvent>? _msgSub;
+
+  /// Last position we set on a non-controllable (iframe) source. Used as the
+  /// [position] fallback for iframe sources before the listening handshake's
+  /// first `infoDelivery` frame lands, and for sources (Rumble) that never
+  /// deliver real player state at all.
   double _shadowPos = 0;
 
   bool get _ready => container != null;
+
+  /// Wire the window-level postMessage listener that receives YouTube IFrame
+  /// API `infoDelivery` frames, and the iframe `onLoad` listener that re-sends
+  /// the `{"event":"listening"}` handshake on every load. Called once, from
+  /// [_WatchVideoState.initState], right after [iframeEl] is assigned.
+  void _attach() {
+    _msgSub = html.window.onMessage.listen((event) {
+      // Other origins post to this window too; only trust the iframe we own.
+      if (event.source != iframeEl?.contentWindow) return;
+      final data = event.data;
+      if (data is! String) return;
+      final snap = parseYouTubeInfo(data);
+      if (snap != null) _latest = snap;
+    });
+    iframeEl?.onLoad.listen((_) {
+      // Each load() swaps iframe src (fresh document, fresh IFrame API
+      // player), so the handshake has to be re-sent every time, not once.
+      if (_mode != _WatchMode.youtube) return;
+      final win = iframeEl?.contentWindow;
+      if (win == null) return;
+      win.postMessage(
+        jsonEncode({"event": "listening", "id": viewType ?? ""}),
+        "https://www.youtube.com",
+      );
+    });
+  }
 
   // ---- Source detection -----------------------------------------------------
 
@@ -127,6 +170,10 @@ class WatchVideoController implements WatchPlaybackTarget {
   void load(String url) {
     _currentUrl = url;
     _shadowPos = 0;
+    // Drop the previous video's snapshot: without this, position/playing
+    // would keep reporting the OLD video's state until the new player's
+    // first infoDelivery frame lands.
+    _latest = null;
     if (!_ready) return;
 
     final ytId = youtubeId(url);
@@ -210,14 +257,28 @@ class WatchVideoController implements WatchPlaybackTarget {
       final v = videoEl;
       if (v != null) return v.currentTime.toDouble();
     }
-    // iframe sources: we can't read player time cross-origin → shadow value.
+    if (_mode == _WatchMode.youtube) {
+      // Real player time once the listening handshake's first frame lands;
+      // shadow value (last thing WE set) before that, or for Rumble, which
+      // has no documented postMessage state API at all.
+      return _latest?.position ?? _shadowPos;
+    }
     return _shadowPos;
   }
 
-  /// API parity with the native controller (which owns a disposable player).
-  /// The web surface is torn down by the browser with the platform view, so
-  /// this is a no-op.
-  void dispose() {}
+  /// Full playback state for the drift resolver, not just position: play
+  /// state and buffering matter as much as the timestamp for deciding
+  /// whether to correct a viewer.
+  PlaybackSnapshot get playbackSnapshot =>
+      _latest ?? PlaybackSnapshot(position: position, playing: false);
+
+  /// Cancels the window message listener so a later task's `ref.onDispose`
+  /// can tear this controller down cleanly instead of leaking a subscription
+  /// for the life of the page.
+  void dispose() {
+    _msgSub?.cancel();
+    _msgSub = null;
+  }
 
   // ---- Internals ------------------------------------------------------------
 
@@ -303,7 +364,9 @@ class _WatchVideoState extends State<WatchVideo> {
     widget.controller
       ..container = container
       ..videoEl = video
-      ..iframeEl = iframe;
+      ..iframeEl = iframe
+      ..viewType = _viewType
+      .._attach();
 
     // If a URL was loaded before the surface mounted, apply it now.
     final pending = widget.controller._currentUrl;
