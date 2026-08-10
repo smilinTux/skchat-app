@@ -87,6 +87,16 @@ void main() {
       expect(target.calls, ["seek:5.0"]);
     });
 
+    test(
+        "stop is a no-op here: WatchSession.applyRemote handles it before "
+        "reaching this mapper, and an older client's copy of this switch "
+        "falls into the default: branch below, which is what makes 'stop' "
+        "additive on the wire", () {
+      final r = applyWatchEvent(target, {"action": "stop"});
+      expect(r, isNull);
+      expect(target.calls, isEmpty);
+    });
+
     test("unknown action is ignored", () {
       final r = applyWatchEvent(target, {"action": "frobnicate"});
       expect(r, isNull);

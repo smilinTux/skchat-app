@@ -11,6 +11,7 @@ import "package:flutter_test/flutter_test.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/call_shared/screen_share_source.dart";
 import "package:skchat/features/spaces/screen_share_panel.dart";
+import "package:livekit_client/livekit_client.dart" show MediaDevice;
 import "package:skchat/services/livekit_call_service.dart";
 
 class MockLiveKitCallService extends Mock implements LiveKitCallService {}
@@ -107,5 +108,79 @@ void main() {
       find.textContaining("Screen sharing needs the desktop app"),
       findsNothing,
     );
+  });
+
+  // ── Linux/web system audio ─────────────────────────────────────────────
+  //
+  // The blended-audio bug: on Linux the browser exposes no PulseAudio monitor,
+  // so the panel auto-selected nothing, passed systemAudioDeviceId: null, and
+  // startScreenShareSystemAudio never ran. The only published audio track was
+  // the microphone, so listeners heard the room with the content bleeding in
+  // acoustically instead of a clean content track.
+
+  testWidgets(
+      "with only a loopback capture device (the live Brave/.41 list), the "
+      "share passes that deviceId as system audio", (tester) async {
+    Future<({bool proceed, String? sourceId})> fakeResolver(
+            BuildContext context) async =>
+        (proceed: true, sourceId: "screen:3");
+
+    await tester.pumpWidget(wrap(extraOverrides: [
+      isMobileWebProvider.overrideWithValue(false),
+      screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      audioInputEnumeratorProvider.overrideWithValue(() async => [
+            MediaDevice("default", "Default", "audioinput", null),
+            MediaDevice(
+                "956439f673df", "Built-in Audio Analog Stereo", "audioinput", null),
+            MediaDevice(
+                "2fa3e671e30e", "Loopback Analog Stereo", "audioinput", null),
+            MediaDevice(
+                "9868cb30845c", "Easy Effects Source", "audioinput", null),
+          ]),
+    ]));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // The toggle is live (not the "no system-audio source" dead state).
+    expect(find.textContaining("No system-audio source found"), findsNothing);
+
+    await tester.tap(find.text("Share my screen"));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    verify(() => svc.setScreenShareEnabled(true,
+        systemAudioDeviceId: "2fa3e671e30e", sourceId: "screen:3")).called(1);
+  });
+
+  testWidgets(
+      "with microphones only, the share passes NO system-audio deviceId",
+      (tester) async {
+    // Regression guard: publishing a mic under a system-audio label is what
+    // produced the blended stream in the first place. Better to ship no
+    // content track than to ship the microphone twice.
+    Future<({bool proceed, String? sourceId})> fakeResolver(
+            BuildContext context) async =>
+        (proceed: true, sourceId: "screen:3");
+
+    await tester.pumpWidget(wrap(extraOverrides: [
+      isMobileWebProvider.overrideWithValue(false),
+      screenShareSourceResolverProvider.overrideWithValue(fakeResolver),
+      audioInputEnumeratorProvider.overrideWithValue(() async => [
+            MediaDevice("default", "Default", "audioinput", null),
+            MediaDevice(
+                "956439f673df", "Built-in Audio Analog Stereo", "audioinput", null),
+            MediaDevice(
+                "9868cb30845c", "Easy Effects Source", "audioinput", null),
+          ]),
+    ]));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.textContaining("No system-audio source found"), findsOneWidget);
+
+    await tester.tap(find.text("Share my screen"));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    verify(() => svc.setScreenShareEnabled(true,
+        systemAudioDeviceId: null, sourceId: "screen:3")).called(1);
   });
 }

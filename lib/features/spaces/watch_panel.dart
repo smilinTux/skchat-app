@@ -2,16 +2,26 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../core/theme/sovereign_colors.dart";
-import "../../services/lane_service.dart";
-import "../../services/livekit_call_service.dart";
-import "../../services/spaces_service.dart";
-import "watch_sync.dart";
-import "watch_video_stub.dart" if (dart.library.html) "watch_video_web.dart";
+import "watch_session.dart";
 
 /// Watch-together lane (Tier 4): a shared video synced across the Space over the
 /// data-lane substrate. Any participant can load a URL and play/pause/seek; the
 /// "watch" lane broadcasts the action and every client applies it, staying in
 /// sync. State is persisted + replayed (catch-up) for late joiners.
+///
+/// The panel is CONTROLS ONLY. The player itself lives on the Space's main
+/// stage (space_room_screen.dart), rendering off the same [watchSessionProvider]
+/// this panel writes to. A browser DOM element can only exist in one place: the
+/// web surface keys its platform view on controller IDENTITY
+/// (watch_video_web.dart), so a panel-owned WatchVideo for the SAME controller
+/// would share that view with the stage's and the second mount would steal the
+/// element out from under the first, blanking the stage. Routing every action
+/// here through the shared session (instead of a private controller + lane of
+/// its own) is also what makes the loader's OWN stage populate: LiveKit never
+/// echoes a participant's own data send back to them (watch_session.dart, near
+/// the applyRemote doc), so a self-contained panel leaves the loader's stage
+/// empty. Going through the session's loadUrl (which calls controller.load
+/// locally AND publishes) closes that gap.
 class WatchPanel extends ConsumerStatefulWidget {
   const WatchPanel({super.key, required this.spaceId, required this.identity});
 
@@ -23,73 +33,45 @@ class WatchPanel extends ConsumerStatefulWidget {
 }
 
 class _WatchPanelState extends ConsumerState<WatchPanel> {
-  late final LaneService _lane;
-  final WatchVideoController _vc = WatchVideoController();
   final TextEditingController _urlCtl = TextEditingController();
 
-  @override
-  void initState() {
-    super.initState();
-    _lane = LaneService(
-      livekit: ref.read(liveKitCallServiceProvider),
-      baseUrl: kDefaultWebuiUrl,
-      spaceId: widget.spaceId,
-    );
-    _lane.catchUp("watch").then((events) {
-      for (final e in events) {
-        _applyRemote(e);
-      }
-    });
-    _lane.inbound.where((j) => j["lane"] == "watch").listen(_applyRemote);
-  }
-
-  /// Apply an inbound watch event WITHOUT re-publishing (avoids sync loops).
-  /// Delegates to the shared, platform-independent [applyWatchEvent] mapper so
-  /// web and native participants interpret lane events identically.
-  void _applyRemote(Map<String, dynamic> e) {
-    // The web/native WatchVideo surfaces re-render off the controller itself
-    // (DOM mutation / ChangeNotifier), so the panel needs no state of its own.
-    applyWatchEvent(_vc, e);
-  }
-
-  Future<void> _publish(Map<String, dynamic> payload) async {
-    payload["lane"] = "watch";
-    payload["from"] = widget.identity;
-    await _lane.publish(payload);
-  }
+  WatchSessionArgs get _args =>
+      WatchSessionArgs(spaceId: widget.spaceId, identity: widget.identity);
 
   void _load() {
     final url = _urlCtl.text.trim();
     if (url.isEmpty) return;
-    _vc.load(url);
-    _publish({"action": "load", "url": url});
+    ref.read(watchSessionProvider(_args).notifier).loadUrl(url);
   }
 
   void _play() {
-    _vc.play();
-    _publish({"action": "play", "t": _vc.position});
+    ref.read(watchSessionProvider(_args).notifier).play();
   }
 
   void _pause() {
-    _vc.pause();
-    _publish({"action": "pause", "t": _vc.position});
+    ref.read(watchSessionProvider(_args).notifier).pause();
   }
 
   void _syncPosition() {
-    final t = _vc.position;
-    _vc.seekTo(t);
-    _publish({"action": "seek", "t": t});
+    ref.read(watchSessionProvider(_args).notifier).syncPosition();
+  }
+
+  void _stop() {
+    ref.read(watchSessionProvider(_args).notifier).stopWatching();
   }
 
   @override
   void dispose() {
+    // The controller and the lane subscription belong to watchSessionProvider
+    // now (autoDispose, shared with the stage); this widget owns nothing but
+    // its own text field.
     _urlCtl.dispose();
-    _vc.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final state = ref.watch(watchSessionProvider(_args));
     return Container(
       height: MediaQuery.of(context).size.height * 0.7,
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
@@ -117,10 +99,19 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
             ),
           ),
           const SizedBox(height: 10),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: WatchVideo(controller: _vc),
+          // No player here on purpose (see class doc): the stage is the
+          // player's only mount point, this is just a status line.
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              state.isActive
+                  ? "Playing on the main stage above.\n${state.url}"
+                  : "Load a video URL to watch together.",
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: SovereignColors.textSecondary,
+                fontSize: 13,
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -167,6 +158,21 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
               ),
             ],
           ),
+          // Only reachable while a session is active: without this control
+          // (or any other), once anyone loads a video it owns the main
+          // stage for the life of the room with no way to reclaim it (the
+          // old dismissible panel was at least an escape hatch; this is the
+          // real one).
+          if (state.isActive) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _stop,
+              icon: const Icon(Icons.stop_circle_outlined,
+                  color: SovereignColors.accentDanger),
+              label: const Text("Stop watching",
+                  style: TextStyle(color: SovereignColors.accentDanger)),
+            ),
+          ],
         ],
       ),
     );

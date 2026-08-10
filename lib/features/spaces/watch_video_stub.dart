@@ -1,14 +1,16 @@
 import "package:flutter/material.dart";
 import "package:video_player/video_player.dart";
 
+import "watch_drift.dart";
 import "watch_sync.dart";
 
 /// Native (mobile / desktop) watch-together video surface.
 ///
-/// This is the non-web side of the conditional import seam in
-/// `watch_panel.dart` (`watch_video_stub.dart if (dart.library.html)
-/// watch_video_web.dart`). Despite the historical "stub" filename, this is a
-/// REAL player, not a placeholder.
+/// This is the non-web side of the conditional import seam, which lives in
+/// `watch_session.dart` and `space_room_screen.dart` (`watch_video_stub.dart
+/// if (dart.library.html) watch_video_web.dart`), not in `watch_panel.dart`
+/// (moved there after the panel refactor). Despite the historical "stub"
+/// filename, this is a REAL player, not a placeholder.
 ///
 /// It mirrors the public API of the web controller (`watch_video_web.dart`) so
 /// the conditional import compiles identically on every target, and it is
@@ -28,7 +30,7 @@ import "watch_sync.dart";
 enum _WatchMode { none, file, embedOnly }
 
 class WatchVideoController extends ChangeNotifier
-    implements WatchPlaybackTarget {
+    implements WatchController {
   VideoPlayerController? _vp;
   _WatchMode _mode = _WatchMode.none;
   String? url;
@@ -36,6 +38,11 @@ class WatchVideoController extends ChangeNotifier
   /// Position used for non-`video_player` sources so [position] stays sensible
   /// for the sync lane even when we are not actually decoding the media.
   double _shadowPos = 0;
+
+  /// True when the loaded source is YouTube/Rumble: no inline picture on this
+  /// platform, only sync propagation. Lets the UI say so plainly instead of
+  /// leaving a blank stage the viewer has to puzzle out.
+  bool get isEmbedOnly => _mode == _WatchMode.embedOnly;
 
   /// Whether the controllable player is initialized and ready for commands.
   bool get isFilePlayerReady =>
@@ -146,12 +153,24 @@ class WatchVideoController extends ChangeNotifier
     }
   }
 
+  @override
   double get position {
     if (isFilePlayerReady) {
       return (_vp?.value.position.inMilliseconds ?? 0) / 1000.0;
     }
     return _shadowPos;
   }
+
+  /// Real state for `video_player` sources; for YouTube/Rumble embed-only
+  /// mode there is no native player to read, so this mirrors [position]'s
+  /// shadow-value fallback and reports not-playing (parity with the web
+  /// controller's pre-handshake fallback).
+  @override
+  PlaybackSnapshot get playbackSnapshot => PlaybackSnapshot(
+        position: position,
+        playing: _vp?.value.isPlaying ?? false,
+        buffering: _vp?.value.isBuffering ?? false,
+      );
 
   void _disposePlayer() {
     final old = _vp;
@@ -220,7 +239,11 @@ class _WatchVideoState extends State<WatchVideo> {
     }
 
     final url = c.url;
-    final loadingFile = c.fileController != null; // file mode, not yet ready
+    // Explicit, not inferred from fileController being non-null: isEmbedOnly
+    // is the getter that exists to say this outright (see class doc), so the
+    // UI should actually ask it instead of the two conditions happening to
+    // agree by construction of load().
+    final embedOnly = c.isEmbedOnly;
     return Container(
       color: Colors.black,
       alignment: Alignment.center,
@@ -228,11 +251,13 @@ class _WatchVideoState extends State<WatchVideo> {
       child: Text(
         url == null
             ? "Load a video URL to watch together."
-            : loadingFile
-                ? "Loading…\n$url"
-                : "▶ Now playing (synced across the room):\n$url\n\n"
-                    "Embedded YouTube/Rumble playback is on the web client; "
-                    "play/pause/seek still sync here.",
+            : embedOnly
+                ? "$url\n\n"
+                    "This device keeps play, pause and seek in sync with the "
+                    "room, but does not show the picture: inline YouTube/"
+                    "Rumble playback is on the web client. Open this Space "
+                    "in a browser to see it."
+                : "Loading…\n$url",
         textAlign: TextAlign.center,
         style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),

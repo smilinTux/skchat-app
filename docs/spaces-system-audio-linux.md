@@ -115,3 +115,96 @@ workaround.
 so "No system-audio source found on this device" is truthful here. The bug is
 the platform capability, not the panel. The fix belongs in the capture layer
 (options above), not in the enumeration/filter code.
+
+---
+
+# Addendum: the WEB path on Linux (2026-08-08)
+
+The analysis above is about the NATIVE Linux app. The same symptom (listeners
+hear the microphone, with the content bleeding in acoustically and out of sync)
+also occurs in the BROWSER, for an unrelated reason. Keep the two apart.
+
+## Evidence (Brave 150 on .41, captured live)
+
+`pactl list source-outputs` during a Spaces screen share showed exactly ONE
+capture stream:
+
+    Source Output #693  Source: 87 (easyeffects_source)
+      application.name = "Brave input"
+
+That is the microphone. No monitor was being captured, so no content track
+existed at all; Kodi reached listeners only as acoustic bleed into the mic.
+
+`navigator.mediaDevices.enumerateDevices()` evaluated over CDP in the Spaces
+page returned:
+
+    Default | Built-in Audio Analog Stereo | Loopback Analog Stereo | Easy Effects Source
+
+## Root cause
+
+Two independent reasons `SystemAudioSources.monitors()` is always empty on web:
+
+1. Chromium filters PulseAudio monitor sources out of `enumerateDevices`, so no
+   "Monitor of ..." device is ever offered.
+2. Web deviceIds are hashed opaque strings, so `deviceId.endsWith('.monitor')`
+   is structurally unsatisfiable regardless.
+
+So `autoSelect()` returned null, the panel passed `systemAudioDeviceId: null`,
+and `startScreenShareSystemAudio` never ran. The "Share system audio" toggle was
+inert on web. `getDisplayMedia({audio: true})` does not fill the gap either: on
+Linux the portal supplies no audio track for a window/screen capture (Chromium
+offers audio for tab captures only).
+
+## Fix
+
+Unlike native, web DOES honour `AudioCaptureOptions.deviceId`. What it needs is
+a device it can actually see, so `SystemAudioSources` gained
+`isLoopbackCapture` / `candidates`: an snd-aloop input or a PipeWire virtual
+source is a plain input device to the browser, so it is listed and capturable.
+
+Detection is a strict ALLOWLIST of loopback tokens, never a microphone
+denylist. The physical mic on .41 is labelled "Built-in Audio Analog Stereo" and
+carries no mic-ish token, so a denylist would eventually classify a microphone
+as system audio and recreate the bug. Note that the pre-existing `autoSelect`
+preference for `analog` / `built-in` / `speaker` applies ONLY among monitors for
+exactly this reason.
+
+## Host setup on .41 (`~/.local/bin/kodi-cast-up.sh`, unit `kodi-cast.service`)
+
+    everything else -> easyeffects_sink -> EQ/convolver -> analog speakers
+    Kodi ---------->  aloop sink (hw:Loopback,0)
+                        |-> hw:Loopback,1 -> "Kodi-Cast-Loopback"  [browser captures this]
+                        \-> monitor -> loopback -> speakers        [Chef still hears it]
+
+Three traps found the hard way, all verified by measurement:
+
+* **EasyEffects force-moves every output stream** into `easyeffects_sink` and
+  emits one mix, so nothing downstream of it can be separated per app. Kodi has
+  to be excluded. EasyEffects 8 keeps that in a KDE-style INI at
+  `~/.config/easyeffects/db/easyeffectsrc` (`[StreamOutputs] blocklist=Kodi`);
+  the `/com/github/wwmm/easyeffects/` dconf tree is dead EasyEffects 7 leftovers
+  and writing to it silently does nothing.
+* **snd-aloop pairs playback on device 0 with capture on device 1.** PipeWire's
+  card profile puts BOTH its sink and its input on `front:0`, so the profile's
+  own input ("Loopback Analog Stereo") is permanently silent: measured rms 0.0
+  against a full-scale 440 Hz tone on the sink. The cast source must be a
+  separate `module-alsa-source` bound to `hw:Loopback,1,0`. The profile is set
+  to `output:analog-stereo` so the silent input is not even offered, since it
+  would otherwise match the loopback heuristic and produce a share that looks
+  correct and is silent.
+* **PipeWire's `pactl` truncates module property values at the first
+  whitespace**, quoted or not. `node.description=Kodi Cast (Virtual Source)`
+  became "Kodi". The description is space-free (`Kodi-Cast-Loopback`) because on
+  web the label is the only thing the app can match on.
+
+Verification that the path carries audio, not just that the graph looks right:
+
+    kodi_cast_loopback (hw:Loopback,1,0)   rms=8484.8  peak=12000  -> AUDIO PRESENT
+    Loopback Analog Stereo (device 0)      rms=   0.0  peak=0      -> SILENCE
+    easyeffects_source (mic)               rms=1108.0  peak=3509   -> separate
+
+## Still true after this fix
+
+The microphone remains an independent track (the DECOUPLE design). Sharing
+content does not mute it, so for a broadcast the mic still has to be muted by
+hand. That is deliberate, not a regression.

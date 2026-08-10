@@ -8,6 +8,17 @@ import "../../services/system_audio_sources.dart";
 import "../call_shared/screen_share_source.dart";
 import "screen_share_helper.dart";
 
+/// Enumerates the audio input devices the platform exposes. DI seam (same
+/// pattern as [screenShareSourceResolverProvider] / [isMobileWebProvider]) so a
+/// test can inject a device list; the default IS
+/// `Hardware.instance.enumerateDevices`, unchanged.
+typedef AudioInputEnumerator = Future<List<MediaDevice>> Function();
+
+final audioInputEnumeratorProvider = Provider<AudioInputEnumerator>(
+  (ref) =>
+      () => Hardware.instance.enumerateDevices(type: 'audioinput'),
+);
+
 /// Screen-share lane (Tier 4, MEDIA): publishes a LiveKit screen-share video
 /// track from the local participant and renders any REMOTE screen-share tracks
 /// live. Unlike the watch / data lanes this rides a real LiveKit media track
@@ -32,7 +43,12 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
   bool _busy = false;
   bool _shareSystemAudio = true;
   String? _systemAudioDeviceId;
-  List<MediaDevice> _monitors = const [];
+
+  /// Every device that can carry system audio, NOT just PulseAudio monitors:
+  /// on web the browser exposes no monitor at all, so a real loopback /
+  /// virtual capture device is the only workable source (see
+  /// [SystemAudioSources.candidates]).
+  List<MediaDevice> _systemAudioSources = const [];
 
   @override
   void initState() {
@@ -41,21 +57,19 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
   }
 
   Future<void> _loadSystemAudioSources() async {
-    List<MediaDevice> monitors = const [];
+    List<MediaDevice> sources = const [];
     String? defaultId;
     try {
-      final list = await Hardware.instance.enumerateDevices(
-        type: 'audioinput',
-      );
-      monitors = SystemAudioSources.monitors(list);
+      final list = await ref.read(audioInputEnumeratorProvider)();
+      sources = SystemAudioSources.candidates(list);
       defaultId = SystemAudioSources.autoSelect(list)?.deviceId;
     } catch (_) {
-      // Leave _monitors empty; the switch already disables itself and shows
-      // the hint when there is nothing to select.
+      // Leave _systemAudioSources empty; the switch already disables itself
+      // and shows the hint when there is nothing to select.
     }
     if (mounted) {
       setState(() {
-        _monitors = monitors;
+        _systemAudioSources = sources;
         _systemAudioDeviceId = defaultId;
       });
     }
@@ -102,22 +116,34 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
         }
         sourceId = picked.sourceId;
       }
-      await ref.read(liveKitCallServiceProvider).setScreenShareEnabled(
+      await ref
+          .read(liveKitCallServiceProvider)
+          .setScreenShareEnabled(
             next,
-            systemAudioDeviceId:
-                (_shareSystemAudio && next) ? _systemAudioDeviceId : null,
+            systemAudioDeviceId: (_shareSystemAudio && next)
+                ? _systemAudioDeviceId
+                : null,
             sourceId: sourceId,
           );
       if (mounted) setState(() => _sharing = next);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Screen share failed: $e")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Screen share failed: $e")));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Label of the currently selected system-audio source, for the switch
+  /// subtitle. Falls back to the raw id if the device vanished from the list.
+  String _selectedSourceLabel() {
+    for (final d in _systemAudioSources) {
+      if (d.deviceId == _systemAudioDeviceId) return d.label;
+    }
+    return _systemAudioDeviceId ?? "none";
   }
 
   @override
@@ -161,9 +187,10 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
                 final room = svc.room;
                 final participants = snap.data ?? const [];
                 // Remote shares only here (the local user has the toggle below).
-                final shares = resolveScreenShares(room, participants)
-                    .where((s) => !s.isLocal)
-                    .toList();
+                final shares = resolveScreenShares(
+                  room,
+                  participants,
+                ).where((s) => !s.isLocal).toList();
 
                 if (shares.isEmpty) {
                   return const Center(
@@ -179,7 +206,8 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
 
                 return ListView.separated(
                   itemCount: shares.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 10),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: 10),
                   itemBuilder: (context, i) {
                     final s = shares[i];
                     return Column(
@@ -211,33 +239,48 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
 
           const SizedBox(height: 8),
 
-          // System-audio switch + monitor-source picker.
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text(
-              "Share system audio",
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+          // System-audio switch + source picker.
+          //
+          // The Material is required, not cosmetic: this panel's root is a
+          // Container with a BoxDecoration background, and a ListTile paints
+          // its ink splashes on the nearest Material ancestor, so an
+          // INTERACTIVE SwitchListTile under that DecoratedBox trips
+          // ListTile's debug assertion. It never fired before because
+          // onChanged was always null on Linux (no system-audio source was
+          // ever found), which is exactly the bug being fixed here.
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text(
+                "Share system audio",
+                style: TextStyle(
+                  color: SovereignColors.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              // Name the source that will actually be captured. The whole
+              // blended-audio bug was invisible precisely because this selection
+              // was silent: nothing was ever selected, so no content track was
+              // published and listeners got the bare microphone instead.
+              subtitle: Text(
+                _systemAudioSources.isEmpty
+                    ? "No system-audio source found on this device."
+                    : "Capturing: ${_selectedSourceLabel()}",
+                style: const TextStyle(
+                  color: SovereignColors.textTertiary,
+                  fontSize: 12,
+                ),
+              ),
+              value: _shareSystemAudio,
+              onChanged: _systemAudioSources.isEmpty
+                  ? null
+                  : (value) => setState(() => _shareSystemAudio = value),
             ),
-            subtitle: _monitors.isEmpty
-                ? const Text(
-                    "No system-audio source found on this device.",
-                    style: TextStyle(
-                      color: SovereignColors.textTertiary,
-                      fontSize: 12,
-                    ),
-                  )
-                : null,
-            value: _shareSystemAudio,
-            onChanged: _monitors.isEmpty
-                ? null
-                : (value) => setState(() => _shareSystemAudio = value),
           ),
-          if (_shareSystemAudio && _monitors.length > 1)
+          if (_shareSystemAudio && _systemAudioSources.length > 1)
             Align(
               alignment: Alignment.centerLeft,
               child: DropdownButton<String>(
@@ -248,7 +291,7 @@ class _ScreenSharePanelState extends ConsumerState<ScreenSharePanel> {
                   fontSize: 13,
                 ),
                 items: [
-                  for (final m in _monitors)
+                  for (final m in _systemAudioSources)
                     DropdownMenuItem<String>(
                       value: m.deviceId,
                       child: Text(m.label),

@@ -1540,8 +1540,10 @@ class LiveKitCallService {
     }
   }
 
-  /// True when at least one PulseAudio monitor input is available to capture
-  /// system audio (Linux desktop). Returns false on platforms without one.
+  /// True when at least one device can carry system audio: a PulseAudio
+  /// monitor on native desktop, or a real loopback / virtual capture input on
+  /// web, where the browser never exposes a monitor at all (see
+  /// [SystemAudioSources.candidates]). False when the platform has neither.
   Future<bool> hasSystemAudioSource() async =>
       (await defaultSystemAudioSource()) != null;
 
