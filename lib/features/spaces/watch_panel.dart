@@ -135,29 +135,35 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
               ),
             ],
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.play_arrow_rounded,
-                    color: SovereignColors.textPrimary),
-                onPressed: _play,
-                tooltip: "Play (synced)",
-              ),
-              IconButton(
-                icon: const Icon(Icons.pause_rounded,
-                    color: SovereignColors.textPrimary),
-                onPressed: _pause,
-                tooltip: "Pause (synced)",
-              ),
-              IconButton(
-                icon: const Icon(Icons.sync_rounded,
-                    color: SovereignColors.accentEncrypt),
-                onPressed: _syncPosition,
-                tooltip: "Sync everyone to my position",
-              ),
-            ],
-          ),
+          // Gated on the same isActive as the stage surface. Stop clears the
+          // session while the controller still holds the loaded media, so an
+          // ungated Play would resume the old source with no stage mounted
+          // anywhere: on web that is an mp4 decoding audio with no visible
+          // player. There is nothing to transport when nothing is on stage.
+          if (state.isActive)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.play_arrow_rounded,
+                      color: SovereignColors.textPrimary),
+                  onPressed: _play,
+                  tooltip: "Play (synced)",
+                ),
+                IconButton(
+                  icon: const Icon(Icons.pause_rounded,
+                      color: SovereignColors.textPrimary),
+                  onPressed: _pause,
+                  tooltip: "Pause (synced)",
+                ),
+                IconButton(
+                  icon: const Icon(Icons.sync_rounded,
+                      color: SovereignColors.accentEncrypt),
+                  onPressed: _syncPosition,
+                  tooltip: "Sync everyone to my position",
+                ),
+              ],
+            ),
           // Only reachable while a session is active: without this control
           // (or any other), once anyone loads a video it owns the main
           // stage for the life of the room with no way to reclaim it (the

@@ -122,6 +122,34 @@ void main() {
     expect(find.text("Stop watching"), findsOneWidget);
   });
 
+  testWidgets(
+      "the transport controls are hidden with no active session, so Play "
+      "cannot resume a stopped video with no stage mounted", (tester) async {
+    // Stop makes isActive false while the controller still holds the loaded
+    // media, and the stage surface is gated on isActive too. An ungated Play
+    // would therefore resume the old source with no player anywhere on
+    // screen, which on web means an mp4 decoding audio out of nowhere.
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+
+    expect(find.byTooltip("Play (synced)"), findsNothing);
+    expect(find.byTooltip("Pause (synced)"), findsNothing);
+    expect(find.byTooltip("Sync everyone to my position"), findsNothing);
+
+    await tester.enterText(
+        find.byType(TextField), "https://example.com/movie.mp4");
+    await tester.tap(find.text("Load"));
+    await tester.pump();
+
+    expect(find.byTooltip("Play (synced)"), findsOneWidget);
+
+    await tester.tap(find.text("Stop watching"));
+    await tester.pump();
+
+    expect(find.byTooltip("Play (synced)"), findsNothing,
+        reason: "Play must not survive a stop, the stage is gone");
+  });
+
   testWidgets("tapping Stop watching ends the session for everyone",
       (tester) async {
     await tester.pumpWidget(wrap());
