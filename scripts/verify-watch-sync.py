@@ -415,6 +415,17 @@ CONSECUTIVE_SAMPLE_FAILURE_LIMIT = 3
 # on too little evidence. This default (about a third of attempted samples)
 # is deliberately independent of the consecutive-failure count so the two
 # checks catch different shapes of flakiness.
+#
+# Known rough edge, deliberately left as is: at a very short smoke-test
+# duration (a handful of ticks), the first couple of samples missing while
+# the YouTube IFrame API completes its handshake can, by itself, already be
+# close to a third of the total and trip this gate even though it is normal
+# ramp-up rather than flakiness. At the production default (60s at a 2s
+# interval, 30 ticks) that same ramp-up is under ten percent of the run and
+# nowhere near the gate. Loosening the gate to accommodate short ad hoc
+# runs would weaken the exact protection this gate exists for, so do not
+# "fix" this by raising the threshold; a short smoke test that trips it on
+# ramp-up alone should just be re-run slightly longer.
 DEFAULT_MISSED_FRACTION_GATE = 1.0 / 3.0
 
 FIND_WATCH_IFRAME_JS = f"""
@@ -569,7 +580,17 @@ class BrowserSide:
             # Found it: keep this session alive, install the listener now
             # while we already have the iframe present and the socket open.
             _set_step(f"{self.label}: installing listener on {tgt.get('url')}")
-            install_result = probe.eval(INSTALL_LISTENER_JS, timeout=DISCOVERY_EVAL_TIMEOUT)
+            try:
+                install_result = probe.eval(INSTALL_LISTENER_JS, timeout=DISCOVERY_EVAL_TIMEOUT)
+            except (OSError, RuntimeError, TimeoutError, EOFError, ValueError) as exc:
+                # Same treatment as the probe eval above: a timeout here can
+                # desync the reused socket's byte stream the same way, and
+                # probe is a live connected session at this point, so it
+                # must be closed on the way out or the socket leaks.
+                checked.append(f"  - {tgt.get('url')} (listener install did not answer: {exc})")
+                probe.close()
+                continue
+
             if install_result not in ("installed", "already-installed"):
                 checked.append(f"  - {tgt.get('url')} (iframe found but listener install said {install_result!r})")
                 probe.close()
