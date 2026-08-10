@@ -378,7 +378,14 @@ def list_page_targets(endpoint: ResolvedEndpoint, timeout: float):
 # ============================================================================
 
 APP_PATH_DEFAULT = "/app/"
-EMBED_MARKER = "/embed/"
+# youtube.com/embed/, not the bare "/embed/" a Rumble embed URL
+# (rumble.com/embed/<id>/) also contains: the INSTALL_LISTENER_JS handshake
+# below is YouTube-IFrame-API-specific (a {"event":"listening"} postMessage
+# to https://www.youtube.com), so matching a Rumble iframe here would find a
+# real iframe, install a listener that Rumble's player never answers, and
+# report every sample from that side as missing forever instead of failing
+# fast with a clear "wrong iframe" diagnostic.
+YOUTUBE_EMBED_MARKER = "youtube.com/embed/"
 
 # Discovery timeouts are short on purpose: a foregrounded, live tab answers a
 # querySelector in well under a second. A few seconds is already generous.
@@ -428,9 +435,23 @@ CONSECUTIVE_SAMPLE_FAILURE_LIMIT = 3
 # ramp-up alone should just be re-run slightly longer.
 DEFAULT_MISSED_FRACTION_GATE = 1.0 / 3.0
 
+# tsMs (set in INSTALL_LISTENER_JS below) records when the LAST infoDelivery
+# frame actually arrived. Without checking it, a side whose player has died
+# (tab crashed, iframe navigated away, YouTube stopped pushing frames for any
+# reason) keeps handing back its last-ever cached currentTime forever: that
+# value never moves, so it looks exactly like a healthy player that simply
+# stopped drifting, not a dead one. A stale sample is instead treated the
+# same as a missing one (see the sampling loop in run()), so it counts
+# against the missed-fraction gate and the consecutive-failure breaker
+# instead of silently keeping a dead player's last position alive as
+# "current". A few seconds is deliberately generous: the interval between
+# samples defaults to 2s, and infoDelivery frames do not arrive on a fixed
+# schedule, so anything shorter would flag normal jitter as staleness.
+STALE_SAMPLE_MS = 5000
+
 FIND_WATCH_IFRAME_JS = f"""
 (function() {{
-  var f = document.querySelector('iframe[src*="{EMBED_MARKER}"]');
+  var f = document.querySelector('iframe[src*="{YOUTUBE_EMBED_MARKER}"]');
   return f ? f.src : null;
 }})();
 """
@@ -438,7 +459,7 @@ FIND_WATCH_IFRAME_JS = f"""
 INSTALL_LISTENER_JS = f"""
 (function() {{
   if (window.__watchSyncProbe) return "already-installed";
-  var iframe = document.querySelector('iframe[src*="{EMBED_MARKER}"]');
+  var iframe = document.querySelector('iframe[src*="{YOUTUBE_EMBED_MARKER}"]');
   if (!iframe) return "no-iframe";
   window.__watchSyncProbe = {{currentTime: null, playerState: null, tsMs: null, count: 0}};
   window.addEventListener("message", function(e) {{
@@ -461,7 +482,13 @@ POLL_JS = """
 (function() {
   var p = window.__watchSyncProbe;
   if (!p) return null;
-  return {currentTime: p.currentTime, playerState: p.playerState, tsMs: p.tsMs, count: p.count};
+  // "now" is read in the SAME browser, at the SAME poll, as tsMs was
+  // recorded in: comparing now - tsMs never has to trust that this
+  // machine's clock and the browser machine's clock agree (they may be two
+  // different hosts, see the CDP-over-SSH-tunnel machinery above), the same
+  // reasoning watch_drift.dart gives for comparing positions directly
+  // instead of extrapolating from timestamps across two clocks.
+  return {currentTime: p.currentTime, playerState: p.playerState, tsMs: p.tsMs, count: p.count, now: Date.now()};
 })();
 """
 
@@ -573,7 +600,7 @@ class BrowserSide:
                 continue
 
             if not src:
-                checked.append(f"  - {tgt.get('url')} (open, but no {EMBED_MARKER} iframe on it)")
+                checked.append(f"  - {tgt.get('url')} (open, but no {YOUTUBE_EMBED_MARKER} iframe on it)")
                 probe.close()
                 continue
 
@@ -615,7 +642,7 @@ class BrowserSide:
         detail = "\n".join(checked) if checked else "  (no page targets matched at all)"
         return (
             f"{self.label}: found {len(app_targets)} page(s) under '{APP_PATH_DEFAULT}' but none has a live "
-            f"Watch Together surface (an iframe whose src contains '{EMBED_MARKER}'):\n{detail}\n"
+            f"Watch Together surface (an iframe whose src contains '{YOUTUBE_EMBED_MARKER}'):\n{detail}\n"
             f"{self.label}: a human needs to open the Space in this browser and start a Watch Together "
             "video (paste a YouTube URL into the panel and press Load) before this script can measure anything."
         )
@@ -633,6 +660,28 @@ class BrowserSide:
 # ============================================================================
 # Drift statistics.
 # ============================================================================
+
+
+def fresh_position(sample):
+    """currentTime from a POLL_JS sample, or None if there is no reading yet
+    OR the reading is older than STALE_SAMPLE_MS.
+
+    A stale reading is treated exactly like a missing one on purpose: the
+    caller (the sampling loop in run()) folds this into the same missed_*
+    counters and the consecutive-failure breaker that "no infoDelivery frame
+    at all yet" already uses, so a dead player is reported as a connectivity
+    failure, not as a suspiciously well-behaved zero-drift player.
+    """
+    if not sample:
+        return None
+    ct = sample.get("currentTime")
+    ts = sample.get("tsMs")
+    now = sample.get("now")
+    if ct is None or ts is None or now is None:
+        return None
+    if now - ts > STALE_SAMPLE_MS:
+        return None
+    return ct
 
 
 def linreg_slope(xs, ys):
@@ -847,8 +896,8 @@ def run(args) -> int:
                 print(f"  [{elapsed:6.1f}s] {side_b.label} sample failed: {exc}", file=sys.stderr)
                 b = None
 
-            pos_a = a.get("currentTime") if a else None
-            pos_b = b.get("currentTime") if b else None
+            pos_a = fresh_position(a)
+            pos_b = fresh_position(b)
 
             consecutive_missed_a = 0 if pos_a is not None else consecutive_missed_a + 1
             consecutive_missed_b = 0 if pos_b is not None else consecutive_missed_b + 1
@@ -860,7 +909,7 @@ def run(args) -> int:
             if pos_a is None or pos_b is None:
                 print(
                     f"  [{elapsed:6.1f}s] {side_a.label}={pos_a!r}  {side_b.label}={pos_b!r}  "
-                    "(no infoDelivery yet from at least one side)"
+                    "(no infoDelivery yet, or the last one is now stale, from at least one side)"
                 )
             else:
                 drift = abs(pos_a - pos_b)
