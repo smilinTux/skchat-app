@@ -113,7 +113,8 @@ each viewer.
 ## Host authority
 
 Whoever loads a video becomes its authority for as long as they stay in the
-room:
+room, UNLESS someone else loads a video within the same round trip (see the
+simultaneous-load case below, which this is not true for):
 
 - `WatchSession.loadUrl` sets `isHostOfVideo = true` on the client that
   called it, and only that client's `onHeartbeatTick` publishes heartbeats
@@ -136,6 +137,16 @@ room:
   plainly rather than left to be discovered: the room keeps playing whatever
   position it was last corrected to, un-synced, until someone starts a fresh
   load.
+- **If two people load a video within the same round trip, NOBODY ends up
+  the authority.** Each load's `applyRemote` sets `isHostOfVideo: e["from"]
+  == arg.identity` on the OTHER client, so A's load clears B's flag and B's
+  load clears A's, and neither replay restores it because neither `from`
+  matches the local identity. Heartbeats then stop entirely (nobody
+  publishes them) until someone loads again, same visible symptom as the
+  host-leaves case above but reached a different way. This is a known
+  limitation, not a bug to chase down with a leader election: fixing it
+  properly needs conflict resolution (e.g. last-load-wins by a shared
+  ordering) that is out of scope here.
 
 ## Native embed-only limitation
 
@@ -156,6 +167,24 @@ exists so the UI can say this outright instead of leaving a blank stage the
 viewer has to puzzle out. The web controller exposes the same getter,
 hardcoded to `false`, since web plays both YouTube and Rumble inline via
 iframe and never hits this gap.
+
+## Web platform-view registration never releases
+
+`_WatchVideoState.initState` (`watch_video_web.dart`) registers one platform
+view factory per controller instance, keyed on
+`"watch-video-${identityHashCode(widget.controller)}"`. A fresh
+`WatchVideoController` is created every time a Space is joined (the
+`watchControllerFactoryProvider` default in `watch_session.dart`), so every
+join registers another view factory. Flutter web exposes no API to
+unregister a platform view factory once registered, so these accumulate for
+the life of the page (a long-running tab that joins and leaves many Spaces
+across a session). This is an inherent limit of `ui_web.platformViewRegistry`
+as of this writing, not a bug in this feature: it is recorded here plainly
+rather than left to be discovered. `WatchVideoController.dispose` (see
+above) still tears down what it CAN: the message listener, the iframe load
+listener, the paused video element, and the blanked iframe src, so a left
+Space stops decoding and stops listening even though its now-orphaned view
+factory closure stays registered.
 
 ## Stage precedence
 

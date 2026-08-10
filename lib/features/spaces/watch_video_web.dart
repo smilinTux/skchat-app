@@ -53,6 +53,7 @@ class WatchVideoController implements WatchController {
   PlaybackSnapshot? _latest;
 
   StreamSubscription<html.MessageEvent>? _msgSub;
+  StreamSubscription<html.Event>? _loadSub;
 
   /// Last position we set on a non-controllable (iframe) source. Used as the
   /// [position] fallback for iframe sources before the listening handshake's
@@ -80,7 +81,7 @@ class WatchVideoController implements WatchController {
       final snap = parseYouTubeInfo(data);
       if (snap != null) _latest = snap;
     });
-    iframeEl?.onLoad.listen((_) {
+    _loadSub = iframeEl?.onLoad.listen((_) {
       // Each load() swaps iframe src (fresh document, fresh IFrame API
       // player), so the handshake has to be re-sent every time, not once.
       if (_mode != _WatchMode.youtube) return;
@@ -279,13 +280,19 @@ class WatchVideoController implements WatchController {
   PlaybackSnapshot get playbackSnapshot =>
       _latest ?? PlaybackSnapshot(position: position, playing: false);
 
-  /// Cancels the window message listener so a later task's `ref.onDispose`
-  /// can tear this controller down cleanly instead of leaking a subscription
-  /// for the life of the page.
+  /// Tears the controller down for `ref.onDispose` (watch_session.dart):
+  /// cancels both subscriptions so neither leaks for the life of the page,
+  /// pauses the video element, and blanks the iframe src. Without the pause
+  /// + blank, leaving a Space mid-mp4 (or mid-YouTube-video) leaves a
+  /// detached video element still decoding audio nobody can hear it stop.
   @override
   void dispose() {
     _msgSub?.cancel();
     _msgSub = null;
+    _loadSub?.cancel();
+    _loadSub = null;
+    videoEl?.pause();
+    iframeEl?.src = "about:blank";
   }
 
   // ---- Internals ------------------------------------------------------------
