@@ -12,12 +12,41 @@ import "package:skchat/features/call_shared/screen_share_source.dart";
 import "package:skchat/features/spaces/space_chat_panel.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/space_room_screen.dart";
+import "package:skchat/features/spaces/watch_session.dart"
+    show laneServiceFactoryProvider, watchSessionProvider, WatchSessionArgs;
+import "package:skchat/features/spaces/watch_video_stub.dart"
+    if (dart.library.html) "package:skchat/features/spaces/watch_video_web.dart";
+import "package:skchat/services/lane_service.dart" show LaneLike;
 import "package:skchat/services/livekit_call_service.dart";
 import "package:skchat/services/spaces_service.dart";
 
 class MockLiveKitCallService extends Mock implements LiveKitCallService {}
 
 class MockSpacesService extends Mock implements SpacesService {}
+
+/// Deterministic stand-in for the real `LaneService`. `_Stage` now watches
+/// `watchSessionProvider` on every render (space_room_screen.dart), which
+/// builds a real `WatchSession` even though none of these tests ever load a
+/// video, and the real `LaneService` fires a live Dio GET (`catchUp`) plus
+/// subscribes to a data channel. These tests currently get away with the
+/// real service only because `kDefaultSkchatWebuiUrl` is empty in a plain
+/// `flutter test` run, so the GET URL is schemeless and fails fast into a
+/// swallowing catch; that is an accident of the test environment, not a
+/// seam. This fake answers instantly and does nothing, so every room test
+/// stays deterministic regardless of that URL.
+class _NoopLane implements LaneLike {
+  @override
+  Stream<Map<String, dynamic>> get inbound => const Stream.empty();
+
+  @override
+  Future<void> publish(Map<String, dynamic> payload) async {}
+
+  @override
+  Future<void> publishEphemeral(Map<String, dynamic> payload) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> catchUp(String lane) async => const [];
+}
 
 // Room graph mocks used to resolve a remote speaker's live mic track sid
 // (the host "Mute mic" moderation call needs the publication sid for the
@@ -28,6 +57,16 @@ class MockRemoteParticipant extends Mock implements RemoteParticipant {}
 
 class MockRemoteTrackPublication extends Mock
     implements RemoteTrackPublication {}
+
+// Watch Together stage placement: a fake RemoteVideoTrack is enough to make
+// resolveStageVideos (screen_share_helper.dart) see a live camera (matches
+// stage_video_resolver_test.dart's _FakeRemoteVideoTrack). Actually
+// rendering it goes through livekit_client's VideoTrackRenderer, which on
+// this VM test target awaits a flutter_webrtc platform-channel call inside a
+// FutureBuilder; with no channel handler registered, that Future resolves to
+// an error the FutureBuilder swallows into an empty Container, so nothing
+// here needs its own platform-channel mocking.
+class _FakeVideoTrack extends Mock implements RemoteVideoTrack {}
 
 LiveKitParticipantSnapshot _snap(
   String identity, {
@@ -71,6 +110,9 @@ void main() {
     // CAM: mocktail needs a dummy CameraPosition to satisfy any()/
     // captureAny() used with the named cameraPosition argument below.
     registerFallbackValue(CameraPosition.front);
+    // Watch Together stage placement: mocktail needs a dummy GlobalKey for
+    // the any() match on _FakeVideoTrack.removeViewKey below.
+    registerFallbackValue(GlobalKey<State<StatefulWidget>>());
   });
 
   final join = const SpaceJoin(
@@ -176,6 +218,7 @@ void main() {
       overrides: [
         liveKitCallServiceProvider.overrideWithValue(svc),
         spacesServiceProvider.overrideWithValue(spaces),
+        laneServiceFactoryProvider.overrideWithValue((args) => _NoopLane()),
         ...extraOverrides,
       ],
       child: MaterialApp(home: SpaceRoomScreen(join: join)),
@@ -1986,6 +2029,111 @@ void main() {
       verifyNever(() => svc.setScreenShareEnabled(any(),
           systemAudioDeviceId: any(named: "systemAudioDeviceId"),
           sourceId: any(named: "sourceId")));
+    });
+  });
+
+  group("Watch Together stage placement", () {
+    testWidgets(
+        "the watch surface stays mounted (same State, just Offstage) while "
+        "live video owns the stage, and comes back visible without a "
+        "remount once the live video ends", (tester) async {
+      final participants = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true), // host
+        _snap("dana", canPublish: true), // has the live camera
+      ];
+      final rosterCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(rosterCtl.close);
+      when(() => svc.participants).thenAnswer((_) => rosterCtl.stream);
+      when(() => svc.currentParticipants).thenReturn(participants);
+
+      // Live room graph: dana has a published camera track. No screen
+      // share, and no local participant (never needed: chef never publishes
+      // video in this test), mirroring the "Mute mic" test's room stubbing.
+      final room = MockRoom();
+      final dana = MockRemoteParticipant();
+      final camPub = MockRemoteTrackPublication();
+      final fakeTrack = _FakeVideoTrack();
+      // VideoTrackRenderer (livekit_client) calls these synchronously in
+      // initState/dispose regardless of whether the platform-channel render
+      // path ever succeeds, so mocktail needs real stubs, not just an
+      // unstubbed Mock's default null. Both are @internal to livekit_client
+      // (meant for VideoTrackRenderer's own use, not a public track API),
+      // hence the ignores; stubbing them here is a test-only concession to
+      // that package boundary, not a call site pretending they are public.
+      // ignore: invalid_use_of_internal_member
+      when(() => fakeTrack.addViewKey()).thenReturn(GlobalKey());
+      // ignore: invalid_use_of_internal_member
+      when(() => fakeTrack.removeViewKey(any())).thenAnswer((_) {});
+      when(() => camPub.track).thenReturn(fakeTrack);
+      when(() => dana.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(camPub);
+      when(() => dana.getTrackPublicationBySource(TrackSource.screenShareVideo))
+          .thenReturn(null);
+      when(() => room.remoteParticipants).thenReturn(
+          UnmodifiableMapView<String, RemoteParticipant>({"dana": dana}));
+      when(() => room.localParticipant).thenReturn(null);
+      when(() => svc.room).thenReturn(room);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      rosterCtl.add(participants);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Live video is up, but nobody has loaded a watch video yet: the
+      // watch surface is not in the tree at all, matching pre-Task-4
+      // behavior for a plain live-video stage.
+      expect(find.byType(WatchVideo), findsNothing);
+
+      // Load a video through the SAME shared session _WatchTogetherStage
+      // reads (space_room_screen.dart), so the room now has an active watch
+      // session underneath the live camera. A YouTube URL keeps this on the
+      // controller's embed-only path (watch_video_stub.dart), so no real
+      // video_player / platform channel is touched.
+      final context = tester.element(find.byType(SpaceRoomScreen));
+      final container = ProviderScope.containerOf(context);
+      const watchArgs =
+          WatchSessionArgs(spaceId: "s1", identity: "chef@dk.skworld");
+      container
+          .read(watchSessionProvider(watchArgs).notifier)
+          .loadUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Both are true now: the live camera owns the stage, and the watch
+      // surface stays in the tree, Offstage rather than gone. `find`'s
+      // default skipOffstage:true hides an intentionally-offstage subtree
+      // (that is the whole point of using Offstage for this), so every
+      // finder reaching past the wrapper here passes skipOffstage: false.
+      final offstageKey =
+          find.byKey(const ValueKey("watch-together-s1"), skipOffstage: false);
+      expect(offstageKey, findsOneWidget);
+      expect(tester.widget<Offstage>(offstageKey).offstage, isTrue);
+      final watchVideoFinder = find.byType(WatchVideo, skipOffstage: false);
+      expect(watchVideoFinder, findsOneWidget);
+      final mountedOnceState =
+          tester.state<State<WatchVideo>>(watchVideoFinder);
+
+      // Live video ends: dana's camera publication drops.
+      when(() => dana.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(null);
+      rosterCtl.add(participants);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // The watch session now owns the stage outright: visible (not
+      // offstage, so the default skipOffstage:true finder reaches it now),
+      // and crucially the SAME State instance as before, proving no remount
+      // happened. Losing the ValueKey on the Offstage wrapper
+      // (space_room_screen.dart) is exactly what would make this fail: the
+      // watch widget's position in the stage's children list shifts once
+      // the live-video block above it disappears, and without the key
+      // Flutter would tear down and recreate the element at its new slot
+      // instead of reusing it, which for the real web controller would mean
+      // a detached, reloaded video surface.
+      expect(tester.widget<Offstage>(offstageKey).offstage, isFalse);
+      final stillMountedState =
+          tester.state<State<WatchVideo>>(find.byType(WatchVideo));
+      expect(identical(stillMountedState, mountedOnceState), isTrue);
     });
   });
 }

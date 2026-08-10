@@ -33,4 +33,23 @@ void main() {
     expect(resolveStageKind(videos: videos, watchActive: true),
         StageKind.liveVideo);
   });
+
+  test("a live screen share or camera wins the stage even with no watch "
+      "session at all", () {
+    // Guards against an implementation that only checks watchActive on the
+    // "true" branch and defaults to StageKind.none whenever videos is
+    // non-empty and watchActive is false: that would (wrongly) hide a live
+    // share/camera whenever nobody happens to also be watching a video.
+    final videos = <StageVideo>[
+      (
+        identity: "dana",
+        track: _FakeVideoTrack(),
+        isLocal: false,
+        isCamera: false,
+      ),
+    ];
+
+    expect(resolveStageKind(videos: videos, watchActive: false),
+        StageKind.liveVideo);
+  });
 }

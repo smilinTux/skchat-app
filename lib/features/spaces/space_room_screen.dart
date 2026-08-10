@@ -1008,8 +1008,8 @@ class _Stage extends ConsumerWidget {
 
     // Watch Together: same shared session the "Watch together" lane tile
     // (WatchPanel) targets, watched here so the stage learns the moment a
-    // video is loaded/cleared. See resolveStageKind (stage_content.dart) for
-    // why live video outranks it.
+    // video is loaded. See resolveStageKind (stage_content.dart) for why
+    // live video outranks it.
     final watchArgs =
         WatchSessionArgs(spaceId: join.spaceId, identity: join.identity);
     final watchActive = ref.watch(watchSessionProvider(watchArgs)).isActive;
@@ -1020,7 +1020,11 @@ class _Stage extends ConsumerWidget {
     // over ON TOP of an already-active watch session, in which case it stays
     // mounted (see _WatchTogetherStage's Offstage wrapper below) instead of
     // being torn down and rebuilt from scratch the next time video ends.
-    final watchMounted = kind == StageKind.watch || (liveVideoOnTop && watchActive);
+    // (kind == watch) implies watchActive by construction, and the
+    // liveVideo-on-top branch below re-checks watchActive directly, so this
+    // reduces to watchActive itself; spelled out via the two branches above
+    // for what it means, not what it is.
+    final watchMounted = watchActive;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
