@@ -38,6 +38,17 @@ The host (the participant who loaded the video) publishes a heartbeat on the wat
 {"lane":"watch","action":"heartbeat","t":123.4,"playing":true,"from":"<identity>"}
 ```
 
+**Heartbeats MUST be ephemeral: data channel only, never mirrored to the lane store.** `LaneService.publish` (lane_service.dart:40-47) POSTs every publish to the server store, and `catchUp` (lane_service.dart:51-61) replays that whole persisted list to late joiners. At 3 second intervals a two hour movie persists roughly 2400 heartbeats, and every late joiner would replay all of them through the drift correction path. The local snapshot does not change between replayed events, so drift stays above the dead band and each one issues a seek: a seek storm ending on a stale position. A late joiner does not need replayed heartbeats anyway, because a live one arrives within 3 seconds.
+
+This requires an ephemeral publish path on `LaneService` that skips the Dio mirror. `load`, `play`, `pause` and `seek` keep their existing persisted behavior, since those ARE the state a late joiner must replay.
+
+**Host authority rules** (a third authority notion next to `SpaceJoin.isHost` and the LiveKit publish grants, so it must be pinned down):
+
+- loading a video locally sets `isHostOfVideo = true`
+- receiving a REMOTE `load` clears it, so two loaders never both heartbeat and fight
+- a `load` seen in catch-up replay whose `from` equals our own identity restores it (LiveKit does not loop your own data back, but `catchUp` does replay it)
+- if the video host leaves, heartbeats simply stop and everyone keeps playing from where they are. No failover in this pass; note it in the docs as a known limit rather than inventing an election.
+
 Clients compare their own real position to `t`:
 
 - drift = |localPosition - t|
@@ -326,8 +337,8 @@ PlaybackSnapshot? parseYouTubeInfo(String raw) {
 ```
 
 In `watch_video_web.dart`:
-- after building the iframe, add a `window.onMessage` listener that ignores messages whose `source` is not `iframeEl?.contentWindow`, feeds the rest to `parseYouTubeInfo`, and stores the latest snapshot in a `PlaybackSnapshot? _latest` field
-- on iframe `onLoad`, post `{"event":"listening","id":"<viewType>"}` so the API starts delivering
+- after building the iframe, add a `window.onMessage` listener that ignores messages whose `source` is not `iframeEl?.contentWindow`, feeds the rest to `parseYouTubeInfo`, and stores the latest snapshot in a `PlaybackSnapshot? _latest` field. Keep the `StreamSubscription` on the controller and expose a real `dispose()` that cancels it (today's `dispose` is an empty no-op, watch_video_web.dart:220), so the session's `ref.onDispose` can tear it down
+- post `{"event":"listening","id":"<viewType>"}` on EVERY iframe `onLoad`, not once. Each `load()` swaps the iframe `src`, and a stage-kind flip can reload it, so a one-shot handshake stops delivery for the rest of the session
 - change `position` to return `_latest?.position ?? _shadowPos` for youtube mode, keeping `_shadowPos` only as the pre-handshake fallback
 - add `PlaybackSnapshot get playbackSnapshot` returning `_latest ?? PlaybackSnapshot(position: position, playing: false)`
 
@@ -366,12 +377,21 @@ currentTime after a listening handshake, verified live over CDP."
 - Create: `lib/features/spaces/watch_session.dart`
 - Test: `test/features/spaces/watch_session_test.dart`
 
+**Also modify:** `lib/services/lane_service.dart` to add an ephemeral publish that sends over the data channel WITHOUT the Dio mirror to the lane store. Keep `publish` exactly as-is for `load`/`play`/`pause`/`seek`, which ARE the state a late joiner must replay.
+
 **Interfaces:**
-- Consumes: `resolveDrift`, `PlaybackSnapshot` (Task 1); the controller's `playbackSnapshot` (Task 2); `LaneService`.
+- Consumes: `resolveDrift`, `PlaybackSnapshot` (Task 1); the controller's `playbackSnapshot` (Task 2); `LaneService` plus its new ephemeral publish.
+- `LaneLike` gains `Future<void> publishEphemeral(Map<String, dynamic> payload)` so the fake lane can assert heartbeats never hit the persisted path.
 - Produces:
   - `class WatchSessionState { String? url; bool isPlaying; bool isHostOfVideo; }`
-  - `class WatchSession extends FamilyNotifier<WatchSessionState, WatchSessionArgs>` with `controller`, `loadUrl`, `play`, `pause`, `syncPosition`, `applyRemote`, `onHeartbeatTick`
-  - `final watchSessionProvider`, `final laneServiceFactoryProvider`, `class WatchSessionArgs`, `abstract class LaneLike`
+  - `class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState, WatchSessionArgs>` with `controller`, `loadUrl`, `play`, `pause`, `syncPosition`, `applyRemote`, `onHeartbeatTick`
+  - `final watchSessionProvider = AutoDisposeNotifierProviderFamily<...>`, `final laneServiceFactoryProvider`, `class WatchSessionArgs`, `abstract class LaneLike`
+
+**It MUST be autoDispose**, matching `spaceRoomProvider` (space_room_screen.dart:519) and `confProvider` (conf_screen.dart:184). A keepAlive family member never runs `ref.onDispose`, so leaving the Space would leave the 3 second Timer firing heartbeats into a disconnected room forever, and two Spaces would leak two timers and two lane subscriptions. The stage watches this provider (Task 4 needs `watchActive`), which is what keeps it alive while the room is open.
+
+**`WatchSessionArgs` MUST have value equality** (the `==` / `hashCode` shown below). It is a family key: without it the panel and the stage build two different notifiers, with two lane subscriptions and a split host flag. `spaceRoomProvider` only avoids this because a single `widget.join` instance flows everywhere.
+
+`ref.onDispose` must cancel the lane subscription, cancel the heartbeat Timer, cancel the web message listener, AND dispose the controller (the native controller is a real `ChangeNotifier` owning a `video_player`, watch_video_stub.dart:163-167).
 
 The session owns the controller AND the lane subscription. Both currently live in `_WatchPanelState`, which is why closing the panel kills remote sync as well as playback.
 
@@ -388,7 +408,14 @@ The session owns the controller AND the lane subscription. Both currently live i
 //     "playing":<bool>} ONLY when this client is the video host.
 //  4. A non-host receiving a heartbeat 10s ahead seeks (drift > dead band).
 //  5. A non-host receiving a heartbeat 0.5s off does NOT seek.
-//  6. catchUp replay lands a late joiner on the current url AND position.
+//  6. catchUp replay lands a late joiner on the current url, and the FIRST live
+//     heartbeat puts them at the right position (NOT replayed heartbeats).
+//  7. onHeartbeatTick uses publishEphemeral, never publish: assert the fake
+//     lane's PERSISTED list stays free of heartbeat actions no matter how many
+//     ticks fire. This is the guard against flooding the lane store.
+//  8. A remote "load" from someone else CLEARS isHostOfVideo, so two loaders
+//     never both heartbeat.
+//  9. A catch-up "load" whose from == our identity RESTORES isHostOfVideo.
 ```
 
 Write these as real tests using a fake controller implementing the small surface (`load`, `play`, `pause`, `seekTo`, `position`, `playbackSnapshot`) and asserting recorded calls.
@@ -406,11 +433,17 @@ Build `WatchSession` per the interfaces above. Key behaviors:
   /// Only the client that loaded the video publishes heartbeats. Two authorities
   /// would fight: each would correct toward the other and the room would
   /// oscillate.
+  ///
+  /// EPHEMERAL on purpose. A persisted heartbeat every 3s would put ~2400
+  /// events in the lane store for a two hour movie, and catchUp replays the
+  /// whole list to every late joiner, which is a seek storm ending on a stale
+  /// position. Live heartbeats arrive within 3s anyway.
   void onHeartbeatTick() {
     if (!state.isHostOfVideo) return;
     final s = controller.playbackSnapshot;
     if (!s.rateIsNormal) return; // do not guess at a non-1.0 rate
-    _publish({"action": "heartbeat", "t": s.position, "playing": s.playing});
+    _publishEphemeral(
+        {"action": "heartbeat", "t": s.position, "playing": s.playing});
   }
 
   void _applyHeartbeat(double hostPosition, bool hostPlaying) {
@@ -528,16 +561,11 @@ StageKind resolveStageKind({
 
 In `space_room_screen.dart`, branch the stage slot on `resolveStageKind` and add a `_WatchTogetherStage` `ConsumerWidget` that renders `WatchVideo(controller: ...)` inside `AspectRatio(16/9)` with a "Watching together" chip.
 
-In `watch_video_web.dart`, make view-factory registration idempotent. The surface now mounts and unmounts against a long-lived controller, and registering the same view type twice throws:
+In `watch_video_web.dart`, reuse `widget.controller.container` when it already exists instead of rebuilding the DOM nodes. `_WatchVideoState.initState` currently constructs fresh elements and reassigns them on EVERY mount (watch_video_web.dart:271-313), but the registered view factory closed over the FIRST container, so after a remount the factory hands back an orphaned node and the stage renders an empty box.
 
-```dart
-/// View types registered this session. The stage mounts and unmounts the
-/// surface against a LONG-LIVED controller now, so registration has to be
-/// idempotent or the second mount throws.
-final Set<String> _registeredViewTypes = <String>{};
-```
+Do NOT add a registration guard: duplicate `registerViewFactory` does not throw, it returns false (Flutter engine `content_manager.dart:103-105`). An earlier draft of this plan claimed otherwise and was wrong. Reusing the container is the actual fix.
 
-and reuse `widget.controller.container` when it already exists, since the registered factory closed over the first container and building fresh nodes would leave the stage rendering an orphaned element.
+**Keep the watch surface mounted when live video takes the stage.** Unmounting the `HtmlElementView` detaches the container, and a detached YouTube iframe stops and reloads when remounted, so the movie would restart every time someone goes live. Render the watch surface inside an `Offstage` (or a zero-height `SizedBox` wrapper) during `StageKind.liveVideo` rather than dropping it from the tree, so playback and sync continue underneath.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -675,4 +703,5 @@ git commit -m "test(spaces): two-browser CDP watch-sync verification"
 3. Seek on the host: everyone else follows within a couple of seconds.
 4. Close the panel on the host: playback and sync continue (this is what room-scoped session state buys).
 5. Talk over the movie: mic is a separate track. Host mute-all still silences people without touching the video.
-6. Someone goes live on camera: that takes the stage, the movie keeps playing underneath, and when they stop the movie comes back.
+6. Someone goes live on camera: that takes the stage, the movie keeps playing underneath (this is what the Offstage mount buys, an unmounted iframe would restart), and when they stop the movie comes back at the right place.
+7. Host of the video leaves: heartbeats stop, everyone keeps playing from where they are. Known limit, no failover in this pass.
