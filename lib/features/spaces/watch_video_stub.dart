@@ -6,10 +6,11 @@ import "watch_sync.dart";
 
 /// Native (mobile / desktop) watch-together video surface.
 ///
-/// This is the non-web side of the conditional import seam in
-/// `watch_panel.dart` (`watch_video_stub.dart if (dart.library.html)
-/// watch_video_web.dart`). Despite the historical "stub" filename, this is a
-/// REAL player, not a placeholder.
+/// This is the non-web side of the conditional import seam, which lives in
+/// `watch_session.dart` and `space_room_screen.dart` (`watch_video_stub.dart
+/// if (dart.library.html) watch_video_web.dart`), not in `watch_panel.dart`
+/// (moved there after the panel refactor). Despite the historical "stub"
+/// filename, this is a REAL player, not a placeholder.
 ///
 /// It mirrors the public API of the web controller (`watch_video_web.dart`) so
 /// the conditional import compiles identically on every target, and it is
@@ -238,7 +239,11 @@ class _WatchVideoState extends State<WatchVideo> {
     }
 
     final url = c.url;
-    final loadingFile = c.fileController != null; // file mode, not yet ready
+    // Explicit, not inferred from fileController being non-null: isEmbedOnly
+    // is the getter that exists to say this outright (see class doc), so the
+    // UI should actually ask it instead of the two conditions happening to
+    // agree by construction of load().
+    final embedOnly = c.isEmbedOnly;
     return Container(
       color: Colors.black,
       alignment: Alignment.center,
@@ -246,13 +251,13 @@ class _WatchVideoState extends State<WatchVideo> {
       child: Text(
         url == null
             ? "Load a video URL to watch together."
-            : loadingFile
-                ? "Loading…\n$url"
-                : "$url\n\n"
+            : embedOnly
+                ? "$url\n\n"
                     "This device keeps play, pause and seek in sync with the "
                     "room, but does not show the picture: inline YouTube/"
                     "Rumble playback is on the web client. Open this Space "
-                    "in a browser to see it.",
+                    "in a browser to see it."
+                : "Loading…\n$url",
         textAlign: TextAlign.center,
         style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),
