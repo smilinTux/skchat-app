@@ -10,6 +10,12 @@
 /// stream (see [applyWatchEvent]) and emit the same events on local control, so
 /// web <-> native participants stay aligned.
 ///
+/// `heartbeat` and `stop` are additive on top of this mapper, handled by
+/// `WatchSession.applyRemote` (watch_session.dart) before either ever
+/// reaches [applyWatchEvent]: an older client's copy of this file has no
+/// `case` for them, so they fall into the `default:` branch below and are
+/// silently ignored, which is what "additive" means on this wire.
+///
 /// This file intentionally has NO Flutter / dart:html / dart:io dependency so
 /// the mapping can be unit-tested on the bare Dart VM against a mock target.
 library;

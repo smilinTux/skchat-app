@@ -106,6 +106,46 @@ void main() {
     expect(find.byType(WatchVideo), findsNothing);
   });
 
+  testWidgets(
+      "Stop watching is hidden with no active session and appears once one "
+      "is loaded", (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+
+    expect(find.text("Stop watching"), findsNothing);
+
+    await tester.enterText(
+        find.byType(TextField), "https://example.com/movie.mp4");
+    await tester.tap(find.text("Load"));
+    await tester.pump();
+
+    expect(find.text("Stop watching"), findsOneWidget);
+  });
+
+  testWidgets("tapping Stop watching ends the session for everyone",
+      (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    await tester.enterText(
+        find.byType(TextField), "https://example.com/movie.mp4");
+    await tester.tap(find.text("Load"));
+    await tester.pump();
+    lane.persisted.clear(); // isolate from load's own persisted publish
+
+    await tester.tap(find.text("Stop watching"));
+    await tester.pump();
+
+    expect(lane.persisted.single, {
+      "action": "stop",
+      "lane": "watch",
+      "from": "chef@dk.skworld",
+    });
+    final element = tester.element(find.byType(WatchPanel));
+    final container = ProviderScope.containerOf(element);
+    expect(container.read(watchSessionProvider(_args)).isActive, isFalse);
+    expect(find.text("Stop watching"), findsNothing);
+  });
+
   testWidgets("tapping Load publishes the typed URL to the watch lane",
       (tester) async {
     await tester.pumpWidget(wrap());

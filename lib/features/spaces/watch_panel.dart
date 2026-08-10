@@ -56,6 +56,10 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
     ref.read(watchSessionProvider(_args).notifier).syncPosition();
   }
 
+  void _stop() {
+    ref.read(watchSessionProvider(_args).notifier).stopWatching();
+  }
+
   @override
   void dispose() {
     // The controller and the lane subscription belong to watchSessionProvider
@@ -154,6 +158,21 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
               ),
             ],
           ),
+          // Only reachable while a session is active: without this control
+          // (or any other), once anyone loads a video it owns the main
+          // stage for the life of the room with no way to reclaim it (the
+          // old dismissible panel was at least an escape hatch; this is the
+          // real one).
+          if (state.isActive) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _stop,
+              icon: const Icon(Icons.stop_circle_outlined,
+                  color: SovereignColors.accentDanger),
+              label: const Text("Stop watching",
+                  style: TextStyle(color: SovereignColors.accentDanger)),
+            ),
+          ],
         ],
       ),
     );

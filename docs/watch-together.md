@@ -16,14 +16,40 @@ Every event is a JSON map:
 {"lane": "watch", "action": "pause",     "t": 12.3,     "from": "<identity>"}
 {"lane": "watch", "action": "seek",      "t": 42.0,     "from": "<identity>"}
 {"lane": "watch", "action": "heartbeat", "t": 88.4,     "from": "<identity>", "playing": true}
+{"lane": "watch", "action": "stop",                     "from": "<identity>"}
 ```
 
 `load`/`play`/`pause`/`seek` are the original, wire-compatible mapping
 (`applyWatchEvent` in `lib/features/spaces/watch_sync.dart`): an older client
-that has never heard of `heartbeat` still understands all four. `heartbeat`
-is purely additive on top of that, handled separately in
-`WatchSession.applyRemote` (`lib/features/spaces/watch_session.dart`) before
-it ever reaches `applyWatchEvent`.
+that has never heard of `heartbeat` or `stop` still understands all four.
+`heartbeat` and `stop` are purely additive on top of that, both handled
+separately in `WatchSession.applyRemote`
+(`lib/features/spaces/watch_session.dart`) before either ever reaches
+`applyWatchEvent`: an older client's copy of `applyWatchEvent` has no `case`
+for them, so its `default:` branch silently ignores them.
+
+### Ending a session: `stop`
+
+Any participant can end the watch session for the whole room with the
+"Stop watching" control in the watch panel (`lib/features/spaces/
+watch_panel.dart`), shown only while a session is active. It calls
+`WatchSession.stopWatching`, which clears the session's `url` (so
+`WatchSessionState.isActive` goes false and `resolveStageKind` falls back
+to `StageKind.none`), clears `isHostOfVideo`, pauses local playback, and
+publishes `{"action": "stop"}` on the PERSISTED path, the same path `load`/
+`play`/`pause`/`seek` use, not the ephemeral one `heartbeat` uses. This is
+deliberate: a late joiner's `catchUp` must replay the stop, or a stale
+persisted `load` from before the session ended would re-establish it for
+every future joiner. A REMOTE `stop` is applied the mirror-image way in
+`applyRemote`: local state clears and playback pauses WITHOUT
+re-publishing, or every client that ever received a stop would echo it
+right back onto the lane.
+
+Without this control, nothing in the system ever clears `url` once it is
+set: the 16:9 surface would own the main stage for every participant for
+the life of the room, with no way to reclaim it. The old, pre-refactor
+watch panel was at least dismissible; `stop` is the real equivalent for the
+persistent, shared-session design.
 
 ### Heartbeats are ephemeral, and that is deliberate
 
@@ -194,14 +220,32 @@ picks `StageKind.liveVideo` whenever any live video track exists, falling
 back to `StageKind.watch` only when there is none: a live screen share or
 camera always outranks the watch session for the stage's top slot.
 
-Losing the stage does not stop the movie. In `space_room_screen.dart`, the
-watch surface (`_WatchTogetherStage`) stays mounted underneath an `Offstage`
-widget whenever `watchActive` is true, even while live video is on top of
-it. Tearing the surface down and rebuilding it on a later demote would mean
-a fresh `WatchVideoController`, a fresh mount, and for a YouTube iframe
-specifically, a full reload from position zero. Keeping it alive but
-invisible means the movie is exactly where it should be the moment live
-video ends and the watch surface reclaims the stage.
+Losing the stage TO LIVE VIDEO does not stop the movie. In
+`space_room_screen.dart`, the watch surface (`_WatchTogetherStage`) stays
+mounted underneath an `Offstage` widget whenever `watchActive` is true,
+even while live video is on top of it. Tearing the surface down and
+rebuilding it on a later demote would mean a fresh `WatchVideoController`,
+a fresh mount, and for a YouTube iframe specifically, a full reload from
+position zero. Keeping it alive but invisible means the movie is exactly
+where it should be the moment live video ends and the watch surface
+reclaims the stage.
+
+That resilience is scoped to the stage-precedence swap above, not to the
+connection underneath it. `_Stage` (which `_WatchTogetherStage` lives
+inside) is only built while `st.isConnected` is true
+(`space_room_screen.dart`'s `st.isConnected ? Stack(...) : _buildConnecting()`
+branch). A connection flap while the watch panel is closed unmounts `_Stage`
+entirely, not just offstages it, which leaves `WatchSession`
+(`AutoDisposeFamilyNotifier`, nothing else watching it) with no more
+watchers and lets it autoDispose. Reconnecting rebuilds `_Stage` from
+scratch: a fresh `WatchVideoController`, a fresh mount, and for a YouTube
+iframe a full reload from position zero, exactly the case the paragraph
+above says is avoided, except here the connection itself was the thing
+torn down, not the stage precedence. The host flag is lost too, until
+`catchUp` replays the persisted `load` event and, if this client is still
+the host, restores it. So the accurate claim is narrower than "the movie
+never restarts": a live-video stage swap never restarts it, a connection
+flap can.
 
 ## The false assumption that broke sync
 

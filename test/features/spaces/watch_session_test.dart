@@ -3,6 +3,8 @@ import "dart:async";
 import "package:fake_async/fake_async.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:skchat/features/spaces/screen_share_helper.dart";
+import "package:skchat/features/spaces/stage_content.dart";
 import "package:skchat/features/spaces/watch_drift.dart";
 import "package:skchat/features/spaces/watch_session.dart";
 import "package:skchat/features/spaces/watch_sync.dart" show WatchController;
@@ -458,5 +460,60 @@ void main() {
           lane2.ephemeral.where((p) => p["action"] == "heartbeat").length,
           1);
     });
+  });
+
+  test(
+      "stopWatching publishes stop on the PERSISTED path and clears the "
+      "session", () {
+    final n = notifier();
+    n.loadUrl("https://example.com/movie.mp4"); // becomes host, isActive
+    lane.persisted.clear(); // isolate from load's own persisted publish
+    expect(state().isActive, isTrue);
+
+    n.stopWatching();
+
+    // Persisted, not ephemeral: a late joiner's catchUp must replay this
+    // stop, or they would be handed a stale load for a session that already
+    // ended (see the ephemeral-heartbeat reasoning above for the mirror
+    // image of this same catchUp-replay concern).
+    expect(lane.persisted.single, {
+      "action": "stop",
+      "lane": "watch",
+      "from": "me",
+    });
+    expect(state().isActive, isFalse);
+    expect(state().isHostOfVideo, isFalse);
+    expect(resolveStageKind(videos: const <StageVideo>[], watchActive: state().isActive),
+        StageKind.none);
+  });
+
+  test("a REMOTE stop clears the session locally without republishing", () {
+    final n = notifier();
+    // Someone else is the host; we are just a viewer with a session loaded
+    // via the existing catch-up/live-load path.
+    n.applyRemote({
+      "lane": "watch",
+      "action": "load",
+      "url": "https://theirs.test/movie.mp4",
+      "from": "someone-else",
+    });
+    expect(state().isActive, isTrue);
+    lane.persisted.clear();
+    lane.ephemeral.clear();
+
+    n.applyRemote({
+      "lane": "watch",
+      "action": "stop",
+      "from": "someone-else",
+    });
+
+    expect(state().isActive, isFalse);
+    expect(state().isHostOfVideo, isFalse);
+    // No republish: applying a REMOTE stop must not re-broadcast it, or
+    // every client that ever received one would echo it right back.
+    expect(lane.persisted, isEmpty);
+    expect(lane.ephemeral, isEmpty);
+    expect(resolveStageKind(videos: const <StageVideo>[], watchActive: state().isActive),
+        StageKind.none);
   });
 }

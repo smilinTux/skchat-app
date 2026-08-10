@@ -102,13 +102,18 @@ class WatchSessionState {
   /// existence.
   bool get isActive => url != null;
 
+  /// [clearUrl] is an explicit sentinel, not folded into the nullable [url]
+  /// parameter: `url ?? this.url` can never express "set it to null", so
+  /// ending a session (see [WatchSession.stopWatching]) needs its own way
+  /// to say "clear it" that a plain `copyWith(url: null)` call cannot reach.
   WatchSessionState copyWith({
     String? url,
+    bool clearUrl = false,
     bool? isPlaying,
     bool? isHostOfVideo,
   }) =>
       WatchSessionState(
-        url: url ?? this.url,
+        url: clearUrl ? null : (url ?? this.url),
         isPlaying: isPlaying ?? this.isPlaying,
         isHostOfVideo: isHostOfVideo ?? this.isHostOfVideo,
       );
@@ -216,6 +221,20 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
     _publish({"action": "seek", "t": t});
   }
 
+  /// End the watch session for everyone: without this, nothing ever clears
+  /// `url` (see [WatchSessionState.isActive]), so once anyone loads a video
+  /// it owns the main stage for the life of the room with no way to reclaim
+  /// it. Publishes PERSISTED (not ephemeral), same as [loadUrl]/[play]/
+  /// [pause]/[syncPosition]: a late joiner's catchUp must replay this stop,
+  /// or [loadUrl]'s own persisted `load` event would re-establish the ended
+  /// session for them.
+  void stopWatching() {
+    controller.pause();
+    state = state.copyWith(
+        clearUrl: true, isHostOfVideo: false, isPlaying: false);
+    _publish({"action": "stop"});
+  }
+
   /// Only the client that loaded the video publishes heartbeats. Two
   /// authorities would fight: each would correct toward the other and the
   /// room would oscillate.
@@ -284,8 +303,21 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
       if (t != null) _applyHeartbeat(t, playing);
       return;
     }
+    if (action == "stop") {
+      // Mirror of stopWatching() for a REMOTE stop: clear local state and
+      // pause playback without publishing again, or every client that
+      // received a stop would immediately echo it back out. ADDITIVE on the
+      // wire: an older client's applyWatchEvent has no "stop" case, so it
+      // falls into that switch's existing `default:` branch and simply
+      // ignores it, same as any other action it predates.
+      controller.pause();
+      state = state.copyWith(
+          clearUrl: true, isHostOfVideo: false, isPlaying: false);
+      return;
+    }
     // Everything else (load/play/pause/seek) is the wire-compatible mapper
-    // an older client also understands; heartbeat is additive on top of it.
+    // an older client also understands; heartbeat and stop are additive on
+    // top of it.
     applyWatchEvent(controller, e);
     switch (action) {
       case "load":
