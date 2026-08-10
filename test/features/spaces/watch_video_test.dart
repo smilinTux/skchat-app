@@ -147,5 +147,11 @@ void main() {
       c.load("https://example.com/clip.mp4");
       expect(c.isEmbedOnly, isFalse);
     });
+
+    test("native Rumble also reports embed-only (same branch as YouTube)", () {
+      final c = WatchVideoController();
+      c.load("https://rumble.com/v123-some-video.html");
+      expect(c.isEmbedOnly, isTrue);
+    });
   });
 }

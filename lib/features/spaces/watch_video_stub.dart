@@ -250,9 +250,9 @@ class _WatchVideoState extends State<WatchVideo> {
                 ? "Loading…\n$url"
                 : "$url\n\n"
                     "This device keeps play, pause and seek in sync with the "
-                    "room, but does not show the picture: inline YouTube "
-                    "playback is on the web client. Open this Space in a "
-                    "browser to see it.",
+                    "room, but does not show the picture: inline YouTube/"
+                    "Rumble playback is on the web client. Open this Space "
+                    "in a browser to see it.",
         textAlign: TextAlign.center,
         style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),
