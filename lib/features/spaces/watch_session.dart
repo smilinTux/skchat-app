@@ -19,60 +19,24 @@ import "watch_video_stub.dart" if (dart.library.html) "watch_video_web.dart"
 /// panel and the fullscreen stage at THIS provider instead so both share the
 /// same session and neither owns teardown alone.
 // ── Controller seam ─────────────────────────────────────────────────────────
+//
+// WatchController itself lives in watch_sync.dart, not here: both platform
+// WatchVideoControllers (watch_video_stub.dart, watch_video_web.dart)
+// implement it directly, so the REAL controller instance (not a wrapper
+// hiding it behind a private field) flows out of [controller] with its
+// concrete type intact, renderable by WatchVideo on either platform. A test
+// substitutes a fake implementation instead of driving a real video_player /
+// DOM element.
 
-/// The control surface [WatchSession] drives. Matches the public API both
-/// platform `WatchVideoController`s (native `watch_video_stub.dart`, web
-/// `watch_video_web.dart`) already expose; factored out here, rather than
-/// depending on either concrete class directly, so a test can supply a fake
-/// controller instead of driving a real `video_player` / DOM element (heavy,
-/// and the native controller needs platform-channel bindings a plain
-/// `flutter test` doesn't have).
-abstract class WatchController implements WatchPlaybackTarget {
-  double get position;
-  PlaybackSnapshot get playbackSnapshot;
-  void dispose();
-}
-
-/// Adapts the real platform controller (picked by the conditional import
-/// above) to [WatchController]. Thin pass-through: no behavior of its own,
-/// just satisfies the interface without editing either platform controller
-/// file (out of scope for this task).
-class _RealWatchController implements WatchController {
-  _RealWatchController() : _c = real.WatchVideoController();
-
-  final real.WatchVideoController _c;
-
-  @override
-  void load(String url) => _c.load(url);
-
-  @override
-  void play() => _c.play();
-
-  @override
-  void pause() => _c.pause();
-
-  @override
-  void seekTo(double t) => _c.seekTo(t);
-
-  @override
-  double get position => _c.position;
-
-  @override
-  PlaybackSnapshot get playbackSnapshot => _c.playbackSnapshot;
-
-  @override
-  void dispose() => _c.dispose();
-}
-
-/// DI seam around constructing the real [WatchController], mirroring the
-/// [laneServiceFactoryProvider] pattern (also
-/// `screenShareSourceResolverProvider` in call_shared/screen_share_source.dart):
-/// production code never overrides this, a test substitutes a fake
-/// controller instead of exercising a real `video_player` / DOM element.
+/// DI seam around constructing the real [WatchController], mirroring
+/// [laneServiceFactoryProvider] (also `screenShareSourceResolverProvider` in
+/// call_shared/screen_share_source.dart): production code never overrides
+/// this, a test substitutes a fake controller instead of exercising a real
+/// `video_player` / DOM element.
 typedef WatchControllerFactory = WatchController Function();
 
 final watchControllerFactoryProvider = Provider<WatchControllerFactory>(
-  (ref) => () => _RealWatchController(),
+  (ref) => () => real.WatchVideoController(),
 );
 
 // ── Lane seam ────────────────────────────────────────────────────────────────
@@ -151,6 +115,16 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   late final LaneLike _lane;
   Timer? _heartbeatTimer;
 
+  /// Set (only) inside [ref.onDispose]. Guards every continuation that can
+  /// resume after disposal: [_lane.catchUp]'s HTTP round trip is exactly the
+  /// kind of await a user backing out of the Space mid-join races against,
+  /// and once ref.onDispose has run, [controller] is already disposed
+  /// (native: a disposed ChangeNotifier throws on notifyListeners; web:
+  /// mutates a detached DOM element either way). Mirrors the `_disposed`
+  /// flag `SpaceRoomNotifier` (space_room_screen.dart) already uses for the
+  /// identical class of race on its own post-await state writes.
+  bool _disposed = false;
+
   @override
   WatchSessionState build(WatchSessionArgs arg) {
     controller = ref.read(watchControllerFactoryProvider)();
@@ -162,7 +136,9 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
     // position fix a late joiner sees comes from the first LIVE heartbeat,
     // not a stale replayed one.
     _lane.catchUp("watch").then((events) {
+      if (_disposed) return;
       for (final e in events) {
+        if (_disposed) return;
         applyRemote(e);
       }
     });
@@ -183,6 +159,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
     // subscription and controller (a real video_player on native) would
     // leak with it.
     ref.onDispose(() {
+      _disposed = true;
       sub.cancel();
       _heartbeatTimer?.cancel();
       controller.dispose();
@@ -292,6 +269,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   /// "load" whose `from` equals [arg.identity] restores the flag (we were,
   /// and still are, the loader).
   void applyRemote(Map<String, dynamic> e) {
+    if (_disposed) return;
     final action = e["action"];
     if (action == "heartbeat") {
       final t = (e["t"] as num?)?.toDouble();

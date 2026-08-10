@@ -29,7 +29,7 @@ import "watch_sync.dart";
 enum _WatchMode { none, file, embedOnly }
 
 class WatchVideoController extends ChangeNotifier
-    implements WatchPlaybackTarget {
+    implements WatchController {
   VideoPlayerController? _vp;
   _WatchMode _mode = _WatchMode.none;
   String? url;
@@ -147,6 +147,7 @@ class WatchVideoController extends ChangeNotifier
     }
   }
 
+  @override
   double get position {
     if (isFilePlayerReady) {
       return (_vp?.value.position.inMilliseconds ?? 0) / 1000.0;
@@ -158,6 +159,7 @@ class WatchVideoController extends ChangeNotifier
   /// mode there is no native player to read, so this mirrors [position]'s
   /// shadow-value fallback and reports not-playing (parity with the web
   /// controller's pre-handshake fallback).
+  @override
   PlaybackSnapshot get playbackSnapshot => PlaybackSnapshot(
         position: position,
         playing: _vp?.value.isPlaying ?? false,

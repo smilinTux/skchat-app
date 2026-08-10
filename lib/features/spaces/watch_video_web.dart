@@ -32,7 +32,7 @@ import "watch_yt_info.dart";
 /// active surface is always the right player for the current URL.
 enum _WatchMode { none, video, youtube, rumble }
 
-class WatchVideoController implements WatchPlaybackTarget {
+class WatchVideoController implements WatchController {
   /// Container div holding both the <video> and <iframe> children.
   html.DivElement? container;
   html.VideoElement? videoEl;
@@ -252,6 +252,7 @@ class WatchVideoController implements WatchPlaybackTarget {
     }
   }
 
+  @override
   double get position {
     if (_mode == _WatchMode.video) {
       final v = videoEl;
@@ -269,12 +270,14 @@ class WatchVideoController implements WatchPlaybackTarget {
   /// Full playback state for the drift resolver, not just position: play
   /// state and buffering matter as much as the timestamp for deciding
   /// whether to correct a viewer.
+  @override
   PlaybackSnapshot get playbackSnapshot =>
       _latest ?? PlaybackSnapshot(position: position, playing: false);
 
   /// Cancels the window message listener so a later task's `ref.onDispose`
   /// can tear this controller down cleanly instead of leaking a subscription
   /// for the life of the page.
+  @override
   void dispose() {
     _msgSub?.cancel();
     _msgSub = null;

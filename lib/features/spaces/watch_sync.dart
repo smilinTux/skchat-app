@@ -14,6 +14,8 @@
 /// the mapping can be unit-tested on the bare Dart VM against a mock target.
 library;
 
+import "watch_drift.dart";
+
 /// Minimal control surface a watch event can drive. Both the web
 /// (`watch_video_web.dart`) and native (`watch_video_native.dart`)
 /// `WatchVideoController`s satisfy this shape.
@@ -22,6 +24,21 @@ abstract class WatchPlaybackTarget {
   void play();
   void pause();
   void seekTo(double t);
+}
+
+/// The full control surface `WatchSession` (watch_session.dart) drives:
+/// [WatchPlaybackTarget] plus the read side a drift-correction loop needs.
+/// Both platform `WatchVideoController`s implement this directly (see
+/// watch_video_stub.dart / watch_video_web.dart), so the concrete real
+/// controller flows through to the widget that renders it (`WatchVideo`)
+/// unchanged; a test substitutes a fake implementation instead of driving a
+/// real `video_player` / DOM element. Lives here, not in watch_session.dart,
+/// so the platform controller files can implement it without an import
+/// cycle back to the session file.
+abstract class WatchController implements WatchPlaybackTarget {
+  double get position;
+  PlaybackSnapshot get playbackSnapshot;
+  void dispose();
 }
 
 /// Apply a single inbound watch lane event to [target] WITHOUT re-publishing
