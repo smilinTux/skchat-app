@@ -2,8 +2,12 @@ import "package:flutter_test/flutter_test.dart";
 import "package:skchat/features/spaces/watch_drift.dart";
 
 PlaybackSnapshot snap(double p,
-        {bool playing = true, bool buffering = false}) =>
-    PlaybackSnapshot(position: p, playing: playing, buffering: buffering);
+        {bool playing = true, bool buffering = false, bool rateIsNormal = true}) =>
+    PlaybackSnapshot(
+        position: p,
+        playing: playing,
+        buffering: buffering,
+        rateIsNormal: rateIsNormal);
 
 void main() {
   test("small drift inside the dead band is left alone", () {
@@ -47,6 +51,27 @@ void main() {
             hostPosition: 100.0,
             hostPlaying: false),
         DriftAction.pauseOnly);
+  });
+
+  test(
+      "a non-normal playback rate suppresses correction even at large drift",
+      () {
+    // A viewer who bumps the YouTube embed to 1.5x is racing ahead on
+    // purpose, not drifting out of sync with the room: seek-yanking them
+    // back every heartbeat fights the user instead of helping, the same
+    // reasoning that leaves a buffering player alone.
+    expect(
+        resolveDrift(
+            local: snap(500.0, rateIsNormal: false),
+            hostPosition: 100.0,
+            hostPlaying: true),
+        DriftAction.none);
+    expect(
+        resolveDrift(
+            local: snap(500.0, playing: false, rateIsNormal: false),
+            hostPosition: 100.0,
+            hostPlaying: true),
+        DriftAction.none);
   });
 
   test("dead band is configurable and boundary is inclusive", () {

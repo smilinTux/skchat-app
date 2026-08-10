@@ -43,6 +43,13 @@ DriftAction resolveDrift({
   // and never stops being corrected. Leave it alone until it settles.
   if (local.buffering) return DriftAction.none;
 
+  // A non-1.0 rate means the local viewer sped up or slowed down the
+  // player on purpose (e.g. the YouTube embed's own playback-speed menu),
+  // not that it drifted out of sync with the room. Seek-yanking that viewer
+  // back every heartbeat fights the choice they made instead of helping,
+  // the same reasoning that leaves a buffering player alone above.
+  if (!local.rateIsNormal) return DriftAction.none;
+
   final drift = (local.position - hostPosition).abs();
   if (drift > deadBandSeconds) {
     return hostPlaying ? DriftAction.seekAndPlay : DriftAction.seekAndPause;
