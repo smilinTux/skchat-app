@@ -71,9 +71,17 @@ void main() {
 
     // The skcode_client subapp surface is now mounted inside the standalone
     // chrome, and it booted without a shell (no exceptions were thrown
-    // pumping it).
+    // pumping it). Standalone has no AuthContext yet (card C-4's doc
+    // comment on SkcodeSurface: the real capauth login is a follow-up on
+    // this same seam), so the sessions rail's poll never fires and renders
+    // its honest empty state rather than a session list.
     expect(find.byType(SkcodeSurface), findsOneWidget);
-    expect(find.text('Standalone'), findsOneWidget);
+    // `find.text('Code')` alone would match twice here (the surface's own
+    // AppBar title AND the standalone chrome's bottom-nav destination
+    // label, `StandaloneScaffold` feeding it straight from `nav.label`), so
+    // this scopes to the surface's AppBar specifically.
+    expect(find.widgetWithText(AppBar, 'Code'), findsOneWidget);
+    expect(find.text('No sessions yet'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -1,7 +1,8 @@
 /// skcode_client: the skcode subapp packaged as a mountable SKWorld module.
 ///
-/// This is the Phase 1 skeleton (card C-2, spec section 4.1) plus the
-/// transport layer moved in by card C-3b. It exposes:
+/// This is the Phase 1 build: the mount skeleton (card C-2), the transport
+/// layer (card C-3, moved in unchanged by C-3b), and the render layer on top
+/// of it (card C-4). It exposes:
 ///
 ///  * [SkcodeModule]  - `implements SkworldModule`; the entry point the
 ///                      signed `skworld.module.json` will point its
@@ -11,20 +12,37 @@
 ///                      C-3b): the one seam the transport needed to move
 ///                      here, since nothing in [ShellContext] /
 ///                      [AuthContext] says where the backend lives.
-///  * [SkcodeSurface] - the module body the shell renders. An EMPTY shell in
-///                      this skeleton: it proves the mount (shell theme, bus,
-///                      AuthContext) and the standalone boot, nothing more.
-///                      The real transcript UI lands in card C-4.
+///  * [SkcodeSurface] - the module body the shell renders: the sessions
+///                      rail, which IS the `/code` landing screen on phone
+///                      (card C-4, spec section 7).
+///  * [SkcodeSessionsRail] / [SkcodeSessionScreen] - the phone layout (card
+///                      C-4 part 4): the rail polls sessions and pushes the
+///                      full-screen session view; the session screen owns a
+///                      live [SkcodeSessionStore] and toggles EXCLUSIVELY
+///                      between [SkcodeTranscriptList] and [SkcodeRawRail]
+///                      (never both at once), matching Buzz's
+///                      `RawRailLayout` "side maps to exclusive" phone rule.
+///  * [ActivityRenderClass] / [ActivityTone] / [ToolStatus] /
+///    [classifySkcodeEvent] / [buildSkcodeTranscript] - the activity render
+///    taxonomy (card C-4 parts 1-2), ported to Dart with attribution to
+///    Buzz's `agentSessionTypes.ts` / `agentSessionToolClassifier.ts`. Every
+///    render class carries a tone ([kDefaultToneForClass]); the transcript
+///    reducer folds a `tool_call`/`tool_result` pair into one row and drops
+///    `suppressed` events, which still surface in [SkcodeRawRail].
+///  * [SkcodeTranscriptList] / [SkcodeRawRail] - the two views (card C-4
+///    parts 2-3). Both key their rows on [skcodeEventRowId] so the same
+///    underlying event anchors to the same row in either view.
 ///  * [SkcodeApiClient] / [SkcodeSessionStore] / [SkcodeSessionsListStore] /
-///    [SkcodeWsTransport] / [SkcodeEvent] - the transport layer (card C-3,
-///                      moved here unchanged by card C-3b): Bearer-header
-///                      HTTP for the read plane, a `?token=` WS tail with
-///                      jittered-backoff reconnect, `(sid, seq, ts)` dedup
-///                      merge of the live and archived event windows, and
-///                      the 401/1008 re-mint-once-then-fail-visibly rule.
-///                      It reaches auth ONLY through the `mintToken` /
-///                      `onAuthRejected` callbacks its constructors take,
-///                      never a host service directly.
+///                      [SkcodeWsTransport] / [SkcodeEvent] - the transport
+///                      layer (card C-3, moved here unchanged by card C-3b):
+///                      Bearer-header HTTP for the read plane, a `?token=`
+///                      WS tail with jittered-backoff reconnect,
+///                      `(sid, seq, ts)` dedup merge of the live and
+///                      archived event windows, and the 401/1008
+///                      re-mint-once-then-fail-visibly rule. It reaches auth
+///                      ONLY through the `mintToken` / `onAuthRejected`
+///                      callbacks its constructors take, never a host
+///                      service directly.
 ///  * [kSkcodeAudience] / [skcodeWsUri] - pure config the transport and its
 ///                      callers share (the capauth audience name, and the
 ///                      http(s) -> ws(s) URL builder).
@@ -37,12 +55,18 @@
 /// Proven by `tool/import_gate.sh` and `test/import_gate_test.dart`.
 library;
 
+export 'src/skcode_activity_taxonomy.dart';
 export 'src/skcode_api_client.dart';
 export 'src/skcode_config.dart';
 export 'src/skcode_event.dart';
 export 'src/skcode_event_merge.dart';
 export 'src/skcode_module.dart';
+export 'src/skcode_raw_rail.dart';
+export 'src/skcode_session_screen.dart';
 export 'src/skcode_session_store.dart';
 export 'src/skcode_sessions_list_store.dart';
+export 'src/skcode_sessions_rail.dart';
 export 'src/skcode_surface.dart';
+export 'src/skcode_tone_style.dart';
+export 'src/skcode_transcript_list.dart';
 export 'src/skcode_ws_transport.dart';

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:skworld_module_api/skworld_module_api.dart';
 
+import 'skcode_api_client.dart';
 import 'skcode_surface.dart';
 
 /// The skcode subapp as a mountable SKWorld module (card C-2, spec section
@@ -25,27 +26,26 @@ import 'skcode_surface.dart';
 /// [build] handles both by handing the nullable [ShellContext] straight to
 /// [SkcodeSurface].
 ///
-/// SCOPE (card C-2, extended by C-3b): [build] itself is still a skeleton
-/// that only proves the mount and the standalone boot. No transcript UI
-/// lives here yet (that is card C-4); the existing iframe at
-/// `lib/features/skcode/` stays the live `/code` surface until the registry
-/// flip. What C-3b DID add is the transport layer itself
-/// ([SkcodeApiClient], [SkcodeSessionStore], [SkcodeSessionsListStore],
-/// [SkcodeWsTransport]) as siblings in this package, plus [origin] and
-/// [onAuthRejected] on this constructor as the seam C-4 will use to wire
-/// them into a real body.
+/// SCOPE: card C-2 built the mount/standalone-boot skeleton; card C-3b
+/// moved the transport layer ([SkcodeApiClient], [SkcodeSessionStore],
+/// [SkcodeSessionsListStore], [SkcodeWsTransport]) into this package as
+/// siblings and added [origin] / [onAuthRejected] as the injection seam;
+/// card C-4 wired that transport into a real render layer (the sessions
+/// rail, the activity taxonomy, the transcript, the raw rail) inside
+/// [SkcodeSurface]. The existing iframe at `lib/features/skcode/` stays the
+/// LIVE `/code` surface until the registry flip (card C-10, deliberately
+/// last); this module is fully built but not yet the one the app actually
+/// mounts.
 class SkcodeModule implements SkworldModule {
-  const SkcodeModule({this.origin, this.onAuthRejected});
+  const SkcodeModule({this.origin, this.onAuthRejected, this.apiClient});
 
   /// Where skcode-hostd lives (card C-3b): the one thing missing from
   /// [ShellContext] / [AuthContext] that pushed the transport layer into the
   /// host app in card C-3. The mounted host passes its runtime-configurable
   /// daemon URL (`buildLiveSkcodeModule()`,
   /// `lib/features/skcode/live_skcode_module.dart`); the standalone runner
-  /// passes its own. Not consumed by this skeleton's [build] yet (that is
-  /// card C-4, which wires it into [SkcodeApiClient] / [SkcodeSessionStore]);
-  /// injecting it here now means C-4 never has to touch this constructor's
-  /// shape.
+  /// passes its own. Consumed by [SkcodeSurface] (card C-4) to build its
+  /// [SkcodeApiClient] and to construct each session's WS URI.
   final String? origin;
 
   /// Invoked on an HTTP 401 or WS close 1008 from the transport layer (card
@@ -55,9 +55,14 @@ class SkcodeModule implements SkworldModule {
   /// the next [AuthContext.token] call genuinely re-mints instead of
   /// replaying a cached, rejected token. [AuthContext.token] alone cannot
   /// express "that token was rejected, get me a fresh one"; this callback is
-  /// the missing half. Not called by this skeleton's [build] yet (card C-4
-  /// wires the real session store that calls it).
+  /// the missing half. Forwarded to every [SkcodeSessionStore] the rendered
+  /// sessions rail / session screen own (card C-4).
   final VoidCallback? onAuthRejected;
+
+  /// Test seam only (see [SkcodeSurface.apiClient]): lets a widget test
+  /// inject a fake [SkcodeApiClient] so `build()` never opens a real socket.
+  /// Production always constructs with this omitted.
+  final SkcodeApiClient? apiClient;
 
   @override
   String get id => 'skcode';
@@ -74,7 +79,14 @@ class SkcodeModule implements SkworldModule {
   Widget build(BuildContext context, ShellContext? shell) {
     // Passing the nullable shell through is the whole standalone signal: a
     // null shell drives the standalone path, a non-null shell the mounted
-    // path (module contract standard section 3.1).
-    return SkcodeSurface(shell: shell);
+    // path (module contract standard section 3.1). [origin] and
+    // [onAuthRejected] are forwarded straight through (card C-4): they are
+    // consumed by the session stores [SkcodeSurface] now owns.
+    return SkcodeSurface(
+      shell: shell,
+      origin: origin,
+      onAuthRejected: onAuthRejected,
+      apiClient: apiClient,
+    );
   }
 }

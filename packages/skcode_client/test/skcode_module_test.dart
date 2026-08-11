@@ -62,6 +62,32 @@ class _FakeShell implements ShellContext {
   ThemeData get theme => _theme;
 }
 
+/// A [SkcodeApiClient] fake so no test opens a real socket (card C-4: the
+/// module now polls `GET /sessions` on mount whenever `mintToken` resolves
+/// non-null, which it does in every mounted test here).
+class _FakeApiClient implements SkcodeApiClient {
+  _FakeApiClient({this.sessions = const []});
+
+  final List<SkcodeSessionSummary> sessions;
+  int listCalls = 0;
+
+  @override
+  Future<List<SkcodeSessionSummary>> listSessions({required String token}) async {
+    listCalls++;
+    return sessions;
+  }
+
+  @override
+  Future<List<SkcodeEvent>> fetchEventsPage(
+    String sid, {
+    required String token,
+    int? beforeSeq,
+    int limit = 100,
+  }) async {
+    throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
+  }
+}
+
 void main() {
   test('SkcodeModule instantiates and is a SkworldModule', () {
     const module = SkcodeModule();
@@ -79,8 +105,13 @@ void main() {
   });
 
   group('standalone (shell == null)', () {
-    testWidgets('build(null) renders the empty shell surface standalone',
+    testWidgets(
+        'build(null) renders the sessions rail standalone (card C-4)',
         (tester) async {
+      // No shell means no AuthContext, so mintToken resolves null and the
+      // sessions poll never even calls listSessions: no fake apiClient is
+      // required for this path to stay off the network (see
+      // SkcodeSessionsListStore._poll's null-token early return).
       const module = SkcodeModule();
       await tester.pumpWidget(
         MaterialApp(
@@ -91,9 +122,9 @@ void main() {
         ),
       );
       expect(find.byType(SkcodeSurface), findsOneWidget);
-      expect(find.text('Standalone'), findsOneWidget);
-      // No mounted-only token probe renders without a shell.
-      expect(find.textContaining('token'), findsNothing);
+      expect(find.byType(SkcodeSessionsRail), findsOneWidget);
+      expect(find.text('Code'), findsOneWidget); // AppBar title.
+      expect(find.text('No sessions yet'), findsOneWidget);
     });
   });
 
@@ -103,7 +134,10 @@ void main() {
         (tester) async {
       final bus = _RecordingBus();
       final shell = _FakeShell(bus: bus);
-      const module = SkcodeModule();
+      final apiClient = _FakeApiClient(
+        sessions: [const SkcodeSessionSummary(sid: 's-1a2b', harness: 'claude-code')],
+      );
+      final module = SkcodeModule(apiClient: apiClient);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -112,24 +146,27 @@ void main() {
         ),
       );
 
-      // Mounted state renders, carrying the shell's audience.
+      // Mounted state renders the sessions rail.
       expect(find.byType(SkcodeSurface), findsOneWidget);
-      expect(find.textContaining('Mounted (audience: skcode)'), findsOneWidget);
+      expect(find.byType(SkcodeSessionsRail), findsOneWidget);
 
       // The bus was used: the surface emitted a mount event onto it.
       expect(bus.emitted, hasLength(1));
       expect(bus.emitted.single.name, 'skcodeMounted');
 
-      // The AuthContext was used: token() was called and its result rendered
-      // once the future settles.
+      // The AuthContext was used for real work: mintToken drove the
+      // sessions poll, which called the fake apiClient and rendered its
+      // result once the future settles.
       await tester.pump();
-      expect(find.text('token minted'), findsOneWidget);
+      expect(apiClient.listCalls, greaterThanOrEqualTo(1));
+      expect(find.text('s-1a2b'), findsOneWidget);
     });
 
     testWidgets('a null token from AuthContext renders the degraded state',
         (tester) async {
       final shell = _FakeShell(auth: _FakeAuth(tokenValue: null));
-      const module = SkcodeModule();
+      final apiClient = _FakeApiClient();
+      final module = SkcodeModule(apiClient: apiClient);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -138,7 +175,9 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('no token (running degraded)'), findsOneWidget);
+      expect(find.text('No sessions yet'), findsOneWidget);
+      // A null-token poll must never reach the transport at all.
+      expect(apiClient.listCalls, 0);
       expect(tester.takeException(), isNull);
     });
   });
