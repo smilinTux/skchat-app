@@ -202,9 +202,18 @@ class WatchVideoController extends ChangeNotifier
 }
 
 class WatchVideo extends StatefulWidget {
-  const WatchVideo({super.key, required this.controller});
+  const WatchVideo({
+    super.key,
+    required this.controller,
+    this.interactive = true,
+  });
 
   final WatchVideoController controller;
+
+  /// Accepted for API parity with the web implementation and ignored here.
+  /// Native renders through Flutter, so ``IgnorePointer`` alone already works;
+  /// only web has a DOM element that wins pointer events on its own.
+  final bool interactive;
 
   @override
   State<WatchVideo> createState() => _WatchVideoState();

@@ -369,9 +369,28 @@ class WatchVideoController implements WatchController {
 }
 
 class WatchVideo extends StatefulWidget {
-  const WatchVideo({super.key, required this.controller});
+  const WatchVideo({
+    super.key,
+    required this.controller,
+    this.interactive = true,
+  });
 
   final WatchVideoController controller;
+
+  /// Whether the video surface should accept pointer events at all.
+  ///
+  /// This exists because ``IgnorePointer`` cannot do the job on web. This
+  /// surface is a REAL DOM element (a platform view), and the browser
+  /// dispatches a click over it to that element natively, before Flutter's
+  /// hit-testing is ever consulted. ``IgnorePointer`` only removes the widget
+  /// from FLUTTER's hit test, so with a lane panel open every tap landing over
+  /// the video still went to the iframe: the panel's own buttons were dead
+  /// wherever they overlapped the video, and shrinking the window until the
+  /// video was small was the only way to reach them.
+  ///
+  /// Setting ``pointer-events: none`` on the element is the only thing the
+  /// browser honors, so pass false whenever something is drawn over the video.
+  final bool interactive;
 
   @override
   State<WatchVideo> createState() => _WatchVideoState();
@@ -445,7 +464,27 @@ class _WatchVideoState extends State<WatchVideo> {
   }
 
   @override
+  void didUpdateWidget(covariant WatchVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.interactive != widget.interactive) _applyInteractive();
+  }
+
+  /// Push [WatchVideo.interactive] down onto the real DOM node.
+  ///
+  /// Applied to the container rather than the iframe: the container is what the
+  /// platform view registers, and `pointer-events` inherits, so one property
+  /// covers both the `<video>` and `<iframe>` children whichever is visible.
+  void _applyInteractive() {
+    widget.controller.container?.style.pointerEvents =
+        widget.interactive ? "auto" : "none";
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Re-applied on every build, not only on change: the container is created
+    // asynchronously by the view factory, so the first _applyInteractive can
+    // land before there is anything to style.
+    _applyInteractive();
     return HtmlElementView(viewType: _viewType);
   }
 }

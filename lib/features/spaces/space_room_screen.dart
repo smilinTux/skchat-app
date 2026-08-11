@@ -1448,12 +1448,24 @@ class _WatchTogetherStage extends ConsumerWidget {
             // the user cannot lower or dismiss. isCurrent is false exactly
             // while another route sits above this one.
             Positioned.fill(
-              child: IgnorePointer(
-                ignoring: !(ModalRoute.of(context)?.isCurrent ?? true),
-                child: WatchVideo(
-                  controller: session.controller as WatchVideoController,
-                ),
-              ),
+              child: Builder(builder: (context) {
+                // True exactly while nothing is pushed over this route.
+                final live = ModalRoute.of(context)?.isCurrent ?? true;
+                return IgnorePointer(
+                  ignoring: !live,
+                  // IgnorePointer alone is not enough on web, which is why the
+                  // lane panels' own buttons were unclickable wherever they
+                  // overlapped the video: it removes this from FLUTTER's hit
+                  // test, but the surface is a real DOM element and the browser
+                  // hands a click over it straight to that element first.
+                  // `interactive` is what sets pointer-events on the node, and
+                  // it is the only part the browser honors.
+                  child: WatchVideo(
+                    controller: session.controller as WatchVideoController,
+                    interactive: live,
+                  ),
+                );
+              }),
             ),
             Positioned(
               left: 10,
