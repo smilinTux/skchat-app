@@ -99,10 +99,20 @@ class WatchVideoController implements WatchController {
     if (_mode != _WatchMode.youtube) return;
     final win = iframeEl?.contentWindow;
     if (win == null) return;
-    win.postMessage(
-      jsonEncode({"event": "listening", "id": viewType ?? ""}),
-      "https://www.youtube.com",
-    );
+    // Never let a failed handshake break playback. An earlier version of this
+    // called postMessage from inside load() with nothing catching a throw, so
+    // a failure took load() down with it: the panel's Load never set state,
+    // the stage never mounted, and the video simply did not appear. Position
+    // reporting is best effort; showing the video is not.
+    try {
+      win.postMessage(
+        jsonEncode({"event": "listening", "id": viewType ?? ""}),
+        "https://www.youtube.com",
+      );
+    } catch (_) {
+      // Posting into a frame that is between documents (or otherwise not
+      // ready) is expected; the retry pump will try again.
+    }
   }
 
   /// Re-send the handshake until frames actually arrive, then stop.
@@ -130,6 +140,14 @@ class WatchVideoController implements WatchController {
       }
       _sendHandshake();
     });
+  }
+
+  /// Guarded so a surface that never reports position degrades to "plays but
+  /// does not drive sync" rather than taking the whole load path down.
+  void _pumpHandshakeSafely() {
+    try {
+      _pumpHandshake();
+    } catch (_) {}
   }
 
   // ---- Source detection -----------------------------------------------------
@@ -223,9 +241,11 @@ class WatchVideoController implements WatchController {
     final ytId = youtubeId(url);
     if (ytId != null) {
       _mode = _WatchMode.youtube;
-      _pumpHandshake();
       _showIframe(
           "https://www.youtube.com/embed/$ytId?enablejsapi=1&playsinline=1");
+      // AFTER the src is set, so the pump is aiming at the new document, and
+      // so nothing here can run before the video is on screen.
+      _pumpHandshakeSafely();
       return;
     }
 
