@@ -4,10 +4,7 @@ import "dart:math";
 
 import "package:dio/dio.dart";
 import "package:flutter_test/flutter_test.dart";
-import "package:skchat/services/skcode/skcode_api_client.dart";
-import "package:skchat/services/skcode/skcode_event_merge.dart";
-import "package:skchat/services/skcode/skcode_session_store.dart";
-import "package:skchat/services/skcode/skcode_ws_transport.dart";
+import "package:skcode_client/skcode_client.dart";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -98,18 +95,24 @@ Map<String, dynamic> _eventJson({
 /// [tokens] models the REAL `AudienceTokenService` contract, not a plain
 /// call-counter: `mintToken()` returns the CURRENT cached value on every
 /// call (any number of calls in a row see the same token, exactly like a
-/// production cache hit), and only `invalidateToken()` advances to the next
+/// production cache hit), and only `onAuthRejected()` advances to the next
 /// scripted value (a production cache miss/re-mint). This matters because
 /// the store calls `mintToken()` more than once per connect cycle (once for
-/// the archive fetch, once for the WS URL) — in production that is a cheap
+/// the archive fetch, once for the WS URL) - in production that is a cheap
 /// cache hit, not a second network round-trip, so the test double must
 /// behave the same way or its token-sequence assertions would drift from
 /// what actually happens on the wire.
+///
+/// [onAuthRejectedCalls] counts every `onAuthRejected()` invocation directly
+/// (card C-3b AC: "proven by a test that the callback fires"), independent
+/// of the token-sequence/reconnect assertions the rest of this file already
+/// makes.
 ({
   SkcodeSessionStore store,
   List<_FakeWsTransport> transports,
   List<Uri> connectedUris,
   List<String?> mintedTokens,
+  List<int> onAuthRejectedCalls,
 })
 _wire({
   required List<String?> tokens,
@@ -123,6 +126,7 @@ _wire({
   final mintedTokens = <String?>[];
   final transports = <_FakeWsTransport>[];
   final connectedUris = <Uri>[];
+  final onAuthRejectedCalls = <int>[];
 
   final adapter = _ScriptedAdapter(archiveScript);
   final dio = Dio(BaseOptions(baseUrl: "https://daemon.local"))
@@ -137,7 +141,8 @@ _wire({
       mintedTokens.add(t);
       return t;
     },
-    invalidateToken: () {
+    onAuthRejected: () {
+      onAuthRejectedCalls.add(onAuthRejectedCalls.length + 1);
       if (cursor < tokens.length - 1) cursor++;
     },
     connectTransport: (uri) {
@@ -157,6 +162,7 @@ _wire({
     transports: transports,
     connectedUris: connectedUris,
     mintedTokens: mintedTokens,
+    onAuthRejectedCalls: onAuthRejectedCalls,
   );
 }
 
@@ -188,6 +194,11 @@ void main() {
       expect(w.transports, hasLength(2), reason: "exactly one retry connect");
       expect(w.connectedUris[1].queryParameters["token"], "FRESH");
       expect(w.store.state.phase, SkcodeConnectionPhase.connected);
+      // Card C-3b AC: "proven by a test that the callback fires" - the
+      // injected onAuthRejected callback itself (not just its downstream
+      // effect on the token/reconnect sequence) fired exactly once.
+      expect(w.onAuthRejectedCalls, hasLength(1),
+          reason: "onAuthRejected must fire exactly once per 1008");
       await w.store.dispose();
     });
 
@@ -210,6 +221,9 @@ void main() {
       );
       expect(w.store.state.phase, SkcodeConnectionPhase.failed);
       expect(w.store.state.error, contains("1008"));
+      expect(w.onAuthRejectedCalls, hasLength(1),
+          reason: "onAuthRejected fires once per cycle, never a second time "
+              "for the same cycle's repeat 1008");
       await w.store.dispose();
     });
 
@@ -430,7 +444,7 @@ void main() {
           tokenCalls++;
           return "T";
         },
-        invalidateToken: () {},
+        onAuthRejected: () {},
         connectTransport: factory,
         buildWsUri: (sid, token) => Uri.parse("wss://daemon.local/x?token=$token"),
         backoffFor: (attempt) => const Duration(milliseconds: 80),

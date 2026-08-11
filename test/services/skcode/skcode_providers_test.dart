@@ -6,11 +6,9 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:skchat/services/audience_token_service.dart";
 import "package:skchat/services/daemon_config.dart";
-import "package:skchat/services/skcode/skcode_api_client.dart";
 import "package:skchat/services/skcode/skcode_providers.dart";
-import "package:skchat/services/skcode/skcode_session_store.dart";
-import "package:skchat/services/skcode/skcode_ws_transport.dart";
 import "package:skchat/services/skcomms_client.dart";
+import "package:skcode_client/skcode_client.dart";
 
 class _FakeWsTransport implements SkcodeWsTransport {
   final _controller = StreamController<dynamic>.broadcast();
@@ -80,33 +78,13 @@ class _CannedAdapter implements HttpClientAdapter {
 }
 
 void main() {
-  group("skcodeWsUri", () {
-    test("builds wss://<origin>/skcode/api/v1/sessions/<sid>/stream?token=<wire>",
-        () {
-      final uri = skcodeWsUri("https://daemon.local", "s-123", "TOK");
-      expect(uri.toString(),
-          "wss://daemon.local/skcode/api/v1/sessions/s-123/stream?token=TOK");
-    });
-
-    test("maps http -> ws and strips a trailing slash", () {
-      final uri = skcodeWsUri("http://localhost:9384/", "s1", "T");
-      expect(uri.toString(),
-          "ws://localhost:9384/skcode/api/v1/sessions/s1/stream?token=T");
-    });
-
-    test("encodes the token as a safe query component", () {
-      final uri = skcodeWsUri("https://daemon.local", "s1", "a b/c");
-      // `Uri.encodeQueryComponent` uses `+` for space (standard
-      // application/x-www-form-urlencoded), which a standard query-string
-      // decoder (FastAPI/Starlette on the daemon side) decodes back to a
-      // literal space identically to `%20`.
-      expect(uri.query, "token=a+b%2Fc");
-    });
-  });
+  // `skcodeWsUri` and `kSkcodeAudience` moved into `package:skcode_client`
+  // (card C-3b); their tests now live at
+  // `packages/skcode_client/test/skcode_config_test.dart`.
 
   group("provider wiring end-to-end", () {
     test("skcodeSessionStoreProvider connects through the REAL "
-        "AudienceTokenService + SKCommsClient chain, and invalidateToken "
+        "AudienceTokenService + SKCommsClient chain, and onAuthRejected "
         "both clears the service cache and invalidates the Riverpod future",
         () async {
       final adapter = _CannedAdapter();
@@ -158,7 +136,7 @@ void main() {
           await container.read(audienceTokenForAudienceProvider(kSkcodeAudience).future);
       expect(tokenBefore, isNotNull);
 
-      // Drive a 1008: the notifier's invalidateToken callback must both
+      // Drive a 1008: the notifier's onAuthRejected callback must both
       // clear AudienceTokenService's cache AND invalidate the
       // audienceTokenForAudienceProvider family member, so the NEXT mint is
       // a genuine re-fetch (a fresh WIRE-N token), not the same cached one.
@@ -168,7 +146,7 @@ void main() {
 
       expect(transports, hasLength(2), reason: "the 1008 must trigger exactly one retry connect");
       expect(adapter.mintCalls, greaterThan(mintsBeforeClose),
-          reason: "invalidateToken must force a real re-mint, not replay the cache");
+          reason: "onAuthRejected must force a real re-mint, not replay the cache");
       expect(container.read(skcodeSessionStoreProvider("s1")).phase,
           SkcodeConnectionPhase.connected);
 

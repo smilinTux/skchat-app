@@ -1,22 +1,27 @@
 import "dart:async";
 
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:skcode_client/skcode_client.dart";
 
 import "../audience_token_service.dart";
 import "../daemon_config.dart";
-import "skcode_api_client.dart";
-import "skcode_session_store.dart";
-import "skcode_sessions_list_store.dart";
-import "skcode_ws_transport.dart";
 
-/// The audience [SkcodeSessionStore] / [SkcodeSessionsListStore] mint tokens
-/// for. Matches the manifest `auth.audience` for the skcode module (spec
-/// 4.2/13).
-const kSkcodeAudience = "skcode";
+/// The Riverpod wiring for the skcode transport layer (card C-3). As of card
+/// C-3b, [SkcodeApiClient] / [SkcodeSessionStore] / [SkcodeSessionsListStore]
+/// / [SkcodeWsTransport] / [kSkcodeAudience] / [skcodeWsUri] all live in
+/// `package:skcode_client` (pure, no Riverpod, no host services). What stays
+/// HERE is exactly the host wiring the package's import gate forbids it from
+/// holding itself: binding those pure classes to `daemonUrlProvider` /
+/// `daemonWsUrlProvider` and to the real [AudienceTokenService], and
+/// reacting to a rejected token by invalidating the right Riverpod future.
+/// See `lib/features/skcode/live_skcode_module.dart` for the composition-root
+/// factory (`buildLiveSkcodeModule`) that hands `SkcodeModule` its `origin`
+/// and `onAuthRejected`, mirroring this same host/package split one level up.
 
 /// [SkcodeApiClient] bound to the runtime-configurable daemon URL (same
 /// origin as every other daemon-facing client; the `/skcode/*` proxy lives
-/// on that same host, see `skcode_api_client.dart`).
+/// on that same host, see `package:skcode_client`'s `skcode_api_client.dart`
+/// doc comment).
 final skcodeApiClientProvider = Provider<SkcodeApiClient>((ref) {
   final baseUrl = ref.watch(daemonUrlProvider);
   return SkcodeApiClient(baseUrl: baseUrl);
@@ -30,32 +35,6 @@ final skcodeWsTransportFactoryProvider =
     Provider<SkcodeWsTransport Function(Uri uri)>((ref) {
       return SkcodeWsTransport.connect;
     });
-
-/// `wss://<origin>/skcode/api/v1/sessions/<sid>/stream?token=<wire>`
-/// (matches `skchat/src/skchat/webui.py::_skcode_ws_url`'s browser-facing
-/// contract exactly). The token stays in the query string HERE and ONLY
-/// here — see `skcode_api_client.dart`'s doc comment for why HTTP never
-/// carries it this way.
-///
-/// [baseUrl] is normally already ws(s):// (production passes
-/// `ref.watch(daemonWsUrlProvider)`, which has already done the http(s) ->
-/// ws(s) mapping), but an http(s):// base is converted here too so this
-/// function is correct on its own regardless of which base a caller (or a
-/// test) happens to hand it.
-Uri skcodeWsUri(String baseUrl, String sid, String token) {
-  var base = baseUrl.trim();
-  while (base.endsWith("/")) {
-    base = base.substring(0, base.length - 1);
-  }
-  if (base.startsWith("https://")) {
-    base = "wss://${base.substring("https://".length)}";
-  } else if (base.startsWith("http://")) {
-    base = "ws://${base.substring("http://".length)}";
-  }
-  return Uri.parse(
-    "$base/skcode/api/v1/sessions/$sid/stream?token=${Uri.encodeQueryComponent(token)}",
-  );
-}
 
 /// One [SkcodeSessionStore] per open session id, wired to the app's real
 /// [SkcodeApiClient], [AudienceTokenService], and [daemonWsUrlProvider].
@@ -80,7 +59,7 @@ class SkcodeSessionStoreNotifier
       sid: sid,
       apiClient: apiClient,
       mintToken: () => tokenService.mint(kSkcodeAudience),
-      invalidateToken: () {
+      onAuthRejected: () {
         // Both halves of the fix for the "cached-but-stale" trap (spec 4.2):
         // drop the service's own cache entry AND tell Riverpod's
         // FutureProvider.family to actually refetch on its next watch,

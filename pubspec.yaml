@@ -17,11 +17,12 @@ version: 1.4.0+13
 # packages/skcode_client and apps/skcode_standalone (card C-2, skworld code
 # section architecture spec section 4.1) are the second consumer of
 # skworld_module_api: the Grade A skcode module skeleton and its standalone
-# runner. Neither is added under the app's own `dependencies:` block, because
-# this card does not mount skcode into the app shell (the module_registry.dart
-# flip is card C-10, deliberately last); they resolve as workspace members
-# only, so `flutter pub get` and the shared lockfile see them without changing
-# the root app's own dependency set.
+# runner. apps/skcode_standalone stays a workspace-only member (it does not
+# mount skcode into the app shell; the module_registry.dart flip is card
+# C-10, deliberately last). skcode_client IS added under the app's own
+# `dependencies:` block below (card C-3b): the transport layer moved out of
+# lib/services/skcode/ and into the package, so the host's Riverpod wiring
+# (lib/services/skcode/skcode_providers.dart) now imports it directly.
 workspace:
   - packages/skworld_module_api
   - packages/skchat_ui
@@ -47,6 +48,14 @@ dependencies:
   # ShellContext when it bridges chatsProvider into SkchatModule (spec 3.2).
   skworld_module_api:
     path: packages/skworld_module_api
+
+  # The skcode subapp's transport layer (card C-3, moved into the package by
+  # C-3b): SkcodeApiClient, SkcodeSessionStore, SkcodeSessionsListStore,
+  # SkcodeWsTransport. The host's Riverpod wiring
+  # (lib/services/skcode/skcode_providers.dart) and its live-module factory
+  # (lib/features/skcode/live_skcode_module.dart) import it directly.
+  skcode_client:
+    path: packages/skcode_client
 
   # State management
   flutter_riverpod: ^2.6.0

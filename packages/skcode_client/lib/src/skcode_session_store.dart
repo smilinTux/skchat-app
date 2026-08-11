@@ -95,7 +95,7 @@ class SkcodeSessionStore {
     required this.sid,
     required SkcodeApiClient apiClient,
     required Future<String?> Function() mintToken,
-    required void Function() invalidateToken,
+    required void Function() onAuthRejected,
     required SkcodeWsTransport Function(Uri uri) connectTransport,
     required Uri Function(String sid, String token) buildWsUri,
     int maxLiveEvents = kMaxLiveSkcodeEvents,
@@ -103,7 +103,7 @@ class SkcodeSessionStore {
     int archivePageLimit = 200,
   }) : _apiClient = apiClient,
        _mintToken = mintToken,
-       _invalidateToken = invalidateToken,
+       _onAuthRejected = onAuthRejected,
        _connectTransport = connectTransport,
        _buildWsUri = buildWsUri,
        _maxLiveEvents = maxLiveEvents,
@@ -113,7 +113,13 @@ class SkcodeSessionStore {
   final String sid;
   final SkcodeApiClient _apiClient;
   final Future<String?> Function() _mintToken;
-  final void Function() _invalidateToken;
+
+  /// Invoked exactly once per auth-rejection cycle (an archive-fetch 401 or
+  /// a WS close 1008), so the host can drop its cached audience token and
+  /// force the next [mintToken] to genuinely re-mint (card C-3b: this is the
+  /// callback the architecture spec calls `onAuthRejected`, injected at the
+  /// composition root, module contract standard section 3.1).
+  final void Function() _onAuthRejected;
   final SkcodeWsTransport Function(Uri uri) _connectTransport;
   final Uri Function(String sid, String token) _buildWsUri;
   final int _maxLiveEvents;
@@ -190,7 +196,7 @@ class SkcodeSessionStore {
           return;
         }
         reminted = true;
-        _invalidateToken();
+        _onAuthRejected();
         continue;
       } on SkcodeApiException {
         // Transient/non-auth failure: archive stays whatever it was.
@@ -297,7 +303,7 @@ class SkcodeSessionStore {
     if (code == 1008) {
       if (!_remintedThisWsCycle) {
         _remintedThisWsCycle = true;
-        _invalidateToken();
+        _onAuthRejected();
         await _connect();
         return;
       }

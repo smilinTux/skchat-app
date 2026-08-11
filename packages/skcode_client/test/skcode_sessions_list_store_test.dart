@@ -1,7 +1,5 @@
 import "package:flutter_test/flutter_test.dart";
-import "package:skchat/services/skcode/skcode_api_client.dart";
-import "package:skchat/services/skcode/skcode_event.dart";
-import "package:skchat/services/skcode/skcode_sessions_list_store.dart";
+import "package:skcode_client/skcode_client.dart";
 
 class _FakeApiClient implements SkcodeApiClient {
   int calls = 0;
