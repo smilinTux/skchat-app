@@ -4,7 +4,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../services/lane_service.dart";
 import "../../services/livekit_call_service.dart";
-import "../../services/spaces_service.dart" show kDefaultWebuiUrl;
+import "../../services/backend_config.dart" show backendConfigProvider;
 import "watch_drift.dart";
 import "watch_sync.dart";
 import "watch_video_stub.dart" if (dart.library.html) "watch_video_web.dart"
@@ -47,13 +47,21 @@ final watchControllerFactoryProvider = Provider<WatchControllerFactory>(
 /// data channel + HTTP mirror.
 typedef LaneServiceFactory = LaneLike Function(WatchSessionArgs args);
 
-final laneServiceFactoryProvider = Provider<LaneServiceFactory>(
-  (ref) => (args) => LaneService(
+final laneServiceFactoryProvider = Provider<LaneServiceFactory>((ref) {
+  // RUNTIME base, not the compile-time constant. kDefaultWebuiUrl defaults to
+  // "" and the web deploy passes no SKCHAT_WEBUI_URL dart-define, so building
+  // the lane with it sent every HTTP call to an empty base, where it failed
+  // into LaneService's swallowing catch. Live play/pause/rate still worked
+  // because those ride the LiveKit data channel, so the only visible symptom
+  // was that catch-up replay gave a late joiner nothing. Mirrors how
+  // spacesServiceProvider resolves its base (spaces_service.dart).
+  final base = ref.watch(backendConfigProvider.select((c) => c.skchatWebuiUrl));
+  return (args) => LaneService(
         livekit: ref.read(liveKitCallServiceProvider),
-        baseUrl: kDefaultWebuiUrl,
+        baseUrl: base,
         spaceId: args.spaceId,
-      ),
-);
+      );
+});
 
 // ── Family key ───────────────────────────────────────────────────────────────
 

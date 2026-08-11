@@ -44,6 +44,12 @@ class LaneService implements LaneLike {
   final String _spaceId;
   final Dio _dio = Dio();
 
+  /// The resolved store base. Exposed so a test can prove the lane was built
+  /// with the RUNTIME webui base: an empty base makes every HTTP call fail
+  /// into the swallowing catch below, which silently breaks catch-up replay
+  /// while live data-channel events keep working.
+  String get baseUrl => _baseUrl;
+
   @override
   Stream<Map<String, dynamic>> get inbound => _lk.dataChannel.map((m) {
         try {

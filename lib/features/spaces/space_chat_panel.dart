@@ -2,9 +2,9 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../core/theme/sovereign_colors.dart";
+import "../../services/backend_config.dart" show backendConfigProvider;
 import "../../services/lane_service.dart";
 import "../../services/livekit_call_service.dart";
-import "../../services/spaces_service.dart";
 
 /// In-Space text chat over the data-lane substrate (Tier 4). Uses the "chat"
 /// lane: messages go live over the LiveKit data channel and are persisted +
@@ -34,7 +34,11 @@ class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
     super.initState();
     _lane = LaneService(
       livekit: ref.read(liveKitCallServiceProvider),
-      baseUrl: kDefaultWebuiUrl,
+      // RUNTIME base, not the compile-time constant: kDefaultWebuiUrl is ""
+      // unless a dart-define sets it, and the web deploy does not, so an
+      // empty base sent every HTTP call into LaneService's swallowing catch
+      // and silently killed this lane's catch-up replay.
+      baseUrl: ref.read(backendConfigProvider).skchatWebuiUrl,
       spaceId: widget.spaceId,
     );
     _lane.catchUp("chat").then((events) {
