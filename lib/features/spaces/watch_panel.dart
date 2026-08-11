@@ -4,6 +4,20 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/theme/sovereign_colors.dart";
 import "watch_session.dart";
 
+/// Test hook for the speed selector's presence/absence: it is only built
+/// while a session is active (see [_WatchPanelState.build]), same gating as
+/// the transport controls below it.
+const watchSpeedSelectorKey = Key("watch_speed_selector");
+
+/// Chef chose "sync the speed to everyone" over a personal-speed toggle, so
+/// this is the room's one shared list of offered speeds, not a per-viewer
+/// preference. 1.0 is included so returning to normal speed is a tap, not a
+/// text field.
+const _kSpeeds = <double>[1.0, 1.25, 1.5, 1.75, 2.0];
+
+String _speedLabel(double r) =>
+    r == r.roundToDouble() ? "${r.toInt()}x" : "${r}x";
+
 /// Watch-together lane (Tier 4): a shared video synced across the Space over the
 /// data-lane substrate. Any participant can load a URL and play/pause/seek; the
 /// "watch" lane broadcasts the action and every client applies it, staying in
@@ -58,6 +72,10 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
 
   void _stop() {
     ref.read(watchSessionProvider(_args).notifier).stopWatching();
+  }
+
+  void _setRate(double rate) {
+    ref.read(watchSessionProvider(_args).notifier).setRate(rate);
   }
 
   @override
@@ -164,6 +182,32 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
                 ),
               ],
             ),
+          // Gated on isActive same as the transport controls above: there is
+          // no room speed to set until a video is actually loaded.
+          if (state.isActive)
+            Padding(
+              key: watchSpeedSelectorKey,
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final r in _kSpeeds)
+                    _SpeedChip(
+                      label: _speedLabel(r),
+                      // Epsilon compare, not ==: state.rate arrives off the
+                      // wire as a double that made a JSON round trip, and a
+                      // remote peer's rate event carries whatever this same
+                      // list produced, so this is really just avoiding a
+                      // fragile double literal comparison, not guarding
+                      // against real imprecision.
+                      selected: (state.rate - r).abs() < 0.001,
+                      onTap: () => _setRate(r),
+                    ),
+                ],
+              ),
+            ),
           // Only reachable while a session is active: without this control
           // (or any other), once anyone loads a video it owns the main
           // stage for the life of the room with no way to reclaim it (the
@@ -180,6 +224,49 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// One tappable speed option. A plain [GestureDetector] over a styled
+/// container instead of [ChoiceChip]/[FilterChip]: this panel is a compact
+/// bottom sheet (see class doc), and Material's chip widgets carry padding
+/// and a minimum touch target tuned for a looser layout than five of them
+/// need to fit comfortably in one row.
+class _SpeedChip extends StatelessWidget {
+  const _SpeedChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? SovereignColors.accentEncrypt
+              : SovereignColors.surfaceCard,
+          border: Border.all(
+            color: selected
+                ? SovereignColors.accentEncrypt
+                : SovereignColors.textTertiary,
+          ),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.black : SovereignColors.textPrimary,
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+          ),
+        ),
       ),
     );
   }

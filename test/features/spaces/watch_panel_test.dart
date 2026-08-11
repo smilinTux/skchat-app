@@ -178,6 +178,47 @@ void main() {
     expect(find.text("Stop watching"), findsNothing);
   });
 
+  testWidgets(
+      "the speed selector is hidden with no active session and appears "
+      "once one is loaded", (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+
+    expect(find.byKey(watchSpeedSelectorKey), findsNothing);
+
+    await tester.enterText(
+        find.byType(TextField), "https://example.com/movie.mp4");
+    await tester.tap(find.text("Load"));
+    await tester.pump();
+
+    expect(find.byKey(watchSpeedSelectorKey), findsOneWidget);
+  });
+
+  testWidgets(
+      "tapping a speed option publishes rate on the PERSISTED path and "
+      "marks it the current speed", (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    await tester.enterText(
+        find.byType(TextField), "https://example.com/movie.mp4");
+    await tester.tap(find.text("Load"));
+    await tester.pump();
+    lane.persisted.clear(); // isolate from load's own persisted publish
+
+    await tester.tap(find.text("1.5x"));
+    await tester.pump();
+
+    expect(lane.persisted.single, {
+      "action": "rate",
+      "rate": 1.5,
+      "lane": "watch",
+      "from": "chef@dk.skworld",
+    });
+    final element = tester.element(find.byType(WatchPanel));
+    final container = ProviderScope.containerOf(element);
+    expect(container.read(watchSessionProvider(_args)).rate, 1.5);
+  });
+
   testWidgets("tapping Load publishes the typed URL to the watch lane",
       (tester) async {
     await tester.pumpWidget(wrap());
