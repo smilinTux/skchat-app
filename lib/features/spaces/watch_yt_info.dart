@@ -17,7 +17,7 @@ const int _kBuffering = 3;
 /// playbackRate.
 ///
 /// Returns null for frames that carry no usable playback state.
-PlaybackSnapshot? parseYouTubeInfo(String raw, {PlaybackSnapshot? previous}) {
+PlaybackSnapshot? parseYouTubeInfo(String raw) {
   Object? decoded;
   try {
     decoded = jsonDecode(raw);
@@ -30,24 +30,12 @@ PlaybackSnapshot? parseYouTubeInfo(String raw, {PlaybackSnapshot? previous}) {
   if (info is! Map) return null;
   final state = info["playerState"];
   final time = info["currentTime"];
-  // A frame must at least move the clock or the state on; one carrying
-  // neither tells us nothing.
-  if (time is! num && state is! num) return null;
-
-  // playerState is NOT sent on every frame. Measured against the live app:
-  // of 26 frames the API pushed while a video played, the great majority
-  // carried currentTime with playerState absent. Requiring both discarded
-  // those, so position never left its 0 fallback and every play, seek and
-  // heartbeat published t=0. Carry the last known state forward instead of
-  // dropping the frame or inventing a state.
-  final prevPlaying = previous?.playing ?? false;
-  final prevBuffering = previous?.buffering ?? false;
-  final prevRate = previous?.rate ?? 1.0;
+  if (state is! num || time is! num) return null;
   final rate = info["playbackRate"];
   return PlaybackSnapshot(
-    position: time is num ? time.toDouble() : (previous?.position ?? 0),
-    playing: state is num ? state.toInt() == _kPlaying : prevPlaying,
-    buffering: state is num ? state.toInt() == _kBuffering : prevBuffering,
-    rate: rate is num ? rate.toDouble() : prevRate,
+    position: time.toDouble(),
+    playing: state.toInt() == _kPlaying,
+    buffering: state.toInt() == _kBuffering,
+    rate: rate is num ? rate.toDouble() : 1.0,
   );
 }

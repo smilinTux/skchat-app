@@ -54,7 +54,6 @@ class WatchVideoController implements WatchController {
 
   StreamSubscription<html.MessageEvent>? _msgSub;
   StreamSubscription<html.Event>? _loadSub;
-  Timer? _handshakeTimer;
 
   /// Last position we set on a non-controllable (iframe) source. Used as the
   /// [position] fallback for iframe sources before the listening handshake's
@@ -86,49 +85,19 @@ class WatchVideoController implements WatchController {
       if (event.source != iframeEl?.contentWindow) return;
       final data = event.data;
       if (data is! String) return;
-      final snap = parseYouTubeInfo(data, previous: _latest);
+      final snap = parseYouTubeInfo(data);
       if (snap != null) _latest = snap;
     });
-    _loadSub = iframeEl?.onLoad.listen((_) => _sendHandshake());
-  }
-
-  /// Ask the IFrame API to start pushing `infoDelivery` frames.
-  ///
-  /// Idempotent: YouTube ignores a duplicate handshake, so re-sending is free.
-  void _sendHandshake() {
-    if (_mode != _WatchMode.youtube) return;
-    final win = iframeEl?.contentWindow;
-    if (win == null) return;
-    win.postMessage(
-      jsonEncode({"event": "listening", "id": viewType ?? ""}),
-      "https://www.youtube.com",
-    );
-  }
-
-  /// Re-send the handshake until frames actually arrive, then stop.
-  ///
-  /// onLoad alone is not enough, verified live: the app's iframe sat with the
-  /// correct src and delivered ZERO frames, while posting the same handshake
-  /// by hand to that same iframe immediately produced 26. The load event does
-  /// not reliably reach us for an element that Flutter's platform-view layer
-  /// creates detached and slots into the DOM later, so relying on it left
-  /// position pinned at the 0 fallback: every play, seek and heartbeat
-  /// published t=0, and a late joiner had nothing to catch up to.
-  ///
-  /// Bounded on purpose. If frames never come the video still plays, it just
-  /// will not drive sync, and a timer that retries forever would be worse
-  /// than an honest give-up.
-  void _pumpHandshake() {
-    _handshakeTimer?.cancel();
-    var attempts = 0;
-    _sendHandshake();
-    _handshakeTimer = Timer.periodic(const Duration(milliseconds: 400), (t) {
-      attempts++;
-      if (_latest != null || attempts > 25 || _mode != _WatchMode.youtube) {
-        t.cancel();
-        return;
-      }
-      _sendHandshake();
+    _loadSub = iframeEl?.onLoad.listen((_) {
+      // Each load() swaps iframe src (fresh document, fresh IFrame API
+      // player), so the handshake has to be re-sent every time, not once.
+      if (_mode != _WatchMode.youtube) return;
+      final win = iframeEl?.contentWindow;
+      if (win == null) return;
+      win.postMessage(
+        jsonEncode({"event": "listening", "id": viewType ?? ""}),
+        "https://www.youtube.com",
+      );
     });
   }
 
@@ -223,7 +192,6 @@ class WatchVideoController implements WatchController {
     final ytId = youtubeId(url);
     if (ytId != null) {
       _mode = _WatchMode.youtube;
-      _pumpHandshake();
       _showIframe(
           "https://www.youtube.com/embed/$ytId?enablejsapi=1&playsinline=1");
       return;
@@ -364,8 +332,6 @@ class WatchVideoController implements WatchController {
     _msgSub = null;
     _loadSub?.cancel();
     _loadSub = null;
-    _handshakeTimer?.cancel();
-    _handshakeTimer = null;
     videoEl?.pause();
     iframeEl?.src = "about:blank";
   }
