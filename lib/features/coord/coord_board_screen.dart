@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/glass_widgets.dart';
-import '../../core/theme/sovereign_colors.dart';
+import '../../core/theme/theme.dart';
 import '../../services/skcapstone_client.dart';
 import 'coord_board_provider.dart';
 
@@ -51,7 +50,7 @@ class CoordBoardScreen extends ConsumerWidget {
           Flexible(
             child: Text(
               'Team Board',
-              style: tt.displayLarge?.copyWith(fontSize: 24),
+              style: tt.displayLarge,
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -274,20 +273,18 @@ class _StatCell extends StatelessWidget {
           children: [
             Text(
               value,
-              style: TextStyle(
-                color: color,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
             ),
             const SizedBox(height: 2),
             Text(
               label,
-              style: const TextStyle(
-                color: SovereignColors.textTertiary,
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                    fontWeight: FontWeight.w500,
+                  ),
             ),
           ],
         ),
@@ -331,21 +328,19 @@ class _SectionHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    color: SovereignColors.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.8,
-                  ),
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: SovereignColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      ),
                 ),
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
                     subtitle,
-                    style: const TextStyle(
-                      color: SovereignColors.textTertiary,
-                      fontSize: 12,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: SovereignColors.textTertiary,
+                        ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -365,9 +360,8 @@ class _SectionHeader extends StatelessWidget {
             ),
             child: Text(
               '$count',
-              style: TextStyle(
+              style: SovereignTypography.badge().copyWith(
                 color: accentColor,
-                fontSize: 11,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -402,11 +396,10 @@ class _EmptySection extends StatelessWidget {
             const SizedBox(width: 10),
             Text(
               label,
-              style: const TextStyle(
-                color: SovereignColors.textTertiary,
-                fontSize: 13,
-                fontStyle: FontStyle.italic,
-              ),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: SovereignColors.textTertiary,
+                    fontStyle: FontStyle.italic,
+                  ),
             ),
           ],
         ),
@@ -463,12 +456,11 @@ class _TaskTile extends StatelessWidget {
                   // Title
                   Text(
                     task.title,
-                    style: const TextStyle(
-                      color: SovereignColors.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      height: 1.35,
-                    ),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: SovereignColors.textPrimary,
+                          fontWeight: FontWeight.w500,
+                          height: 1.35,
+                        ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -589,9 +581,8 @@ class _MetaChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
+        style: SovereignTypography.badge().copyWith(
           color: color,
-          fontSize: 10,
           fontWeight: FontWeight.w600,
           fontFamily: monospace ? 'JetBrainsMono' : null,
           letterSpacing: monospace ? 0.3 : 0.2,
@@ -620,9 +611,8 @@ class _SummaryChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
+        style: SovereignTypography.micro().copyWith(
           color: color,
-          fontSize: 11,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.2,
         ),
@@ -681,12 +671,9 @@ class _TaskDetailSheet extends StatelessWidget {
                           task.id.length > 8
                               ? task.id.substring(0, 8)
                               : task.id,
-                          style: const TextStyle(
+                          style: SovereignTypography.mono(
                             color: SovereignColors.textTertiary,
-                            fontSize: 12,
-                            fontFamily: 'JetBrainsMono',
-                            letterSpacing: 0.4,
-                          ),
+                          ).copyWith(letterSpacing: 0.4),
                         ),
                         const Spacer(),
                         Container(
@@ -702,9 +689,8 @@ class _TaskDetailSheet extends StatelessWidget {
                           ),
                           child: Text(
                             task.priority.toUpperCase(),
-                            style: TextStyle(
+                            style: SovereignTypography.badge().copyWith(
                               color: priorityColor,
-                              fontSize: 10,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.6,
                             ),
@@ -736,9 +722,8 @@ class _TaskDetailSheet extends StatelessWidget {
                         ),
                         child: Text(
                           _statusLabel(task.status),
-                          style: TextStyle(
+                          style: tt.labelMedium?.copyWith(
                             color: statusColor,
-                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -760,9 +745,8 @@ class _TaskDetailSheet extends StatelessWidget {
                             const SizedBox(width: 6),
                             Text(
                               task.claimedBy!,
-                              style: const TextStyle(
+                              style: tt.bodyMedium?.copyWith(
                                 color: SovereignColors.textPrimary,
-                                fontSize: 13,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -792,9 +776,9 @@ class _TaskDetailSheet extends StatelessWidget {
                                     ),
                                     child: Text(
                                       t,
-                                      style: const TextStyle(
+                                      style: SovereignTypography.micro()
+                                          .copyWith(
                                         color: SovereignColors.textSecondary,
-                                        fontSize: 11,
                                       ),
                                     ),
                                   ))
@@ -809,11 +793,10 @@ class _TaskDetailSheet extends StatelessWidget {
                       color: SovereignColors.surfaceGlassBorder,
                       height: 24,
                     ),
-                    const Text(
+                    Text(
                       'Description',
-                      style: TextStyle(
+                      style: tt.labelSmall?.copyWith(
                         color: SovereignColors.textTertiary,
-                        fontSize: 11,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                       ),
@@ -821,9 +804,8 @@ class _TaskDetailSheet extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       task.description ?? task.title,
-                      style: const TextStyle(
+                      style: tt.bodyMedium?.copyWith(
                         color: SovereignColors.textSecondary,
-                        fontSize: 13,
                         height: 1.5,
                       ),
                     ),
@@ -900,11 +882,10 @@ class _DetailRow extends StatelessWidget {
           width: 76,
           child: Text(
             label,
-            style: const TextStyle(
-              color: SovereignColors.textTertiary,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: SovereignColors.textTertiary,
+                  fontWeight: FontWeight.w500,
+                ),
           ),
         ),
         Expanded(child: child),

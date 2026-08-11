@@ -510,11 +510,10 @@ class _GoingUpPeek extends StatelessWidget {
             toRoots ? 'to roots' : 'up to $parentLabel',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: 14,
-              fontWeight: armed ? FontWeight.w800 : FontWeight.w600,
-            ),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  color: color,
+                  fontWeight: armed ? FontWeight.w800 : FontWeight.w600,
+                ),
           ),
         ),
       ],
@@ -721,13 +720,12 @@ class _Breadcrumb extends ConsumerWidget {
                       crumb.$2,
               child: Text(
                 crumb.$1.value,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: isLast ? FontWeight.w700 : FontWeight.w500,
-                  color: isLast
-                      ? SovereignColors.textPrimary
-                      : SovereignColors.soulLumina,
-                ),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: isLast ? FontWeight.w700 : FontWeight.w500,
+                      color: isLast
+                          ? SovereignColors.textPrimary
+                          : SovereignColors.soulLumina,
+                    ),
               ),
             ),
           );
@@ -849,8 +847,10 @@ class _EntryTile extends StatelessWidget {
           if (entry.isFile && entry.size != null)
             Text(
               _humanSize(entry.size!),
-              style: const TextStyle(
-                  color: SovereignColors.textTertiary, fontSize: 12),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: SovereignColors.textTertiary),
             ),
           if (entry.isDir)
             const Icon(Icons.chevron_right_rounded,
@@ -922,17 +922,18 @@ class _HitTile extends StatelessWidget {
                   hit.path,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: SovereignColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: SovereignColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
               ),
               Text(
                 hit.score.toStringAsFixed(2),
-                style: const TextStyle(
-                    color: SovereignColors.soulLumina, fontSize: 12),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: SovereignColors.soulLumina),
               ),
             ],
           ),
@@ -941,8 +942,10 @@ class _HitTile extends StatelessWidget {
             hit.snippet,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-                color: SovereignColors.textSecondary, fontSize: 12),
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: SovereignColors.textSecondary),
           ),
         ],
       ),
@@ -964,10 +967,10 @@ class _NodeChip extends StatelessWidget {
       ),
       child: Text(
         node,
-        style: const TextStyle(
-            color: SovereignColors.soulJarvis,
-            fontSize: 11,
-            fontWeight: FontWeight.w700),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: SovereignColors.soulJarvis,
+              fontWeight: FontWeight.w700,
+            ),
       ),
     );
   }
@@ -1125,15 +1128,20 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
           children: [
             Text(
               open == null ? 'File' : _basename(open.path),
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
             ),
             if (open != null)
               Text(
                 '${open.node} · ${open.path}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 11, color: SovereignColors.textSecondary),
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: SovereignColors.textSecondary),
               ),
           ],
         ),
@@ -1529,20 +1537,18 @@ class _SkosFileViewerState extends ConsumerState<SkosFileViewer> {
                   maxLines: null,
                   expands: true,
                   textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: SovereignColors.textPrimary,
-                      fontFamily: 'monospace',
-                      fontSize: 13),
+                      fontFamily: 'monospace'),
                   cursorColor: SovereignColors.soulLumina,
                   decoration: const InputDecoration(border: InputBorder.none),
                 )
               : SingleChildScrollView(
                   child: SelectableText(
                     text.isEmpty ? '(empty file)' : text,
-                    style: const TextStyle(
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: SovereignColors.textPrimary,
-                        fontFamily: 'monospace',
-                        fontSize: 13),
+                        fontFamily: 'monospace'),
                   ),
                 ),
         );
@@ -1808,8 +1814,10 @@ class _OptionRow extends StatelessWidget {
             const SizedBox(width: 16),
             Text(
               label,
-              style: TextStyle(
-                  color: color, fontSize: 14, fontWeight: FontWeight.w600),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyLarge
+                  ?.copyWith(color: color, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -2161,21 +2169,19 @@ class _TopBar extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: SovereignColors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: SovereignColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
                   Text(
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: SovereignColors.textSecondary,
-                      fontSize: 11,
-                    ),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: SovereignColors.textSecondary,
+                        ),
                   ),
                 ],
               ),
@@ -2251,10 +2257,9 @@ class _BottomControlBar extends StatelessWidget {
             const SizedBox(width: 12),
             Text(
               '${_fmtDuration(v.position)} / ${_fmtDuration(v.duration)}',
-              style: const TextStyle(
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: SovereignColors.textSecondary,
-                fontSize: 12,
-                fontFeatures: [FontFeature.tabularFigures()],
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ],
@@ -2323,10 +2328,12 @@ class _BinaryInfoCard extends StatelessWidget {
                     fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'No inline preview for this file type',
-                style: TextStyle(
-                    color: SovereignColors.textSecondary, fontSize: 12),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: SovereignColors.textSecondary),
               ),
             ],
           ),
@@ -2362,8 +2369,10 @@ class _ErrorPanel extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: SovereignColors.textSecondary, fontSize: 12),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: SovereignColors.textSecondary),
               ),
             ],
           ),

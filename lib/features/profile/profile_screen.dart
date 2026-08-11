@@ -162,13 +162,15 @@ class ProfileScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Me', style: tt.displayLarge?.copyWith(fontSize: 24)),
+            Text('Me', style: tt.displayLarge),
             Text(
               appBuildLabel,
-              style: tt.bodySmall?.copyWith(
-                fontSize: 11,
-                color: tt.bodySmall?.color?.withValues(alpha: 0.55),
-              ),
+              style: Theme.of(context)
+                  .extension<SovereignTypeExtras>()
+                  ?.micro
+                  .copyWith(
+                    color: tt.bodySmall?.color?.withValues(alpha: 0.55),
+                  ),
             ),
           ],
         ),
@@ -466,24 +468,20 @@ class ProfileScreen extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'The server this app connects to (chat, calls, spaces). '
               'No app rebuild needed.',
-              style: TextStyle(
-                fontSize: 12,
-                color: SovereignColors.textTertiary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
             ),
             const SizedBox(height: 16),
             TextField(
               key: const Key('server-url-field'),
               controller: controller,
               autofocus: true,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 14,
-                color: SovereignColors.textPrimary,
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'https://host.tailnet.ts.net',
                 hintStyle:
@@ -571,23 +569,19 @@ class ProfileScreen extends ConsumerWidget {
                   ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'On native this is your local daemon. In a browser, point this at '
               'a network-reachable daemon (e.g. a tailnet host) with CORS '
               'enabled, localhost is this device, which has no daemon.',
-              style: TextStyle(
-                fontSize: 12,
-                color: SovereignColors.textTertiary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 14,
-                color: SovereignColors.textPrimary,
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'localhost:9384',
                 hintStyle:
@@ -701,14 +695,13 @@ class ProfileScreen extends ConsumerWidget {
                   ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Switch which sovereign node this app federates with. A preset '
               'repoints every backend at once, the SKComms daemon, the SK '
               'Spaces / LiveKit web-UI, the LiveKit SFU, and skcapstone.',
-              style: TextStyle(
-                fontSize: 12,
-                color: SovereignColors.textTertiary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
             ),
             const SizedBox(height: 16),
             for (final preset in kBackendPresets)
@@ -731,11 +724,10 @@ class ProfileScreen extends ConsumerWidget {
                 ),
                 subtitle: Text(
                   preset.config.skchatWebuiUrl,
-                  style: const TextStyle(
-                    fontFamily: 'JetBrainsMono',
-                    fontSize: 11,
-                    color: SovereignColors.textTertiary,
-                  ),
+                  style: SovereignTypography.micro().copyWith(
+                        color: SovereignColors.textTertiary,
+                        fontFamily: 'JetBrainsMono',
+                      ),
                 ),
                 onTap: () {
                   applyPreset(preset);
@@ -743,22 +735,18 @@ class ProfileScreen extends ConsumerWidget {
                 },
               ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Custom host',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: SovereignColors.textSecondary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: SovereignColors.textSecondary,
+                  ),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: customController,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 14,
-                color: SovereignColors.textPrimary,
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'https://host.tailnet.ts.net',
                 hintStyle:
@@ -1074,7 +1062,6 @@ class _IdentityHeader extends StatelessWidget {
                 style: tt.labelSmall?.copyWith(
                   fontFamily: 'JetBrainsMono',
                   color: soulColor.withValues(alpha: 0.9),
-                  fontSize: 11,
                   letterSpacing: 1.0,
                 ),
               ),
@@ -1095,7 +1082,6 @@ class _IdentityHeader extends StatelessWidget {
                       'reload (storage is blocked in this browser).',
                       style: tt.labelSmall?.copyWith(
                         color: SovereignColors.accentWarning,
-                        fontSize: 11,
                       ),
                     ),
                   ),
@@ -1255,11 +1241,10 @@ class _TransportChip extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             name,
-            style: TextStyle(
-              fontSize: 11,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w500,
+                ),
           ),
         ],
       ),
@@ -1332,7 +1317,6 @@ class _EncryptionCard extends StatelessWidget {
                   style: tt.labelSmall?.copyWith(
                     fontFamily: 'JetBrainsMono',
                     color: SovereignColors.textTertiary,
-                    fontSize: 11,
                   ),
                 ),
                 trailing: Container(

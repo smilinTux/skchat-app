@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/modules/external_modules.dart';
+import '../../core/theme/theme.dart';
 import '../../services/daemon_config.dart';
 import '../../services/embed_token_service.dart';
 // Reuse the exact conditional-import embed the Code pane uses: an iframe on
@@ -105,10 +106,14 @@ class ExternalModulePane extends ConsumerWidget {
       embedArea = skcodeEmbed(url);
     }
 
+    final spacing = Theme.of(context).extension<SovereignSpacing>();
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: EdgeInsets.symmetric(
+            horizontal: spacing?.gutter ?? 16,
+            vertical: spacing?.rowVPad ?? 10,
+          ),
           child: Row(
             children: [
               Icon(manifest.icon, size: 20),
@@ -121,7 +126,10 @@ class ExternalModulePane extends ConsumerWidget {
               Expanded(
                 child: Text(
                   manifest.description ?? 'Embedded SKWorld subapp',
-                  style: TextStyle(fontSize: 12, color: subtle),
+                  style: Theme.of(context)
+                      .extension<SovereignTypeExtras>()
+                      ?.micro
+                      .copyWith(color: subtle),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

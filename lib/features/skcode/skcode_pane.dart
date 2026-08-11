@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/theme.dart';
 import '../../services/audience_token_service.dart';
 import '../../services/daemon_config.dart';
 import 'skcode_web_embed_stub.dart'
@@ -62,10 +63,14 @@ class SkcodePane extends ConsumerWidget {
       ),
     );
 
+    final spacing = Theme.of(context).extension<SovereignSpacing>();
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: EdgeInsets.symmetric(
+            horizontal: spacing?.gutter ?? 16,
+            vertical: spacing?.rowVPad ?? 10,
+          ),
           child: Row(
             children: [
               const Icon(Icons.terminal_rounded, size: 20),
@@ -75,7 +80,10 @@ class SkcodePane extends ConsumerWidget {
               Expanded(
                 child: Text(
                   'start, watch, and steer agent sessions',
-                  style: TextStyle(fontSize: 12, color: subtle),
+                  style: Theme.of(context)
+                      .extension<SovereignTypeExtras>()
+                      ?.micro
+                      .copyWith(color: subtle),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
