@@ -1,7 +1,7 @@
 # SKChat Mobile — Flutter Design PRD
 
-**Version:** 1.0.0
-**Date:** 2026-02-24
+**Version:** 1.1.0
+**Date:** 2026-02-24 (Typography amended 2026-08-11, density pass, card D-1)
 **Design Language:** Sovereign Glass (2026)
 **Target:** Android 14+ / iOS 17+ / Foldable / Tablet
 **Framework:** Flutter 3.x + Material 3 + Riverpod + GoRouter
@@ -54,17 +54,70 @@ Same structure, inverted. `surface.base` becomes `#FAFAFE`, glass becomes `rgba(
 
 **Font:** Inter Variable (weight axis 300-800)
 
-| Style | Weight | Size | Line Height | Usage |
-|-------|--------|------|-------------|-------|
-| `display` | 700 | 28sp | 1.2 | Screen titles |
-| `heading` | 600 | 20sp | 1.3 | Section headers |
-| `body` | 400 | 15sp | 1.5 | Message content |
-| `caption` | 400 | 12sp | 1.4 | Timestamps, metadata |
-| `mono` | 400 | 13sp | 1.5 | Code blocks, fingerprints |
+**Amendment, 2026-08-11 (density pass, card D-1):** the original table below
+described a single fixed scale. The audit found it ran too roomy ("fonts are
+too big") while also having no small roles, so 328 hardcoded `fontSize:`
+literals had accumulated outside the theme, hand-rolling a denser micro
+scale the theme refused to provide. The scale is now density-aware: three
+`SovereignDensity` levels (`comfortable`, `compact`, `dense`), plus two NEW
+roles, `micro` and `badge`, that give those literals a legal home. See the
+Density section below for the full mechanism.
+
+Sizes in logical px (sp equivalent). `compact` is the app default.
+`comfortable` reproduces the original 2026-02-24 table exactly, so it
+remains the accessibility-friendly floor and the exact revert path.
+
+| Style | Weight | comfortable (was default) | compact (NEW DEFAULT) | dense | Line height (comfortable -> compact) |
+|-------|--------|------|------|-------|-------------|
+| `display` (displayLarge) | 700 | 28sp | 24sp | 22sp | 1.2 -> 1.15 |
+| `heading` (titleLarge) | 600 | 20sp | 18sp | 16sp | 1.3 -> 1.25 |
+| titleMedium | 600 | 17sp | 15sp | 14sp | 1.3 (unchanged) |
+| titleSmall | 500 | 15sp | 14sp | 13sp | 1.4 -> 1.35 |
+| `body` (bodyLarge) | 400 | 15sp | 14sp | 13sp | 1.5 (kept at every density, chat readability) |
+| bodyMedium | 400 | 14sp | 13sp | 12sp | 1.5 (kept) |
+| bodySmall | 400 | 13sp | 12sp | 11sp | 1.5 -> 1.45 |
+| labelLarge | 600 | 14sp | 13sp | 12sp | 1.4 -> 1.35 |
+| labelMedium | 500 | 13sp | 12sp | 11sp | 1.4 -> 1.3 |
+| `caption` (labelSmall) | 400 | 12sp | 11sp | 10sp | 1.4 -> 1.3 |
+| `mono` | 400 | 13sp | 12.5sp | 12sp | 1.5 -> 1.45 |
+| `micro` (NEW) | 400 | 12sp | **11sp** | 10sp | meta workhorse: timestamps, badge-adjacent rows, event meta |
+| `badge` (NEW) | 500 | 11sp | **10sp** | 10sp | count/status badges; 10sp is the floor at every density |
 
 Use `JetBrains Mono` for code blocks and CapAuth fingerprint display.
 
+Below 10sp is out of scope: below the practical legibility floor for a
+phone held at arm's length on a touch-first surface (see the Density
+section's ratchet guard, which fails any literal that regresses below it).
+
 ---
+
+## Density
+
+Three levels, `SovereignDensity { comfortable, compact, dense }`, set app-wide
+in **Settings > Appearance > Font Size** (the row this document has promised
+since v1.0.0, see the Wireframes section below; delivered in card D-1).
+
+- **`compact` is the app default.** This is the "fonts are too big" fix.
+- **`comfortable`** reproduces the pre-density scale exactly, the
+  accessibility-friendly floor and exact revert path.
+- **`dense`** is an opt-in for desktop/rail layouts, smaller still.
+
+Density moves type AND spacing together (list-row padding, card padding,
+screen gutters, section gaps, list-tile height) so the app reads as
+consistently denser or roomier, not just smaller text next to unchanged
+whitespace. Per-role numbers are explicit lookup tables, not a scaling
+multiplier, so every rendered size is one of the values in the table above,
+never a fractional-pixel in-between.
+
+**Density and OS accessibility text scaling are independent axes and
+compose.** Density sets the BASE size; the device's OS text-size preference
+(`MediaQuery.textScaler`) multiplies on top of that, exactly like every
+other Flutter app. A low-vision user on `compact` still gets large text; a
+sharp-eyed user on `comfortable` still gets roomy text. The app clamps only
+the pathological high end (`maxScaleFactor: 2.0`, no minimum clamp) so
+layouts do not break at extreme OS settings; this is the concrete
+implementation of "All text scales with system font size preference" below,
+verified by golden tests at OS scale 1.0/1.3/2.0.
 
 ## Navigation Architecture
 
@@ -320,7 +373,7 @@ Same as conversation view but with:
 │  Appearance                          │
 │  ├─ Theme: Dark Glass                │
 │  ├─ Soul Color: Auto (from key)     │
-│  └─ Font Size: Medium                │
+│  └─ Font Size: Compact (default)     │
 │                                      │
 │  Network & Transports                │
 │  ├─ Syncthing: ✅ Connected          │
@@ -571,8 +624,13 @@ Since this is sovereign infrastructure, no Google/Apple push services:
 
 ## Accessibility
 
-- Minimum touch target: 48x48dp
-- All text scales with system font size preference
+- Minimum touch target: 48x48dp, held at every density (see Density section)
+- All text scales with system font size preference: implemented via
+  `MediaQuery.withClampedTextScaling(maxScaleFactor: 2.0)` in
+  `MaterialApp.router`'s `builder`, no minimum clamp. Verified by golden
+  tests at OS scale 1.0/1.3/2.0 (`test/font_size_golden_test.dart`).
+  `TextScaler.noScaling` and `textScaleFactor` reads are banned app-wide by
+  `test/font_literal_guard_test.dart`.
 - Color contrast: WCAG AA minimum (4.5:1 for body text)
 - Screen reader labels on all interactive elements
 - Reduce motion mode: Disables all spring/physics animations, uses simple fades

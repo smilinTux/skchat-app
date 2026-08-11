@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'core/theme/theme.dart';
 import 'core/router/app_router.dart';
 import 'core/providers/theme_provider.dart';
+import 'core/providers/density_provider.dart';
 import 'data/hive_adapters.dart';
 import 'services/skcomms_sync.dart';
 import 'services/identity_service.dart';
@@ -81,6 +82,7 @@ class SKChatApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeProvider);
+    final density = ref.watch(densityProvider);
     final router = ref.watch(appRouterProvider);
 
     // Eagerly start the sync service so polling begins immediately.
@@ -97,9 +99,22 @@ class SKChatApp extends ConsumerWidget {
       title: 'SKChat',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
-      theme: SovereignTheme.light(),
-      darkTheme: SovereignTheme.dark(),
+      theme: SovereignTheme.light(density: density),
+      darkTheme: SovereignTheme.dark(density: density),
       routerConfig: router,
+      // Density sets BASE sizes; the OS text scaler multiplies on top of
+      // that (Flutter's default behavior for every Text that doesn't
+      // override it, unchanged here). This is the ONLY place OS scaling is
+      // touched: it clamps the pathological high end (max 2.0x, matching
+      // the golden tests) while leaving the full small-text range alone, so
+      // a low-vision user on compact still gets big text and a sharp-eyed
+      // user on comfortable still gets roomy text. Never pass
+      // TextScaler.noScaling and never read textScaleFactor to "correct"
+      // sizes anywhere else; test/font_literal_guard_test.dart enforces it.
+      builder: (context, child) => MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 2.0,
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }
