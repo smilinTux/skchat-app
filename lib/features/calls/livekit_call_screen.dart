@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:livekit_client/livekit_client.dart';
-import '../../core/theme/sovereign_colors.dart';
+import '../../core/theme/theme.dart';
 import '../../services/livekit_call_service.dart';
 import '../../services/peer_trust_store.dart';
 import 'call_session.dart';
@@ -93,27 +93,23 @@ Future<void> _shareGuestInvite(
           if (error != null)
             Text(
               error,
-              style: const TextStyle(
-                color: SovereignColors.textSecondary,
-                fontSize: 13,
-              ),
+              style: Theme.of(dctx).textTheme.bodyMedium?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
             )
           else ...[
-            const Text(
+            Text(
               'Anyone with this link can join THIS call as a guest. Share it '
               'with as many people as you like: each one joins the same room.',
-              style: TextStyle(
-                color: SovereignColors.textSecondary,
-                fontSize: 13,
-              ),
+              style: Theme.of(dctx).textTheme.bodyMedium?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
             ),
             const SizedBox(height: 12),
             SelectableText(
               link ?? '',
-              style: const TextStyle(
+              style: SovereignTypography.mono(
                 color: SovereignColors.soulLumina,
-                fontSize: 12,
-                fontFamily: 'JetBrainsMono',
               ),
             ),
           ],
@@ -563,19 +559,17 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
           const SizedBox(height: 20),
           Text(
             'Joining room…',
-            style: const TextStyle(
-              color: SovereignColors.textSecondary,
-              fontSize: 15,
-              fontFamily: 'Inter',
-            ),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: SovereignColors.textSecondary,
+                  fontFamily: 'Inter',
+                  fontWeight: FontWeight.w400,
+                ),
           ),
           const SizedBox(height: 6),
           Text(
             widget.args.roomName,
-            style: TextStyle(
+            style: SovereignTypography.mono(
               color: _soulColorFor(widget.args.identity).withValues(alpha: 0.7),
-              fontSize: 12,
-              fontFamily: 'JetBrainsMono',
             ),
           ),
         ],
@@ -598,22 +592,17 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
               size: 48,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Room join failed',
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: SovereignColors.textPrimary,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               error,
-              style: const TextStyle(
-                color: SovereignColors.textSecondary,
-                fontSize: 13,
-                fontFamily: 'JetBrainsMono',
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -719,12 +708,10 @@ class _TopBar extends ConsumerWidget {
               children: [
                 Text(
                   displayName ?? callState.roomName,
-                  style: const TextStyle(
-                    color: SovereignColors.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'Inter',
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: SovereignColors.textPrimary,
+                        fontFamily: 'Inter',
+                      ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
@@ -746,19 +733,17 @@ class _TopBar extends ConsumerWidget {
                       callState.isConnected
                           ? '${callState.participants.length} participant${callState.participants.length == 1 ? '' : 's'}'
                           : 'connecting…',
-                      style: const TextStyle(
-                        color: SovereignColors.textSecondary,
-                        fontSize: 12,
-                        fontFamily: 'Inter',
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SovereignColors.textSecondary,
+                            fontFamily: 'Inter',
+                          ),
                     ),
                     if (callState.isConnected) ...[
-                      const Text(
+                      Text(
                         '  ·  ',
-                        style: TextStyle(
-                          color: SovereignColors.textTertiary,
-                          fontSize: 12,
-                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SovereignColors.textTertiary,
+                            ),
                       ),
                       CallElapsedTimer(isConnected: callState.isConnected),
                     ],
@@ -781,21 +766,20 @@ class _TopBar extends ConsumerWidget {
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(
+                children: [
+                  const Icon(
                     Icons.fiber_manual_record_rounded,
                     color: SovereignColors.accentDanger,
                     size: 10,
                   ),
-                  SizedBox(width: 4),
+                  const SizedBox(width: 4),
                   Text(
                     'REC',
-                    style: TextStyle(
-                      color: SovereignColors.accentDanger,
-                      fontSize: 10,
-                      fontFamily: 'JetBrainsMono',
-                      letterSpacing: 0.6,
-                    ),
+                    style: SovereignTypography.badge().copyWith(
+                          color: SovereignColors.accentDanger,
+                          fontFamily: 'JetBrainsMono',
+                          letterSpacing: 0.6,
+                        ),
                   ),
                 ],
               ),
@@ -835,12 +819,11 @@ class _TopBar extends ConsumerWidget {
             ),
             child: Text(
               'SFU',
-              style: const TextStyle(
-                color: SovereignColors.textTertiary,
-                fontSize: 10,
-                fontFamily: 'JetBrainsMono',
-                letterSpacing: 0.6,
-              ),
+              style: SovereignTypography.badge().copyWith(
+                    color: SovereignColors.textTertiary,
+                    fontFamily: 'JetBrainsMono',
+                    letterSpacing: 0.6,
+                  ),
             ),
           ),
         ],
@@ -980,13 +963,13 @@ class _EmptyRoomPlaceholder extends StatelessWidget {
             size: 64,
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Waiting for participants…',
-            style: TextStyle(
-              color: SovereignColors.textSecondary,
-              fontSize: 15,
-              fontFamily: 'Inter',
-            ),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: SovereignColors.textSecondary,
+                  fontFamily: 'Inter',
+                  fontWeight: FontWeight.w400,
+                ),
           ),
         ],
       ),
@@ -1097,12 +1080,11 @@ class _ParticipantTile extends ConsumerWidget {
                       snapshot.isLocal
                           ? '${snapshot.identity} (you)'
                           : snapshot.identity,
-                      style: const TextStyle(
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Colors.white,
-                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                         fontFamily: 'Inter',
-                        shadows: [
+                        shadows: const [
                           Shadow(color: Colors.black54, blurRadius: 4)
                         ],
                       ),
@@ -1219,11 +1201,9 @@ class _AvatarTile extends StatelessWidget {
               child: Center(
                 child: Text(
                   initials,
-                  style: TextStyle(
-                    color: soulColor,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                        color: soulColor,
+                      ),
                 ),
               ),
             ),
@@ -1481,11 +1461,10 @@ class _LKControlButton extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             label,
-            style: const TextStyle(
-              color: SovereignColors.textSecondary,
-              fontSize: 11,
-              fontFamily: 'Inter',
-            ),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: SovereignColors.textSecondary,
+                  fontFamily: 'Inter',
+                ),
           ),
         ],
       ),
@@ -1530,12 +1509,11 @@ class _LeaveButton extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             label,
-            style: const TextStyle(
-              color: SovereignColors.accentDanger,
-              fontSize: 11,
-              fontFamily: 'Inter',
-              fontWeight: FontWeight.w600,
-            ),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: SovereignColors.accentDanger,
+                  fontFamily: 'Inter',
+                  fontWeight: FontWeight.w600,
+                ),
           ),
         ],
       ),

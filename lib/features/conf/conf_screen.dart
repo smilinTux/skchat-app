@@ -5,7 +5,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:go_router/go_router.dart";
 import "package:livekit_client/livekit_client.dart";
 
-import "../../core/theme/sovereign_colors.dart";
+import "../../core/theme/theme.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/self_identity_provider.dart";
@@ -560,11 +560,11 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
   }
 
   Widget _buildConnecting() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
+          const SizedBox(
             width: 44,
             height: 44,
             child: CircularProgressIndicator(
@@ -572,13 +572,13 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
               strokeWidth: 2.5,
             ),
           ),
-          SizedBox(height: 18),
+          const SizedBox(height: 18),
           Text(
             "Joining conference...",
-            style: TextStyle(
-              color: SovereignColors.textSecondary,
-              fontSize: 15,
-            ),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: SovereignColors.textSecondary,
+                  fontWeight: FontWeight.w400,
+                ),
           ),
         ],
       ),
@@ -595,22 +595,18 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
             const Icon(Icons.error_outline_rounded,
                 color: SovereignColors.accentDanger, size: 44),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               "Couldn't join conference",
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: SovereignColors.textPrimary,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               error,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: SovereignTypography.mono(
                 color: SovereignColors.textSecondary,
-                fontSize: 12,
-                fontFamily: "JetBrainsMono",
               ),
             ),
             const SizedBox(height: 24),
@@ -658,22 +654,19 @@ class _WaitingLobby extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 22),
-            const Text(
+            Text(
               "Waiting to be admitted",
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: SovereignColors.textPrimary,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: SovereignColors.textSecondary,
-                fontSize: 13,
-              ),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
             ),
             const SizedBox(height: 28),
             OutlinedButton(
@@ -714,11 +707,10 @@ class _Header extends StatelessWidget {
               children: [
                 Text(
                   state.title.isNotEmpty ? state.title : "Conference",
-                  style: const TextStyle(
-                    color: SovereignColors.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: SovereignColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
@@ -730,18 +722,16 @@ class _Header extends StatelessWidget {
                           : state.isPending
                               ? "waiting for host..."
                               : "connecting...",
-                      style: const TextStyle(
-                        color: SovereignColors.textSecondary,
-                        fontSize: 12,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SovereignColors.textSecondary,
+                          ),
                     ),
                     if (state.isConnected) ...[
-                      const Text(
+                      Text(
                         "  ·  ",
-                        style: TextStyle(
-                          color: SovereignColors.textTertiary,
-                          fontSize: 12,
-                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SovereignColors.textTertiary,
+                            ),
                       ),
                       CallElapsedTimer(isConnected: state.isConnected),
                     ],
@@ -757,11 +747,10 @@ class _Header extends StatelessWidget {
                 color: SovereignColors.soulLumina.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Text(
+              child: Text(
                 "HOST",
-                style: TextStyle(
+                style: SovereignTypography.badge().copyWith(
                   color: SovereignColors.soulLumina,
-                  fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.6,
                   fontFamily: "JetBrainsMono",
@@ -789,7 +778,7 @@ class _Body extends ConsumerWidget {
       children: [
         // Host-only: waiting room.
         if (state.isHost && state.waiting.isNotEmpty) ...[
-          _sectionLabel("Waiting room", state.waiting.length),
+          _sectionLabel(context, "Waiting room", state.waiting.length),
           const SizedBox(height: 12),
           for (final g in state.waiting)
             _WaitingTile(
@@ -801,7 +790,7 @@ class _Body extends ConsumerWidget {
             ),
           const SizedBox(height: 24),
         ],
-        _sectionLabel("Participants", state.participants.length),
+        _sectionLabel(context, "Participants", state.participants.length),
         const SizedBox(height: 12),
         Wrap(
           spacing: 20,
@@ -823,14 +812,14 @@ class _Body extends ConsumerWidget {
     );
   }
 
-  Widget _sectionLabel(String label, int count) {
+  Widget _sectionLabel(BuildContext context, String label, int count) {
+    final labelSmall = Theme.of(context).textTheme.labelSmall;
     return Row(
       children: [
         Text(
           label.toUpperCase(),
-          style: const TextStyle(
+          style: labelSmall?.copyWith(
             color: SovereignColors.textTertiary,
-            fontSize: 11,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.8,
           ),
@@ -838,10 +827,7 @@ class _Body extends ConsumerWidget {
         const SizedBox(width: 8),
         Text(
           "$count",
-          style: const TextStyle(
-            color: SovereignColors.textTertiary,
-            fontSize: 11,
-          ),
+          style: labelSmall?.copyWith(color: SovereignColors.textTertiary),
         ),
       ],
     );
@@ -870,11 +856,10 @@ class _WaitingTile extends StatelessWidget {
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
             ),
           ),
           IconButton(
@@ -950,11 +935,9 @@ class _ParticipantTile extends ConsumerWidget {
                   Center(
                     child: Text(
                       initials,
-                      style: TextStyle(
-                        color: soul,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                            color: soul,
+                          ),
                     ),
                   ),
                   if (snapshot.isMuted)
@@ -986,11 +969,10 @@ class _ParticipantTile extends ConsumerWidget {
                       snapshot.isLocal ? "You" : snapshot.identity,
                       textAlign: TextAlign.center,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: SovereignColors.textPrimary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SovereignColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
                     ),
                   ),
                   if (showBadge) ...[
@@ -1174,13 +1156,12 @@ class _ControlBar extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               "Invite an agent",
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(sheetCtx).textTheme.titleMedium?.copyWith(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -1257,10 +1238,9 @@ class _RoundButton extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               label,
-              style: const TextStyle(
-                color: SovereignColors.textSecondary,
-                fontSize: 11,
-              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
             ),
           ],
         ),
@@ -1295,13 +1275,12 @@ class _LeaveButton extends StatelessWidget {
                   color: Colors.white, size: 24),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               "Leave",
-              style: TextStyle(
-                color: SovereignColors.accentDanger,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.accentDanger,
+                    fontWeight: FontWeight.w600,
+                  ),
             ),
           ],
         ),

@@ -157,24 +157,24 @@ class AppShellScaffold extends StatelessWidget {
         if (isOffline)
           Material(
             color: SovereignColors.accentWarning.withValues(alpha: 0.15),
-            child: const SafeArea(
+            child: SafeArea(
               bottom: false,
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.cloud_off_outlined,
                       size: 14,
                       color: SovereignColors.accentWarning,
                     ),
-                    SizedBox(width: 6),
+                    const SizedBox(width: 6),
                     Text(
                       'SKComms daemon offline, messages will queue',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: SovereignColors.accentWarning,
-                      ),
+                      style: Theme.of(context)
+                          .extension<SovereignTypeExtras>()
+                          ?.micro
+                          .copyWith(color: SovereignColors.accentWarning),
                     ),
                   ],
                 ),
@@ -307,6 +307,8 @@ class AppShellScaffold extends StatelessWidget {
     Key? key,
   }) {
     final accentColor = Theme.of(context).colorScheme.primary;
+    final spacing = Theme.of(context).extension<SovereignSpacing>();
+    final badgeStyle = Theme.of(context).extension<SovereignTypeExtras>()?.badge;
     // Dim a capability-down tab (unless it's the current screen, where full
     // contrast keeps the active highlight legible). Honest grey, never hidden.
     final dimmed = !available && !isActive;
@@ -321,6 +323,7 @@ class AppShellScaffold extends StatelessWidget {
       iconWidget = Badge(
         label: Text(badgeCount > 99 ? '99+' : '$badgeCount'),
         backgroundColor: SovereignColors.accentDanger,
+        textStyle: badgeStyle,
         child: iconWidget,
       );
     }
@@ -333,7 +336,8 @@ class AppShellScaffold extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding:
+              EdgeInsets.symmetric(vertical: spacing?.navCellVPad ?? 10),
           child: Opacity(
             opacity: dimmed ? 0.45 : 1.0,
             child: Column(
@@ -456,6 +460,7 @@ class _NavOverflowSheet extends StatelessWidget {
       leading = Badge(
         label: Text(badgeCount > 99 ? '99+' : '$badgeCount'),
         backgroundColor: SovereignColors.accentDanger,
+        textStyle: Theme.of(context).extension<SovereignTypeExtras>()?.badge,
         child: leading,
       );
     }
@@ -530,16 +535,15 @@ class _SovereignNavRailState extends State<_SovereignNavRail> {
       selectedIconTheme: IconThemeData(color: accent),
       unselectedIconTheme:
           const IconThemeData(color: SovereignColors.textSecondary),
-      selectedLabelTextStyle: TextStyle(
-        color: accent,
-        fontWeight: FontWeight.w600,
-        fontSize: 12,
-      ),
-      unselectedLabelTextStyle: const TextStyle(
-        color: SovereignColors.textSecondary,
-        fontWeight: FontWeight.w400,
-        fontSize: 12,
-      ),
+      selectedLabelTextStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: accent,
+            fontWeight: FontWeight.w600,
+          ),
+      unselectedLabelTextStyle:
+          Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: SovereignColors.textSecondary,
+                fontWeight: FontWeight.w400,
+              ),
       leading: _RailToggle(
         extended: _extended,
         onToggle: () => setState(() => _extended = !_extended),
@@ -549,12 +553,13 @@ class _SovereignNavRailState extends State<_SovereignNavRail> {
         for (var i = 0; i < widget.tabs.length; i++)
           NavigationRailDestination(
             icon: _railIcon(
+              context,
               widget.tabs[i].icon,
               widget.badgeCounts[i],
               dimmed: !widget.tabs[i].available,
             ),
-            selectedIcon:
-                _railIcon(widget.tabs[i].activeIcon, widget.badgeCounts[i]),
+            selectedIcon: _railIcon(
+                context, widget.tabs[i].activeIcon, widget.badgeCounts[i]),
             label: Text(widget.tabs[i].label),
           ),
       ],
@@ -583,12 +588,14 @@ class _SovereignNavRailState extends State<_SovereignNavRail> {
 
   /// Wraps a destination icon in a [Badge] when its count is non-zero, and dims
   /// it when the backing module is capability-down (honest grey, never hidden).
-  Widget _railIcon(IconData icon, int count, {bool dimmed = false}) {
+  Widget _railIcon(BuildContext context, IconData icon, int count,
+      {bool dimmed = false}) {
     Widget iconWidget = Icon(icon);
     if (count > 0) {
       iconWidget = Badge(
         label: Text(count > 99 ? '99+' : '$count'),
         backgroundColor: SovereignColors.accentDanger,
+        textStyle: Theme.of(context).extension<SovereignTypeExtras>()?.badge,
         child: iconWidget,
       );
     }

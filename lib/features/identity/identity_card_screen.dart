@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/sovereign_colors.dart';
-import '../../core/theme/glass_widgets.dart';
+import '../../core/theme/theme.dart';
 import '../../models/conversation.dart';
 import '../../services/skcomms_client.dart';
 
@@ -163,13 +162,11 @@ class _SovereignSliverAppBar extends StatelessWidget {
         icon: const Icon(Icons.arrow_back_ios_new, color: SovereignColors.textPrimary),
         onPressed: () => Navigator.of(context).pop(),
       ),
-      title: const Text(
+      title: Text(
         'Agent Profile',
-        style: TextStyle(
-          color: SovereignColors.textPrimary,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
-        ),
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              color: SovereignColors.textPrimary,
+            ),
       ),
       flexibleSpace: FlexibleSpaceBar(
         background: _HeaderBackground(
@@ -226,10 +223,8 @@ class _HeaderBackground extends StatelessWidget {
               const SizedBox(height: 14),
               Text(
                 conversation.displayName.toUpperCase(),
-                style: TextStyle(
+                style: Theme.of(context).textTheme.displayLarge?.copyWith(
                   color: SovereignColors.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
                   letterSpacing: 2.0,
                   shadows: [
                     Shadow(
@@ -243,22 +238,18 @@ class _HeaderBackground extends StatelessWidget {
               if (conversation.isAgent)
                 Text(
                   'Sovereign AI Agent',
-                  style: TextStyle(
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: soulColor.withValues(alpha: 0.8),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
                     letterSpacing: 1.2,
                   ),
                 )
               else
                 Text(
                   conversation.isOnline ? 'Online' : 'Offline',
-                  style: TextStyle(
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: conversation.isOnline
                         ? SovereignColors.accentEncrypt
                         : SovereignColors.textTertiary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
                   ),
                 ),
             ],
@@ -419,26 +410,24 @@ class _FingerprintRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Fingerprint',
-                style: TextStyle(
-                  color: SovereignColors.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: SovereignColors.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
               ),
               GestureDetector(
                 onTap: hasFp ? () => _copyToClipboard(context) : null,
                 child: Text(
                   hasFp ? fingerprint! : 'Unknown, no key on file',
-                  style: TextStyle(
-                    color: hasFp
-                        ? SovereignColors.textPrimary
-                        : SovereignColors.textTertiary,
-                    fontSize: 13,
-                    fontFamily: hasFp ? 'JetBrainsMono' : null,
-                    letterSpacing: hasFp ? 0.5 : 0,
-                  ),
+                  style: hasFp
+                      ? SovereignTypography.mono(
+                          color: SovereignColors.textPrimary,
+                        ).copyWith(letterSpacing: 0.5)
+                      : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: SovereignColors.textTertiary,
+                          ),
                 ),
               ),
             ],
@@ -522,7 +511,10 @@ class _EncryptionSection extends StatelessWidget {
               icon: Icon(Icons.qr_code_scanner, size: 16, color: soulColor),
               label: Text(
                 'Compare Fingerprints',
-                style: TextStyle(color: soulColor, fontSize: 13),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: soulColor),
               ),
               style: OutlinedButton.styleFrom(
                 side: BorderSide(color: soulColor.withValues(alpha: 0.4)),
@@ -585,11 +577,9 @@ class _SendMessageButton extends StatelessWidget {
           icon: const Icon(Icons.send_rounded, size: 18, color: Colors.black87),
           label: Text(
             'Send Message to $displayName',
-            style: const TextStyle(
-              color: Colors.black87,
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-            ),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: Colors.black87,
+                ),
           ),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.transparent,
@@ -629,12 +619,11 @@ class _SectionTitle extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           title,
-          style: const TextStyle(
-            color: SovereignColors.textPrimary,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.3,
-          ),
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: SovereignColors.textPrimary,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
         ),
       ],
     );
@@ -677,17 +666,18 @@ class _InfoRow extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  color: SovereignColors.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: SovereignColors.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
               ),
               Text(
                 value,
-                style: TextStyle(
+                style: (isSmall
+                        ? Theme.of(context).textTheme.bodySmall
+                        : Theme.of(context).textTheme.bodyLarge)
+                    ?.copyWith(
                   color: valueColor ?? SovereignColors.textPrimary,
-                  fontSize: isSmall ? 12 : 14,
                   fontWeight: FontWeight.w500,
                   fontFamily: monospace ? 'JetBrainsMono' : null,
                   letterSpacing: monospace ? 0.3 : 0,
