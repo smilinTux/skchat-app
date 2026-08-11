@@ -207,7 +207,13 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   /// [applyRemote] for the mirror image (a REMOTE load clears the flag).
   void loadUrl(String url) {
     controller.load(url);
-    state = state.copyWith(url: url, isHostOfVideo: true);
+    // Speed is per-video, not a sticky room preference: carrying 2x into an
+    // unrelated video is a surprise, and the viewer who set it may not be the
+    // one loading next. The reset rides the load event rather than a separate
+    // rate publish, so there is no extra message and no race between the reset
+    // and the loader's next rate change.
+    controller.setRate(1.0);
+    state = state.copyWith(url: url, isHostOfVideo: true, rate: 1.0);
     _publish({"action": "load", "url": url});
   }
 
@@ -366,9 +372,14 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
     applyWatchEvent(controller, e);
     switch (action) {
       case "load":
+        // Mirror of loadUrl's reset: every client drops to 1x on a load, which
+        // is what lets the reset ride the load event instead of needing its
+        // own publish.
+        controller.setRate(1.0);
         state = state.copyWith(
           url: e["url"] as String?,
           isHostOfVideo: e["from"] == arg.identity,
+          rate: 1.0,
         );
         break;
       case "play":

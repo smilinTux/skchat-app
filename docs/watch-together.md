@@ -307,3 +307,14 @@ converged, and Watch Together never actually stayed in sync. It is worth
 recording plainly: the fix was not a smarter drift algorithm, it was reading
 real player state that was there to be read all along. Do not reintroduce
 the shadow-only assumption for YouTube once the listening handshake has run.
+
+### Speed resets to 1x on every new video
+
+Speed is per-video, not a sticky room preference. Carrying 2x into an unrelated
+video is a surprise, and the viewer who set it may not be the one loading next.
+
+The reset rides the `load` event rather than a separate `rate` publish: every
+client drops to 1.0 when it applies a load, local or remote. That means no extra
+message on the wire, and no race between the reset and the loader's next rate
+change.
+

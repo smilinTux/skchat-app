@@ -605,4 +605,59 @@ void main() {
     expect(resolveStageKind(videos: const <StageVideo>[], watchActive: state().isActive),
         StageKind.none);
   });
+
+  group("a new video starts at 1x", () {
+    test("loadUrl resets the room speed to 1.0 and tells the player", () async {
+      // Chef: "start at 1x on a new video". Speed is per-video, not a sticky
+      // room preference: carrying 2x into an unrelated video is a surprise,
+      // and the viewer who set it may not even be the one loading next.
+      final lane = FakeLane();
+      final ctl = FakeWatchController();
+      final c = ProviderContainer(overrides: [
+        laneServiceFactoryProvider.overrideWithValue((_) => lane),
+        watchControllerFactoryProvider.overrideWithValue(() => ctl),
+      ]);
+      addTearDown(c.dispose);
+      final n = c.read(watchSessionProvider(_args).notifier);
+
+      n.loadUrl("https://youtu.be/first");
+      n.setRate(2.0);
+      expect(c.read(watchSessionProvider(_args)).rate, 2.0);
+
+      n.loadUrl("https://youtu.be/second");
+
+      expect(c.read(watchSessionProvider(_args)).rate, 1.0);
+      expect(ctl.rate, 1.0,
+          reason: "the player itself must drop back to 1x, not just the state");
+    });
+
+    test("a REMOTE load resets the speed too, without republishing", () async {
+      // The reset rides the load event rather than a separate rate publish:
+      // every client resets on load, so there is no extra message and no race
+      // between the reset and the loader's next rate change.
+      final lane = FakeLane();
+      final ctl = FakeWatchController();
+      final c = ProviderContainer(overrides: [
+        laneServiceFactoryProvider.overrideWithValue((_) => lane),
+        watchControllerFactoryProvider.overrideWithValue(() => ctl),
+      ]);
+      addTearDown(c.dispose);
+      final n = c.read(watchSessionProvider(_args).notifier);
+
+      n.loadUrl("https://youtu.be/first");
+      n.setRate(1.75);
+      lane.persisted.clear();
+
+      n.applyRemote({
+        "lane": "watch",
+        "action": "load",
+        "url": "https://youtu.be/second",
+        "from": "someone-else",
+      });
+
+      expect(c.read(watchSessionProvider(_args)).rate, 1.0);
+      expect(ctl.rate, 1.0);
+      expect(lane.persisted, isEmpty, reason: "applying a remote event must not echo");
+    });
+  });
 }
