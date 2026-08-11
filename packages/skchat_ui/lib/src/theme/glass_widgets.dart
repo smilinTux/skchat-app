@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'sovereign_colors.dart';
+import 'sovereign_spacing.dart';
 
 /// GlassCard, frosted glass panel with 8-16px blur, subtle border.
 class GlassCard extends StatelessWidget {
@@ -11,7 +12,7 @@ class GlassCard extends StatelessWidget {
     this.opacity = 0.06,
     this.borderOpacity = 0.08,
     this.borderRadius = 16.0,
-    this.padding = const EdgeInsets.all(16),
+    this.padding,
     this.margin = EdgeInsets.zero,
     this.onTap,
     this.onLongPress,
@@ -22,13 +23,20 @@ class GlassCard extends StatelessWidget {
   final double opacity;
   final double borderOpacity;
   final double borderRadius;
-  final EdgeInsets padding;
+
+  /// Defaults to the density-resolved `cardPad` token (16/12/10 at
+  /// comfortable/compact/dense) when null, read from the ambient
+  /// [SovereignSpacing] theme extension. Pass an explicit value to opt out.
+  final EdgeInsets? padding;
   final EdgeInsets margin;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
+    final spacing = Theme.of(context).extension<SovereignSpacing>();
+    final resolvedPadding =
+        padding ?? EdgeInsets.all(spacing?.cardPad ?? 16);
     return Padding(
       padding: margin,
       child: ClipRRect(
@@ -52,7 +60,7 @@ class GlassCard extends StatelessWidget {
                   width: 1,
                 ),
               ),
-              padding: padding,
+              padding: resolvedPadding,
               // A ListTile/InkWell descendant paints its background + ink
               // splashes on the nearest Material ancestor; without this the
               // Container's own background color above sits in between and
@@ -225,7 +233,10 @@ class _SoulAvatarState extends State<SoulAvatar>
                           )
                         : null,
                   ),
-                  // Agent diamond badge
+                  // Agent badge. Was a "◆" glyph at fontSize 7, unreadable
+                  // at that size (density spec section 6); dropped to a
+                  // plain dot per the spec's own resolution rather than
+                  // resizing the avatar to fit readable text.
                   if (widget.isAgent)
                     Positioned(
                       right: -2,
@@ -236,12 +247,7 @@ class _SoulAvatarState extends State<SoulAvatar>
                         decoration: BoxDecoration(
                           color: widget.soulColor,
                           borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            '◆',
-                            style: TextStyle(fontSize: 7, color: Colors.black),
-                          ),
+                          border: Border.all(color: Colors.black, width: 1.5),
                         ),
                       ),
                     ),

@@ -8,6 +8,10 @@
 export 'package:skchat_ui/skchat_ui.dart'
     show
         SovereignColors,
+        SovereignDensity,
+        SovereignSpacing,
+        SovereignSpacingLadder,
+        SovereignTypeExtras,
         SovereignTypography,
         SovereignTheme,
         GlassCard,

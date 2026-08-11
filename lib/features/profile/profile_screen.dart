@@ -7,6 +7,7 @@ import '../../core/build_info.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
+import '../../core/providers/density_provider.dart';
 import '../../services/backend_config.dart';
 import '../../services/daemon_config.dart';
 import '../../services/self_identity.dart';
@@ -147,6 +148,7 @@ class ProfileScreen extends ConsumerWidget {
     final backendCfg = ref.watch(backendConfigProvider);
     final transports = ref.watch(transportHealthProvider);
     final themeMode = ref.watch(themeProvider);
+    final density = ref.watch(densityProvider);
     final soulColor = SovereignColors.fromFingerprint(
       selfAsync.valueOrNull?.fingerprint ?? '',
     );
@@ -313,6 +315,20 @@ class ProfileScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
+                    key: const Key('font-size-entry'),
+                    leading: const Icon(Icons.format_size_rounded),
+                    title: const Text('Font Size'),
+                    subtitle: Text(
+                      _densityLabel(density),
+                      style: tt.labelSmall?.copyWith(
+                        color: SovereignColors.textTertiary,
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => _showDensityPicker(context, ref, density),
                   ),
                 ],
               ),
@@ -805,6 +821,102 @@ class ProfileScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  /// The PRD's promised "Font Size: Medium" row, delivered: picks the
+  /// app-wide [SovereignDensity], persisted via [densityProvider].
+  void _showDensityPicker(
+    BuildContext context,
+    WidgetRef ref,
+    SovereignDensity current,
+  ) {
+    final tt = Theme.of(context).textTheme;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Font Size',
+              style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Sets the app-wide type and spacing scale. Your OS text-size '
+              'preference still applies on top of this, at every level.',
+              style: tt.bodySmall?.copyWith(color: SovereignColors.textTertiary),
+            ),
+            const SizedBox(height: 16),
+            for (final option in SovereignDensity.values)
+              ListTile(
+                key: Key('density-option-${option.name}'),
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  option == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: option == current
+                      ? SovereignColors.soulLumina
+                      : SovereignColors.textTertiary,
+                ),
+                title: Text(
+                  _densityLabel(option),
+                  style: TextStyle(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: tt.bodyMedium?.fontFamily,
+                  ),
+                ),
+                subtitle: Text(
+                  _densityDescription(option),
+                  style: tt.labelSmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
+                ),
+                onTap: () {
+                  ref.read(densityProvider.notifier).setDensity(option);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _densityLabel(SovereignDensity density) {
+    switch (density) {
+      case SovereignDensity.comfortable:
+        return 'Comfortable';
+      case SovereignDensity.compact:
+        return 'Compact (default)';
+      case SovereignDensity.dense:
+        return 'Dense';
+    }
+  }
+
+  String _densityDescription(SovereignDensity density) {
+    switch (density) {
+      case SovereignDensity.comfortable:
+        return 'Roomier text and spacing, the original scale';
+      case SovereignDensity.compact:
+        return 'Smaller, tighter, fits more on screen';
+      case SovereignDensity.dense:
+        return 'Smallest scale, for large screens and rails';
+    }
   }
 }
 

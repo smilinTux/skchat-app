@@ -48,7 +48,13 @@ class CoordBoardScreen extends ConsumerWidget {
       backgroundColor: SovereignColors.surfaceBase,
       title: Row(
         children: [
-          Text('Team Board', style: tt.displayLarge?.copyWith(fontSize: 24)),
+          Flexible(
+            child: Text(
+              'Team Board',
+              style: tt.displayLarge?.copyWith(fontSize: 24),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           if (summary != null) ...[
             const SizedBox(width: 10),
             _SummaryChip(
@@ -320,24 +326,33 @@ class _SectionHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              color: SovereignColors.textPrimary,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.8,
+          Expanded(
+            child: Row(
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: SovereignColors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: SovereignColors.textTertiary,
+                      fontSize: 12,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: SovereignColors.textTertiary,
-              fontSize: 12,
-            ),
-          ),
-          const Spacer(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
@@ -458,8 +473,14 @@ class _TaskTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  // Meta row
-                  Row(
+                  // Meta row. Wrap, not Row: at large OS text scale the
+                  // three chips (id/status/claimedBy) can outgrow the tile
+                  // width; wrapping to a second line beats a hidden
+                  // RenderFlex overflow.
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       // ID chip
                       _MetaChip(
@@ -469,19 +490,16 @@ class _TaskTile extends StatelessWidget {
                         color: SovereignColors.textTertiary,
                         monospace: true,
                       ),
-                      const SizedBox(width: 6),
                       // Status chip
                       _MetaChip(
                         label: _statusLabel(task.status),
                         color: statusColor,
                       ),
-                      if (task.claimedBy != null) ...[
-                        const SizedBox(width: 6),
+                      if (task.claimedBy != null)
                         _MetaChip(
                           label: task.claimedBy!,
                           color: SovereignColors.soulJarvis,
                         ),
-                      ],
                     ],
                   ),
                 ],
