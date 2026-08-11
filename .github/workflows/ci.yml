@@ -40,6 +40,13 @@ jobs:
         run: bash packages/skchat_ui/tool/import_gate.sh
       - name: skchat_standalone has zero shell imports
         run: bash apps/skchat_standalone/tool/standalone_import_gate.sh
+      # Card C-2 (skworld code section architecture spec section 4.1):
+      # skcode_client is the second consumer of skworld_module_api, held to
+      # the same boundary as skchat_ui.
+      - name: skcode_client imports only skworld_module_api
+        run: bash packages/skcode_client/tool/import_gate.sh
+      - name: skcode_standalone has zero shell imports
+        run: bash apps/skcode_standalone/tool/standalone_import_gate.sh
 
   flutter:
     name: analyze, test, build web
@@ -128,6 +135,18 @@ jobs:
       - name: standalone boot gate (shell == null)
         run: flutter test
         working-directory: skchat-app/apps/skchat_standalone
+
+      # Card C-2 (skworld code section architecture spec section 4.1):
+      # skcode_client package tests (import gate + module, mounted + standalone
+      # build paths) and its own standalone boot gate, mirroring the skchat_ui /
+      # skchat_standalone steps above.
+      - name: skcode_client package tests (import gate + module)
+        run: flutter test
+        working-directory: skchat-app/packages/skcode_client
+
+      - name: skcode standalone boot gate (shell == null)
+        run: flutter test
+        working-directory: skchat-app/apps/skcode_standalone
 
       - name: flutter build web
         # base href must match the production serve path (/app/ on the Funnel), or

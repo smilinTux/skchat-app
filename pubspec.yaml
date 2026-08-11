@@ -13,10 +13,21 @@ version: 1.4.0+13
 # a null shell (standalone mode) and deploys to :8088 until the umbrella
 # cutover. Adding it as a member does not change the root app's own dependency
 # set, so the deployed root-app web artifact stays byte-equivalent.
+#
+# packages/skcode_client and apps/skcode_standalone (card C-2, skworld code
+# section architecture spec section 4.1) are the second consumer of
+# skworld_module_api: the Grade A skcode module skeleton and its standalone
+# runner. Neither is added under the app's own `dependencies:` block, because
+# this card does not mount skcode into the app shell (the module_registry.dart
+# flip is card C-10, deliberately last); they resolve as workspace members
+# only, so `flutter pub get` and the shared lockfile see them without changing
+# the root app's own dependency set.
 workspace:
   - packages/skworld_module_api
   - packages/skchat_ui
   - apps/skchat_standalone
+  - packages/skcode_client
+  - apps/skcode_standalone
 
 environment:
   sdk: ^3.11.0

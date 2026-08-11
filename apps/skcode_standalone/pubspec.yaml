@@ -1,0 +1,40 @@
+name: skcode_standalone
+description: >-
+  The thin standalone runner for the skcode subapp (card C-2, spec section
+  4.1). It wraps the skcode_client package (SkcodeModule) with its own
+  MaterialApp theme, its own capauth login seam, and a minimal nav chrome, and
+  it runs the module in STANDALONE mode: it hands SkcodeModule.build a NULL
+  ShellContext, which is the standalone signal (`shell == null`, module
+  contract standard section 3.1). It depends ONLY on skcode_client,
+  skworld_module_api, and Flutter, never on the app shell package
+  `package:skchat` (enforced by tool/standalone_import_gate.sh).
+version: 0.0.1
+publish_to: 'none'
+
+# Resolves as a member of the skworld-app Dart workspace (root pubspec.yaml
+# `workspace:` list). One shared lockfile at the workspace root; adding this
+# member does not change the root app's own dependency set, so the deployed
+# root-app web artifact stays byte-equivalent.
+resolution: workspace
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The skcode subapp UI facet (SkcodeModule implements SkworldModule).
+  skcode_client:
+    path: ../../packages/skcode_client
+
+  # The UI-facet contract (ShellContext, SkworldModule). Standalone passes a
+  # NULL ShellContext to every module it hosts.
+  skworld_module_api:
+    path: ../../packages/skworld_module_api
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
