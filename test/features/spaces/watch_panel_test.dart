@@ -261,4 +261,59 @@ void main() {
     expect(state.url, "https://example.com/movie.mp4");
     expect(ctl.loadedUrl, "https://example.com/movie.mp4");
   });
+
+  testWidgets(
+      "reopening the panel shows the URL that is already playing", (tester) async {
+    // Chef: "the url doesn't persist". Closing the sheet destroys this State
+    // and its TextEditingController, so a reopened panel used to show an empty
+    // box while a video was still on the stage.
+    //
+    // The ProviderContainer is held ACROSS both pumps on purpose: the session
+    // outlives the panel in the real app (the stage keeps watching it), so a
+    // test that tears down the scope would be testing a different thing.
+    final container = ProviderContainer(overrides: [
+      laneServiceFactoryProvider.overrideWithValue((args) => lane),
+      watchControllerFactoryProvider.overrideWithValue(() => ctl),
+    ]);
+    addTearDown(container.dispose);
+    // Stand in for the STAGE, which watches this session for as long as the
+    // room is on screen. Without a listener the provider is autoDispose and
+    // tears down the moment the panel leaves the tree, which would make this
+    // test measure provider disposal rather than the panel's own behavior.
+    final sub = container.listen(
+        watchSessionProvider(_args), (_, __) {},
+        fireImmediately: true);
+
+    Widget scoped(Widget child) => UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(home: Scaffold(body: child)),
+        );
+
+    await tester.pumpWidget(scoped(
+        const WatchPanel(spaceId: "s1", identity: "chef@dk.skworld")));
+    await tester.pump();
+    await tester.enterText(
+        find.byType(TextField), "https://example.com/movie.mp4");
+    await tester.tap(find.text("Load"));
+    await tester.pump();
+
+    // Close the sheet: the panel leaves the tree, the session does not.
+    await tester.pumpWidget(scoped(const SizedBox.shrink()));
+    await tester.pump();
+    // Reopen it.
+    await tester.pumpWidget(scoped(
+        const WatchPanel(spaceId: "s1", identity: "chef@dk.skworld")));
+    await tester.pump();
+
+    expect(find.text("https://example.com/movie.mp4"), findsWidgets,
+        reason: "the reopened panel must show what is actually loaded");
+
+    // Tear down BOTH watchers inside the test body, not in a tearDown: the
+    // session owns a 3 second heartbeat Timer, and the framework's
+    // pending-timer invariant is checked BEFORE tearDowns run. The provider
+    // only disposes (and cancels that timer) once nothing watches it.
+    sub.close();
+    await tester.pumpWidget(scoped(const SizedBox.shrink()));
+    await tester.pump();
+  });
 }

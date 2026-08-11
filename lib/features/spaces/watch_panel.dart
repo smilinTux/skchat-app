@@ -52,6 +52,19 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
   WatchSessionArgs get _args =>
       WatchSessionArgs(spaceId: widget.spaceId, identity: widget.identity);
 
+  @override
+  void initState() {
+    super.initState();
+    // Seed the field from the SESSION, not from nothing. The panel is a modal
+    // sheet: closing it destroys this State and its TextEditingController, so
+    // reopening used to show an empty box even though a video was still
+    // playing on the stage. That reads as "the url did not persist" when in
+    // fact only the text field was lost, and it leaves no way to see or edit
+    // what is actually loaded without retyping it.
+    final url = ref.read(watchSessionProvider(_args)).url;
+    if (url != null) _urlCtl.text = url;
+  }
+
   void _load() {
     final url = _urlCtl.text.trim();
     if (url.isEmpty) return;
