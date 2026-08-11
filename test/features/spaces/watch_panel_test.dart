@@ -44,6 +44,7 @@ class FakeLane implements LaneLike {
 class FakeWatchController implements WatchController {
   String? loadedUrl;
   double _position = 0;
+  double rate = 1.0;
 
   @override
   void load(String url) => loadedUrl = url;
@@ -58,11 +59,14 @@ class FakeWatchController implements WatchController {
   void seekTo(double t) => _position = t;
 
   @override
+  void setRate(double r) => rate = r;
+
+  @override
   double get position => _position;
 
   @override
   PlaybackSnapshot get playbackSnapshot =>
-      PlaybackSnapshot(position: _position, playing: false);
+      PlaybackSnapshot(position: _position, playing: false, rate: rate);
 
   @override
   void dispose() {}

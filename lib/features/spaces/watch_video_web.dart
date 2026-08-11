@@ -61,6 +61,13 @@ class WatchVideoController implements WatchController {
   /// deliver real player state at all.
   double _shadowPos = 0;
 
+  /// Last rate we set on a source [playbackSnapshot] cannot read a real rate
+  /// back from: Rumble (no documented postMessage state API at all, same gap
+  /// [_shadowPos] covers) and any source before its first real reading
+  /// lands. YouTube's real rate comes back through the listening handshake
+  /// (`_latest`); direct `<video>` reads straight off [videoEl].
+  double _shadowRate = 1.0;
+
   bool get _ready => container != null;
 
   /// Web plays YouTube and Rumble inline via iframe (see class doc), so
@@ -259,6 +266,25 @@ class WatchVideoController implements WatchController {
   }
 
   @override
+  void setRate(double rate) {
+    _shadowRate = rate;
+    switch (_mode) {
+      case _WatchMode.video:
+        videoEl?.playbackRate = rate;
+        break;
+      case _WatchMode.youtube:
+        _ytCommand("setPlaybackRate", [rate]);
+        break;
+      case _WatchMode.rumble:
+        // Best-effort no-op (see class doc): no documented cross-origin
+        // rate command, same gap play/pause/seekTo hit above.
+        break;
+      case _WatchMode.none:
+        break;
+    }
+  }
+
+  @override
   double get position {
     if (_mode == _WatchMode.video) {
       final v = videoEl;
@@ -275,10 +301,25 @@ class WatchVideoController implements WatchController {
 
   /// Full playback state for the drift resolver, not just position: play
   /// state and buffering matter as much as the timestamp for deciding
-  /// whether to correct a viewer.
+  /// whether to correct a viewer. YouTube's real rate rides in on [_latest]
+  /// (parsed from the listening handshake) same as position; a direct
+  /// `<video>` element can report its own actual rate too (the browser's
+  /// native controls expose a speed menu independent of our [setRate]
+  /// calls), so that reads [videoEl] rather than falling back to the shadow
+  /// value the way Rumble (no state API at all) has to.
   @override
-  PlaybackSnapshot get playbackSnapshot =>
-      _latest ?? PlaybackSnapshot(position: position, playing: false);
+  PlaybackSnapshot get playbackSnapshot {
+    final latest = _latest;
+    if (latest != null) return latest;
+    if (_mode == _WatchMode.video) {
+      return PlaybackSnapshot(
+        position: position,
+        playing: false,
+        rate: videoEl?.playbackRate.toDouble() ?? _shadowRate,
+      );
+    }
+    return PlaybackSnapshot(position: position, playing: false, rate: _shadowRate);
+  }
 
   /// Tears the controller down for `ref.onDispose` (watch_session.dart):
   /// cancels both subscriptions so neither leaks for the life of the page,

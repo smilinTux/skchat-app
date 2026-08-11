@@ -45,6 +45,8 @@ class _FakeController implements WatchController {
   @override
   void seekTo(double t) {}
   @override
+  void setRate(double rate) {}
+  @override
   void dispose() {}
   @override
   double get position => 0;

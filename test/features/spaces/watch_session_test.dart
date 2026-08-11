@@ -68,7 +68,7 @@ class FakeWatchController implements WatchController {
   bool playing = false;
   double _position = 0;
   bool buffering = false;
-  bool rateIsNormal = true;
+  double rate = 1.0;
   final List<String> calls = [];
 
   @override
@@ -96,6 +96,12 @@ class FakeWatchController implements WatchController {
   }
 
   @override
+  void setRate(double r) {
+    rate = r;
+    calls.add("setRate:$r");
+  }
+
+  @override
   double get position => _position;
 
   @override
@@ -103,7 +109,7 @@ class FakeWatchController implements WatchController {
         position: _position,
         playing: playing,
         buffering: buffering,
-        rateIsNormal: rateIsNormal,
+        rate: rate,
       );
 
   @override
@@ -165,6 +171,89 @@ void main() {
     expect(lane.ephemeral, isEmpty);
     expect(state().isHostOfVideo, isTrue);
     expect(state().url, "https://example.com/movie.mp4");
+  });
+
+  test("setRate sets the controller's rate, updates state, and publishes "
+      "on the PERSISTED path", () {
+    final n = notifier();
+    n.loadUrl("https://example.com/movie.mp4");
+    lane.persisted.clear(); // isolate from load's own persisted publish
+
+    n.setRate(1.5);
+
+    expect(ctl.rate, 1.5);
+    expect(state().rate, 1.5);
+    expect(lane.persisted.single, {
+      "action": "rate",
+      "rate": 1.5,
+      "lane": "watch",
+      "from": "me",
+    });
+    expect(lane.ephemeral, isEmpty);
+  });
+
+  test("a REMOTE rate event applies locally and publishes nothing (no loop)",
+      () {
+    final n = notifier();
+
+    n.applyRemote({
+      "lane": "watch",
+      "action": "rate",
+      "rate": 1.5,
+      "from": "someone-else",
+    });
+
+    expect(ctl.rate, 1.5);
+    expect(state().rate, 1.5);
+    expect(lane.persisted, isEmpty);
+    expect(lane.ephemeral, isEmpty);
+  });
+
+  test(
+      "a host at 1.5x STILL publishes heartbeats: rate is shared state now, "
+      "not a reason to stop syncing", () {
+    final n = notifier();
+    n.loadUrl("https://example.com/movie.mp4"); // becomes host
+    lane.persisted.clear();
+    n.setRate(1.5);
+    lane.persisted.clear(); // isolate from setRate's own persisted publish
+    ctl.seekTo(42.0);
+    ctl.play();
+
+    n.onHeartbeatTick();
+
+    expect(lane.ephemeral.single, {
+      "action": "heartbeat",
+      "t": 42.0,
+      "playing": true,
+      "lane": "watch",
+      "from": "me",
+    });
+  });
+
+  test(
+      "catchUp replay of load-then-rate leaves the session at the right "
+      "speed for a late joiner", () async {
+    lane.catchUpEvents = [
+      {
+        "lane": "watch",
+        "action": "load",
+        "url": "https://example.com/movie.mp4",
+        "from": "host1",
+      },
+      {
+        "lane": "watch",
+        "action": "rate",
+        "rate": 1.75,
+        "from": "host1",
+      },
+    ];
+
+    notifier();
+    await _flush();
+
+    expect(ctl.rate, 1.75);
+    expect(state().rate, 1.75);
   });
 
   test("applyRemote on a load updates state and publishes nothing (no loop)",

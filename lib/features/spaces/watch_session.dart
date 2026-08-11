@@ -89,11 +89,20 @@ class WatchSessionState {
     this.url,
     this.isPlaying = false,
     this.isHostOfVideo = false,
+    this.rate = 1.0,
   });
 
   final String? url;
   final bool isPlaying;
   final bool isHostOfVideo;
+
+  /// The room's agreed playback speed: shared state, not a per-viewer
+  /// preference (Chef chose "sync the speed to everyone" over letting each
+  /// viewer run their own). Set locally by [WatchSession.setRate] and by a
+  /// remote "rate" lane event in [WatchSession.applyRemote], and consulted
+  /// by [WatchSession._applyHeartbeat] as the `sessionRate` drift correction
+  /// compares the local player's actual rate against.
+  final double rate;
 
   /// A video is loaded, so the stage has something to show. Drives
   /// [StageKind.watch]/[resolveStageKind] (stage_content.dart): the stage
@@ -111,11 +120,13 @@ class WatchSessionState {
     bool clearUrl = false,
     bool? isPlaying,
     bool? isHostOfVideo,
+    double? rate,
   }) =>
       WatchSessionState(
         url: clearUrl ? null : (url ?? this.url),
         isPlaying: isPlaying ?? this.isPlaying,
         isHostOfVideo: isHostOfVideo ?? this.isHostOfVideo,
+        rate: rate ?? this.rate,
       );
 }
 
@@ -212,6 +223,18 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
     _publish({"action": "pause", "t": controller.position});
   }
 
+  /// Local speed change: sets the controller's rate, updates state, and
+  /// publishes PERSISTED (not ephemeral), same as [loadUrl]/[play]/[pause]/
+  /// [syncPosition]. Persisted on purpose: a late joiner's [catchUp] must
+  /// replay it, or they would arrive at the room's current speed only by
+  /// coincidence instead of by design, landing at 1x until the next live
+  /// "rate" event happened to fire.
+  void setRate(double rate) {
+    controller.setRate(rate);
+    state = state.copyWith(rate: rate);
+    _publish({"action": "rate", "rate": rate});
+  }
+
   /// "Sync everyone to my position": re-broadcasts this client's current
   /// position as an authoritative seek, same as the panel's existing sync
   /// button.
@@ -243,10 +266,17 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   /// events in the lane store for a two hour movie, and catchUp replays the
   /// whole list to every late joiner, which is a seek storm ending on a
   /// stale position. Live heartbeats arrive within 3s anyway.
+  ///
+  /// Publishes at ANY rate, including a non-1x one. This used to bail out
+  /// whenever the snapshot's rate wasn't 1.0, on the theory that an unsynced
+  /// rate was unknowable and therefore not worth reporting; that theory made
+  /// this host stop heartbeating the instant it ran at 1.5x, and the whole
+  /// room silently drifted apart with no heartbeats to catch it. Now that
+  /// rate is shared state (see [setRate]), the host's own rate is exactly as
+  /// knowable and exactly as worth reporting as its position always was.
   void onHeartbeatTick() {
     if (!state.isHostOfVideo) return;
     final s = controller.playbackSnapshot;
-    if (!s.rateIsNormal) return; // do not guess at a non-1.0 rate
     _publishEphemeral(
         {"action": "heartbeat", "t": s.position, "playing": s.playing});
   }
@@ -257,6 +287,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
       local: controller.playbackSnapshot,
       hostPosition: hostPosition,
       hostPlaying: hostPlaying,
+      sessionRate: state.rate,
     );
     switch (action) {
       case DriftAction.none:
@@ -301,6 +332,20 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
       final t = (e["t"] as num?)?.toDouble();
       final playing = e["playing"] as bool? ?? false;
       if (t != null) _applyHeartbeat(t, playing);
+      return;
+    }
+    if (action == "rate") {
+      // Mirror of setRate() for a REMOTE rate change: apply it locally
+      // WITHOUT republishing, same no-loop discipline as heartbeat/stop
+      // above, or every client that ever received one would echo it right
+      // back onto the lane. ADDITIVE on the wire: an older client's
+      // applyWatchEvent has no "rate" case, so it falls into that switch's
+      // existing `default:` branch and simply ignores it.
+      final r = (e["rate"] as num?)?.toDouble();
+      if (r != null) {
+        controller.setRate(r);
+        state = state.copyWith(rate: r);
+      }
       return;
     }
     if (action == "stop") {

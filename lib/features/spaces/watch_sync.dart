@@ -10,8 +10,8 @@
 /// stream (see [applyWatchEvent]) and emit the same events on local control, so
 /// web <-> native participants stay aligned.
 ///
-/// `heartbeat` and `stop` are additive on top of this mapper, handled by
-/// `WatchSession.applyRemote` (watch_session.dart) before either ever
+/// `heartbeat`, `stop` and `rate` are additive on top of this mapper, handled
+/// by `WatchSession.applyRemote` (watch_session.dart) before any of them ever
 /// reaches [applyWatchEvent]: an older client's copy of this file has no
 /// `case` for them, so they fall into the `default:` branch below and are
 /// silently ignored, which is what "additive" means on this wire.
@@ -44,6 +44,13 @@ abstract class WatchPlaybackTarget {
 abstract class WatchController implements WatchPlaybackTarget {
   double get position;
   PlaybackSnapshot get playbackSnapshot;
+
+  /// Set the local player's playback speed. Driven by both a local
+  /// `WatchSession.setRate` call and a remote "rate" lane event applied via
+  /// `WatchSession.applyRemote`, so every participant's player actually runs
+  /// at the room's agreed speed instead of just agreeing on paper.
+  void setRate(double rate);
+
   void dispose();
 }
 

@@ -39,6 +39,12 @@ class WatchVideoController extends ChangeNotifier
   /// for the sync lane even when we are not actually decoding the media.
   double _shadowPos = 0;
 
+  /// Rate used for non-`video_player` sources (embed-only YouTube/Rumble):
+  /// there is no native player to command, so [setRate] just records it here
+  /// so [playbackSnapshot] stays truthful, the same posture as [_shadowPos]
+  /// above and as [play]/[pause]'s existing no-op for this mode.
+  double _shadowRate = 1.0;
+
   /// True when the loaded source is YouTube/Rumble: no inline picture on this
   /// platform, only sync propagation. Lets the UI say so plainly instead of
   /// leaving a blank stage the viewer has to puzzle out.
@@ -154,6 +160,14 @@ class WatchVideoController extends ChangeNotifier
   }
 
   @override
+  void setRate(double rate) {
+    _shadowRate = rate;
+    if (isFilePlayerReady) {
+      _vp?.setPlaybackSpeed(rate);
+    }
+  }
+
+  @override
   double get position {
     if (isFilePlayerReady) {
       return (_vp?.value.position.inMilliseconds ?? 0) / 1000.0;
@@ -170,6 +184,7 @@ class WatchVideoController extends ChangeNotifier
         position: position,
         playing: _vp?.value.isPlaying ?? false,
         buffering: _vp?.value.isBuffering ?? false,
+        rate: _vp?.value.playbackSpeed ?? _shadowRate,
       );
 
   void _disposePlayer() {
