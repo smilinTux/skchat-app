@@ -17,16 +17,59 @@ Every event is a JSON map:
 {"lane": "watch", "action": "seek",      "t": 42.0,     "from": "<identity>"}
 {"lane": "watch", "action": "heartbeat", "t": 88.4,     "from": "<identity>", "playing": true}
 {"lane": "watch", "action": "stop",                     "from": "<identity>"}
+{"lane": "watch", "action": "rate",      "rate": 1.5,   "from": "<identity>"}
 ```
 
 `load`/`play`/`pause`/`seek` are the original, wire-compatible mapping
 (`applyWatchEvent` in `lib/features/spaces/watch_sync.dart`): an older client
-that has never heard of `heartbeat` or `stop` still understands all four.
-`heartbeat` and `stop` are purely additive on top of that, both handled
-separately in `WatchSession.applyRemote`
-(`lib/features/spaces/watch_session.dart`) before either ever reaches
+that has never heard of `heartbeat`, `stop` or `rate` still understands all
+four. `heartbeat`, `stop` and `rate` are purely additive on top of that, all
+three handled separately in `WatchSession.applyRemote`
+(`lib/features/spaces/watch_session.dart`) before any of them ever reaches
 `applyWatchEvent`: an older client's copy of `applyWatchEvent` has no `case`
 for them, so its `default:` branch silently ignores them.
+
+### Playback speed is shared, not personal: `rate`
+
+Chef chose "sync the speed to everyone" over letting each viewer run their
+own: there is one speed for the room, and everyone's player is expected to
+actually run at it, not just agree on paper. The panel
+(`lib/features/spaces/watch_panel.dart`) offers 1x/1.25x/1.5x/1.75x/2x,
+gated on the session being active same as the transport controls.
+
+`WatchSession.setRate` sets the local controller's rate, updates
+`WatchSessionState.rate`, and publishes on the PERSISTED path, same as
+`load`/`play`/`pause`/`seek`, NOT the ephemeral path `heartbeat` uses. This
+is deliberate, the same reasoning `stop` uses: a late joiner's `catchUp`
+must replay the room's current speed, or they would default to 1x until the
+next live `rate` event happened to fire. A REMOTE `rate` event is applied
+the mirror-image way in `applyRemote`: the controller and local state update
+WITHOUT re-publishing, or every client that ever received one would echo it
+right back onto the lane.
+
+Speed used to be neither synced nor persisted, and that broke sync in two
+places at once, both now fixed:
+
+- `resolveDrift` (`watch_drift.dart`) used to bail out (`DriftAction.none`)
+  the instant a viewer's local rate was anything but 1.0, on the theory that
+  an unsynced rate was unknowable and therefore not safe to correct against.
+  That theory made a viewer at 1.5x stop being drift-corrected entirely, at
+  ANY speed, the moment their rate diverged from a hardcoded 1.0. Now that
+  rate is shared state, `resolveDrift` takes a `sessionRate` parameter and
+  compares the local player's ACTUAL rate against it: a match, even at 1.5x
+  or 2x, corrects normally like any other drift. Only a genuine mismatch
+  (the local rate disagrees with what the room agreed on, e.g. a viewer who
+  changed it directly in the YouTube embed's own speed menu, which the embed
+  allows and this app cannot prevent) still suppresses correction for that
+  tick, letting the next `rate` lane event resettle it instead of fighting
+  the viewer's own action.
+- `WatchSession.onHeartbeatTick` used to skip publishing ENTIRELY whenever
+  the host's own snapshot reported a non-1.0 rate, on the same theory. That
+  made a host running at 1.5x go silent: no heartbeats meant the whole room
+  had nothing to correct against and drifted apart with no error, no crash,
+  nothing visibly wrong until someone noticed the picture was out of step.
+  `onHeartbeatTick` now publishes at any rate; the host's own rate is exactly
+  as knowable and exactly as worth reporting as its position always was.
 
 ### Ending a session: `stop`
 
