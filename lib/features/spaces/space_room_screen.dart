@@ -575,15 +575,11 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
 
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
-      floatingActionButton: st.isConnected
-          ? FloatingActionButton(
-              heroTag: "lanes-fab",
-              backgroundColor: SovereignColors.surfaceRaised,
-              onPressed: () => _openLanes(context, join),
-              child: const Icon(Icons.dashboard_customize_outlined,
-                  color: SovereignColors.textPrimary),
-            )
-          : null,
+      // The multitool used to be a floatingActionButton. A FAB floats ABOVE
+      // the body at the bottom-right corner, which is exactly where the
+      // control bar draws Leave, so it covered the one control a user needs
+      // most when a call goes wrong. It now sits IN the control row with the
+      // other controls, where it cannot overlap anything by construction.
       body: st.error != null
           ? _buildError(st.error!)
           : SafeArea(
@@ -623,6 +619,7 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                     join: join,
                     state: st,
                     onLeave: _leave,
+                    onOpenLanes: () => _openLanes(context, join),
                   ),
                 ],
               ),
@@ -1845,11 +1842,13 @@ class _ControlBar extends ConsumerWidget {
     required this.join,
     required this.state,
     required this.onLeave,
+    required this.onOpenLanes,
   });
 
   final SpaceJoin join;
   final SpaceRoomState state;
   final VoidCallback onLeave;
+  final VoidCallback onOpenLanes;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2108,6 +2107,13 @@ class _ControlBar extends ConsumerWidget {
                   onLeave();
                 },
               ),
+            // Multitool. Lives here rather than as a floating action button:
+            // a FAB sits in the bottom-right corner, on top of Leave.
+            _RoundButton(
+              icon: Icons.dashboard_customize_outlined,
+              label: "Tools",
+              onTap: onOpenLanes,
+            ),
             _LeaveButton(onTap: onLeave),
             ],
           ),

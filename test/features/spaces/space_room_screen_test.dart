@@ -2136,4 +2136,28 @@ void main() {
       expect(identical(stillMountedState, mountedOnceState), isTrue);
     });
   });
+
+  group("control bar layout", () {
+    testWidgets(
+        "the multitool control does not cover the Leave button", (tester) async {
+      // Chef: "the multitool menu icon renders on top of the hangup button".
+      // It was a Scaffold floatingActionButton, and the default endFloat
+      // position is the bottom-right corner, which is exactly where the
+      // control bar draws Leave. A FAB floats ABOVE the body, so it covered
+      // the one control a user needs most when a call goes wrong.
+      await tester.pumpWidget(wrapFor(join));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final leave = find.byIcon(Icons.call_end_rounded);
+      final multitool = find.byIcon(Icons.dashboard_customize_outlined);
+      expect(leave, findsOneWidget);
+      expect(multitool, findsOneWidget);
+
+      final leaveRect = tester.getRect(leave);
+      final toolRect = tester.getRect(multitool);
+      expect(leaveRect.overlaps(toolRect), isFalse,
+          reason: "multitool at $toolRect must not cover Leave at $leaveRect");
+    });
+  });
 }
