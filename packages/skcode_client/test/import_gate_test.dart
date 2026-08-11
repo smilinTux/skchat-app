@@ -13,22 +13,27 @@ import 'package:flutter_test/flutter_test.dart';
 ///
 /// Scans every `.dart` under this package's `lib/` and asserts each
 /// `package:` import/export targets only the allowed set: `package:flutter/`,
-/// `package:skworld_module_api/`, or `package:skcode_client/` (self). `dart:`
-/// and relative imports are always fine. Any other `package:` (a shell
-/// package, the app `package:skchat/`, a subapp) is a boundary violation.
+/// `package:skworld_module_api/`, `package:skcode_client/` (self),
+/// `package:dio/` and `package:web_socket_channel/` (the transport layer's
+/// own deps, moved in unchanged by card C-3b). `dart:` and relative imports
+/// are always fine. Any other `package:` (a shell package, the app
+/// `package:skchat/`, a subapp) is a boundary violation.
+///
+/// The transport layer (card C-3) uses double-quoted imports; the original
+/// C-2 skeleton uses single-quoted ones, so [packageImport] matches both
+/// quote styles.
 void main() {
-  test('skcode_client/lib imports only skworld_module_api + flutter/dart core',
-      () {
+  test('skcode_client/lib imports only the allowed package set', () {
     // Test cwd is the package root under `flutter test`.
     final libDir = Directory('lib');
     expect(libDir.existsSync(), isTrue,
         reason: 'run from the skcode_client package root');
 
     final allowed = RegExp(
-      r"package:(flutter|skworld_module_api|skcode_client)/",
+      r"package:(flutter|skworld_module_api|skcode_client|dio|web_socket_channel)/",
     );
     final packageImport = RegExp(
-      r"""^\s*(?:import|export)\s+'package:([^']+)'""",
+      r"""^\s*(?:import|export)\s+["']package:([^"']+)["']""",
     );
 
     final violations = <String>[];

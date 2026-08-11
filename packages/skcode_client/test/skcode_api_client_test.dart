@@ -2,7 +2,7 @@ import "dart:convert";
 
 import "package:dio/dio.dart";
 import "package:flutter_test/flutter_test.dart";
-import "package:skchat/services/skcode/skcode_api_client.dart";
+import "package:skcode_client/skcode_client.dart";
 
 /// Canned-response adapter that RECORDS every request so tests can assert on
 /// headers and URLs, mirroring the project's existing service-test mocking

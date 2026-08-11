@@ -1,12 +1,15 @@
 name: skcode_client
 description: >-
-  The skcode subapp UI facet: SkcodeModule (implements SkworldModule) and the
-  empty shell surface that proves the mount. This is the Grade A package the
-  skcode manifest's entry.flutter_package will point at once the registry flip
-  (card C-10) lands. Phase 1 skeleton only (card C-2, spec section 4.1): it
-  proves the mount pattern and the standalone boot, no transcript/session/WS
-  code yet (that is C-3 and C-4). It depends ONLY on skworld_module_api and
-  Flutter, never on a shell package (enforced by the import gate).
+  The skcode subapp: SkcodeModule (implements SkworldModule), the empty shell
+  surface that proves the mount, and the transport layer (card C-3, moved
+  here unchanged by card C-3b): the Bearer-header HTTP client, the WS tail
+  with jittered-backoff reconnect, and the (sid, seq, ts) dedup merge. This is
+  the Grade A package the skcode manifest's entry.flutter_package will point
+  at once the registry flip (card C-10) lands. No transcript/session UI yet
+  (that is C-4). It depends ONLY on skworld_module_api, Flutter, dio, and
+  web_socket_channel, never on a shell package (enforced by the import gate);
+  it reaches auth only through constructor-injected callbacks
+  (mintToken/onAuthRejected), never a host service directly.
 version: 0.0.1
 publish_to: 'none'
 
@@ -19,12 +22,18 @@ environment:
   flutter: ">=3.0.0"
 
 dependencies:
-  # The UI-facet contract this module implements. This is the ONLY non-Flutter
-  # dependency allowed to cross the boundary (import gate proves it).
+  # The UI-facet contract this module implements.
   skworld_module_api:
     path: ../skworld_module_api
   flutter:
     sdk: flutter
+
+  # The transport layer's own deps (card C-3b): the HTTP client for the
+  # skcode-hostd read plane, and the WS channel its live tail rides. Both are
+  # allowed to cross the import gate (tool/import_gate.sh); a shell package or
+  # the app's own package:skchat/... is what the gate actually forbids.
+  dio: ^5.7.0
+  web_socket_channel: ^3.0.0
 
 dev_dependencies:
   flutter_test:

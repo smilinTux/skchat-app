@@ -1,6 +1,5 @@
 import "package:flutter_test/flutter_test.dart";
-import "package:skchat/services/skcode/skcode_event.dart";
-import "package:skchat/services/skcode/skcode_event_merge.dart";
+import "package:skcode_client/skcode_client.dart";
 
 SkcodeEvent _ev({
   required String sid,
