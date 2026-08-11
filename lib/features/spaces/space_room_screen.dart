@@ -703,10 +703,30 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
       // scrollables), and any drag that starts on one of those never reaches
       // the sheet, so there was no reliable place to grab and lower it.
       showDragHandle: true,
-      builder: (_) => Padding(
+      builder: (sheetCtx) => Padding(
         padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: panel,
+        // An explicit close, because gestures have proven unreliable here and
+        // a panel you cannot dismiss traps the whole screen. A button does not
+        // care which widget swallowed the drag, whether a platform view ate
+        // the pointer, or what the sheet's drag threshold is: it is one tap on
+        // a target Flutter definitely owns. The drag handle above stays for
+        // people who expect to swipe.
+        child: Stack(
+          children: [
+            panel,
+            Positioned(
+              right: 4,
+              top: 4,
+              child: IconButton(
+                icon: const Icon(Icons.close_rounded),
+                color: SovereignColors.textSecondary,
+                tooltip: "Close",
+                onPressed: () => Navigator.of(sheetCtx).pop(),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

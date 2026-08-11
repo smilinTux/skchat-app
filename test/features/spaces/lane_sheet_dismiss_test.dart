@@ -62,10 +62,23 @@ void openLane(BuildContext context, Widget panel) {
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    // showDragHandle removed to match current prod
-    builder: (_) => Padding(
+    showDragHandle: true,
+    builder: (sheetCtx) => Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: panel,
+      child: Stack(
+        children: [
+          panel,
+          Positioned(
+            right: 4,
+            top: 4,
+            child: IconButton(
+              icon: const Icon(Icons.close_rounded),
+              tooltip: "Close",
+              onPressed: () => Navigator.of(sheetCtx).pop(),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -125,5 +138,21 @@ void main() {
 
     expect(find.text("Watch Together"), findsNothing,
         reason: "dragging the panel down must dismiss the sheet");
+  });
+
+  testWidgets("an explicit Close button dismisses the panel regardless of "
+      "which widget swallows drags", (tester) async {
+    // Two gesture-based fixes failed against the real app, so the escape
+    // hatch must not depend on a gesture reaching the sheet at all.
+    await tester.pumpWidget(harness());
+    await tester.tap(find.text("open"));
+    await tester.pumpAndSettle();
+    expect(find.text("Watch Together"), findsOneWidget);
+
+    await tester.tap(find.byTooltip("Close"));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Watch Together"), findsNothing,
+        reason: "Close must always work, whatever ate the drag");
   });
 }
