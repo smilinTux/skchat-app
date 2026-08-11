@@ -89,12 +89,25 @@ class WatchSessionState {
     this.url,
     this.isPlaying = false,
     this.isHostOfVideo = false,
+    this.syncTrace = "",
     this.rate = 1.0,
   });
 
   final String? url;
   final bool isPlaying;
   final bool isHostOfVideo;
+
+  /// A one-line, human-readable trace of the last sync decision.
+  ///
+  /// TEMPORARY, for diagnosing why a late joiner stages a video but never
+  /// plays or seeks. Three candidate causes look identical from the outside
+  /// (no heartbeats arriving at all; heartbeats arriving but the drift policy
+  /// declining to act; the correction being issued but the YouTube iframe
+  /// dropping the command because its player is not ready), and they need
+  /// completely different fixes. Showing the decision on screen is the
+  /// cheapest way to tell them apart on a real phone, where a devtools console
+  /// is not practical. Remove once the cause is known.
+  final String syncTrace;
 
   /// The room's agreed playback speed: shared state, not a per-viewer
   /// preference (Chef chose "sync the speed to everyone" over letting each
@@ -121,11 +134,13 @@ class WatchSessionState {
     bool? isPlaying,
     bool? isHostOfVideo,
     double? rate,
+    String? syncTrace,
   }) =>
       WatchSessionState(
         url: clearUrl ? null : (url ?? this.url),
         isPlaying: isPlaying ?? this.isPlaying,
         isHostOfVideo: isHostOfVideo ?? this.isHostOfVideo,
+        syncTrace: syncTrace ?? this.syncTrace,
         rate: rate ?? this.rate,
       );
 }
@@ -190,6 +205,9 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
 
     return const WatchSessionState();
   }
+
+  /// Heartbeats seen, for [WatchSessionState.syncTrace]. TEMPORARY.
+  int _hb = 0;
 
   Future<void> _publish(Map<String, dynamic> payload) {
     payload["lane"] = "watch";
@@ -289,11 +307,25 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
 
   void _applyHeartbeat(double hostPosition, bool hostPlaying) {
     if (state.isHostOfVideo) return; // never correct the authority
+    final local = controller.playbackSnapshot;
     final action = resolveDrift(
-      local: controller.playbackSnapshot,
+      local: local,
       hostPosition: hostPosition,
       hostPlaying: hostPlaying,
       sessionRate: state.rate,
+    );
+    _hb++;
+    // Deliberately records the DECISION, not just that a beat arrived: "hb 4,
+    // none" and no line at all mean very different things (policy declined vs
+    // nothing is reaching us), and that distinction is the whole point.
+    state = state.copyWith(
+      syncTrace: "hb $_hb | host ${hostPosition.toStringAsFixed(1)}"
+          "${hostPlaying ? " playing" : " paused"}"
+          " | me ${local.position.toStringAsFixed(1)}"
+          "${local.playing ? " playing" : " paused"}"
+          " r${local.rate.toStringAsFixed(2)}"
+          "${local.buffering ? " buffering" : ""}"
+          " | ${action.name}",
     );
     switch (action) {
       case DriftAction.none:
