@@ -103,6 +103,16 @@ class _FakeApiClient implements SkcodeApiClient {
   }
 }
 
+/// Fakes [SkcodeDigestClient] (see `skcode_artifact_pane_test.dart`'s
+/// identical fake for the same rationale: never open a real socket).
+class _FakeDigestClient implements SkcodeDigestClient {
+  _FakeDigestClient(this._result);
+  final Future<SkcodeDigest> Function(String url) _result;
+
+  @override
+  Future<SkcodeDigest> fetchLatest(String url) => _result(url);
+}
+
 void main() {
   test('SkcodeModule instantiates and is a SkworldModule', () {
     const module = SkcodeModule();
@@ -193,6 +203,137 @@ void main() {
       expect(find.text('No sessions yet'), findsOneWidget);
       // A null-token poll must never reach the transport at all.
       expect(apiClient.listCalls, 0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the Digest action defaults onOpenLink to shell.bus.navigate, '
+        'proving a tapped link actually reaches the shell router (card C-9)',
+        (tester) async {
+      final bus = _RecordingBus();
+      final shell = _FakeShell(bus: bus);
+      final apiClient = _FakeApiClient();
+      final digestClient = _FakeDigestClient((url) async {
+        expect(url, 'https://atlas.skworld.io/watchdog/latest/digest.json');
+        return SkcodeDigest.fromJson({
+          'headline': 'One thing happened.',
+          'problems': [
+            {
+              'summary': 'crash looped',
+              'severity': 'problem',
+              'link': {'uri': 'skworld://skcode/session/s-9'},
+            },
+          ],
+        });
+      });
+      final module = SkcodeModule(
+        apiClient: apiClient,
+        digestUrl: 'https://atlas.skworld.io/watchdog/latest/digest.json',
+        digestClient: digestClient,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: shell.theme,
+          home: Builder(builder: (context) => module.build(context, shell)),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Digest'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(Tab, 'Digest'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('One thing happened.'), findsOneWidget);
+      await tester.tap(find.text('crash looped'));
+      await tester.pumpAndSettle();
+
+      // No onOpenLink was supplied to the module, so SkcodeSurface fell back
+      // to shell.bus.navigate: the same "shell router" call skchat's own
+      // deep links use, proving the link actually reaches it and is not
+      // merely rendered inert.
+      expect(bus.navigated, ['skworld://skcode/session/s-9']);
+    });
+
+    testWidgets(
+        'an explicit onOpenLink overrides the shell.bus.navigate default',
+        (tester) async {
+      final bus = _RecordingBus();
+      final shell = _FakeShell(bus: bus);
+      final apiClient = _FakeApiClient();
+      final digestClient = _FakeDigestClient(
+        (url) async => SkcodeDigest.fromJson({
+          'notable': [
+            {
+              'summary': 'merged',
+              'severity': 'notable',
+              'link': {'uri': 'skworld://skchat/thread/x'},
+            },
+          ],
+        }),
+      );
+      final opened = <String>[];
+      final module = SkcodeModule(
+        apiClient: apiClient,
+        digestUrl: 'https://x/digest.json',
+        digestClient: digestClient,
+        onOpenLink: opened.add,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: shell.theme,
+          home: Builder(builder: (context) => module.build(context, shell)),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Digest'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(Tab, 'Digest'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('merged'));
+      await tester.pumpAndSettle();
+
+      expect(opened, ['skworld://skchat/thread/x']);
+      // The bus itself was never asked to navigate: the explicit override
+      // took the call instead of the default.
+      expect(bus.navigated, isEmpty);
+    });
+
+    testWidgets(
+        'standalone (no shell) leaves a tapped digest link inert, never a '
+        'crash', (tester) async {
+      final digestClient = _FakeDigestClient(
+        (url) async => SkcodeDigest.fromJson({
+          'notable': [
+            {
+              'summary': 'no router here',
+              'severity': 'notable',
+              'link': {'uri': 'skworld://skcode/session/s-1'},
+            },
+          ],
+        }),
+      );
+      final module = SkcodeModule(
+        digestUrl: 'https://x/digest.json',
+        digestClient: digestClient,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(builder: (context) => module.build(context, null)),
+        ),
+      );
+
+      await tester.tap(find.byTooltip('Digest'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(Tab, 'Digest'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('no router here'));
+      await tester.pumpAndSettle();
+
       expect(tester.takeException(), isNull);
     });
   });

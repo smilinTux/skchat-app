@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:skworld_module_api/skworld_module_api.dart';
 
 import 'skcode_api_client.dart';
+import 'skcode_artifact_pane.dart';
+import 'skcode_digest.dart';
 import 'skcode_sessions_rail.dart';
 
 /// skcode-hostd's own fallback (matches [SkcodeApiClient]'s default
@@ -30,6 +32,12 @@ const _kDefaultSkcodeOrigin = 'http://localhost:9384';
 ///     shows for an empty list" (spec 4.3), which degrades to an honest
 ///     "No sessions yet" rather than a crash. Wiring a real standalone token
 ///     mint is a follow-up on that same seam, not this card's job.
+///
+/// An app bar "Digest" action (card C-9) presents the artifact pane's swipe-up
+/// bottom sheet focused on data that is not session-scoped, so it is reached
+/// from here rather than from a session screen: [SkcodeArtifactPane.digestUrl]
+/// / [SkcodeArtifactPane.onOpenLink] are forwarded straight from
+/// [SkcodeModule.digestUrl] / the resolved [_onOpenLink] default.
 class SkcodeSurface extends StatefulWidget {
   const SkcodeSurface({
     super.key,
@@ -37,6 +45,9 @@ class SkcodeSurface extends StatefulWidget {
     this.origin,
     this.onAuthRejected,
     this.apiClient,
+    this.digestUrl,
+    this.onOpenLink,
+    this.digestClient,
   });
 
   /// Null means standalone; non-null means mounted (module contract standard
@@ -54,6 +65,18 @@ class SkcodeSurface extends StatefulWidget {
   /// a real socket to [origin]. Production always omits this and gets a real
   /// Dio-backed client built from [origin].
   final SkcodeApiClient? apiClient;
+
+  /// Forwarded from [SkcodeModule.digestUrl] (card C-9): the Digest action
+  /// below reaches it straight through to [SkcodeArtifactPane.digestUrl].
+  final String? digestUrl;
+
+  /// Forwarded from [SkcodeModule.onOpenLink] (card C-9). See [_onOpenLink]
+  /// for the default this surface supplies when a host omits it.
+  final void Function(String uri)? onOpenLink;
+
+  /// Test seam: inject a fake [SkcodeDigestClient] so a widget test never
+  /// opens a real socket for the Digest action either.
+  final SkcodeDigestClient? digestClient;
 
   @override
   State<SkcodeSurface> createState() => _SkcodeSurfaceState();
@@ -83,13 +106,43 @@ class _SkcodeSurfaceState extends State<SkcodeSurface> {
     return shell.auth.token();
   }
 
+  /// The Digest tab's deep-link resolver (card C-9). A host-supplied
+  /// [SkcodeSurface.onOpenLink] always wins (test seam / custom handling);
+  /// otherwise, when mounted, this defaults to `shell.bus.navigate` -
+  /// already "the shell router" a `skworld://` link is meant to land on
+  /// (`ShellBus.navigate`'s own docstring: "cross-module links are routed by
+  /// the shell to the owning module"), so a host does not have to wire this
+  /// explicitly for the common case. Standalone (no shell) has no router to
+  /// resolve against, so links stay inert (null) there.
+  void Function(String uri)? get _onOpenLink =>
+      widget.onOpenLink ?? widget.shell?.bus.navigate;
+
+  void _openDigest(BuildContext context) {
+    SkcodeArtifactPane.showBottomSheet(
+      context,
+      events: const [],
+      digestUrl: widget.digestUrl,
+      onOpenLink: _onOpenLink,
+      digestClient: widget.digestClient,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(title: const Text('Code')),
+      appBar: AppBar(
+        title: const Text('Code'),
+        actions: [
+          IconButton(
+            tooltip: 'Digest',
+            icon: const Icon(Icons.summarize_outlined),
+            onPressed: () => _openDigest(context),
+          ),
+        ],
+      ),
       body: SkcodeSessionsRail(
         apiClient: _apiClient,
         origin: _resolvedOrigin,

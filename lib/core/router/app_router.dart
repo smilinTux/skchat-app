@@ -56,6 +56,21 @@ class AppRoutes {
   /// Code (skcode remote agent sessions), the skcode subapp pane: /code
   static const code = '/code';
 
+  /// A single skcode session, full screen (spec section 7, card C-4 part 4):
+  /// /code/s/:sid. Not yet mounted to a screen (card C-10, the Grade A
+  /// registry flip, is deliberately last); the constant exists now so
+  /// `mapSkcodeDeeplink` (`lib/features/shell/app_shell_context.dart`) has a
+  /// real target to resolve `skworld://skcode/session/<sid>` onto (card C-9).
+  static const codeSession = '/code/s/:sid';
+
+  /// Build the concrete path for [codeSession].
+  static String codeSessionPath(String sid) => '/code/s/$sid';
+
+  /// The Digest tab's deep-link target (card C-9, spec section 9):
+  /// `skworld://skcode/digest` resolves here. Same not-yet-mounted status as
+  /// [codeSession].
+  static const codeDigest = '/code/digest';
+
   /// Operator hub ("Ops" tab), links the operator control surfaces: /hub
   static const hub = '/hub';
 

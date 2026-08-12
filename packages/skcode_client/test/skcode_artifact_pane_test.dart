@@ -2,6 +2,22 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:skcode_client/skcode_client.dart";
 
+/// Fakes [SkcodeDigestClient] the same way the rest of this package's test
+/// suite fakes [SkcodeApiClient] (`implements`, not a mocking framework): a
+/// widget test must never open a real socket, per the transport-layer test
+/// convention already established for the other tabs in this pane.
+class _FakeDigestClient implements SkcodeDigestClient {
+  _FakeDigestClient(this._result);
+  final Future<SkcodeDigest> Function(String url) _result;
+  int calls = 0;
+
+  @override
+  Future<SkcodeDigest> fetchLatest(String url) {
+    calls++;
+    return _result(url);
+  }
+}
+
 SkcodeEvent _ev({
   String type = "diff",
   String text = "",
@@ -19,11 +35,12 @@ Widget _wrap(Widget child, {ThemeData? theme}) => MaterialApp(
 
 void main() {
   group("tabs", () {
-    testWidgets("without a chat slot renders exactly Diff, Logs, Raw",
+    testWidgets("without a chat slot renders exactly Diff, Digest, Logs, Raw",
         (tester) async {
       await tester.pumpWidget(_wrap(const SkcodeArtifactPane(events: [])));
 
       expect(find.widgetWithText(Tab, "Diff"), findsOneWidget);
+      expect(find.widgetWithText(Tab, "Digest"), findsOneWidget);
       expect(find.widgetWithText(Tab, "Logs"), findsOneWidget);
       expect(find.widgetWithText(Tab, "Raw"), findsOneWidget);
       expect(find.widgetWithText(Tab, "Chat"), findsNothing);
@@ -35,9 +52,9 @@ void main() {
       );
 
       final tabBar = tester.widget<TabBar>(find.byType(TabBar));
-      // Chat is first, ahead of Diff/Logs/Raw (spec: "Chat | Diff | Digest |
-      // Logs | Raw"; Digest is C-9's, not built here).
-      expect(tabBar.tabs.length, 4);
+      // Chat is first, ahead of Diff/Digest/Logs/Raw (spec: "Chat | Diff |
+      // Digest | Logs | Raw").
+      expect(tabBar.tabs.length, 5);
       expect(find.widgetWithText(Tab, "Chat"), findsOneWidget);
     });
 
@@ -178,6 +195,171 @@ void main() {
       await tester.pumpWidget(_wrap(SkcodeArtifactPane(events: events)));
 
       expect(find.text("No diffs yet"), findsOneWidget);
+    });
+  });
+
+  group("Digest tab", () {
+    Future<void> openDigestTab(WidgetTester tester, Widget pane) async {
+      await tester.pumpWidget(_wrap(pane));
+      await tester.tap(find.widgetWithText(Tab, "Digest"));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets("no digestUrl renders the not-configured state honestly",
+        (tester) async {
+      await openDigestTab(
+        tester,
+        const SkcodeArtifactPane(events: []),
+      );
+
+      expect(find.text("Digest not configured"), findsOneWidget);
+    });
+
+    testWidgets(
+        "a fetched digest renders headline, Problems, and Notable, and a "
+        "tapped link with a uri calls onOpenLink with that uri",
+        (tester) async {
+      final opened = <String>[];
+      final client = _FakeDigestClient((url) async {
+        expect(url, "https://atlas.skworld.io/watchdog/latest/digest.json");
+        return SkcodeDigest.fromJson({
+          "date": "2026-08-11",
+          "headline": "One incident, three merges.",
+          "problems": [
+            {
+              "summary": "skchat daemon crash-looped on .41",
+              "severity": "problem",
+              "source": "fleet",
+              "kind": "ServiceCrashLoop",
+              "link": {"uri": "skworld://skcode/session/s-42", "http": "https://x"},
+              "ref": "fleet:1",
+            },
+          ],
+          "notable": [
+            {
+              "summary": "PR #61 merged to main",
+              "severity": "notable",
+              "source": "git",
+              "ref": "git:61",
+            },
+          ],
+          "info_counts": {"scheduler": 4, "coord_autocode": 2},
+        });
+      });
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          digestUrl: "https://atlas.skworld.io/watchdog/latest/digest.json",
+          digestClient: client,
+          onOpenLink: opened.add,
+        ),
+      );
+
+      expect(find.text("One incident, three merges."), findsOneWidget);
+      expect(find.textContaining("Problems"), findsOneWidget);
+      expect(find.text("skchat daemon crash-looped on .41"), findsOneWidget);
+      expect(find.textContaining("Notable"), findsOneWidget);
+      expect(find.text("PR #61 merged to main"), findsOneWidget);
+      expect(find.text("6 quiet events"), findsOneWidget);
+
+      await tester.tap(find.text("skchat daemon crash-looped on .41"));
+      await tester.pumpAndSettle();
+
+      // The link's `uri` (shell-resolvable) is preferred over its `http`
+      // fallback (watchdog spec section 8).
+      expect(opened, ["skworld://skcode/session/s-42"]);
+    });
+
+    testWidgets("a row with no link is not tappable", (tester) async {
+      final client = _FakeDigestClient(
+        (url) async => SkcodeDigest.fromJson({
+          "notable": [
+            {"summary": "no link on this one", "severity": "notable"},
+          ],
+        }),
+      );
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          digestUrl: "https://x/digest.json",
+          digestClient: client,
+        ),
+      );
+
+      final tile = tester.widget<ListTile>(
+        find.ancestor(
+          of: find.text("no link on this one"),
+          matching: find.byType(ListTile),
+        ),
+      );
+      expect(tile.onTap, isNull);
+    });
+
+    testWidgets("no digest published yet (404) renders that exact message",
+        (tester) async {
+      final client = _FakeDigestClient(
+        (url) async => throw const SkcodeDigestNotFoundException(),
+      );
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          digestUrl: "https://x/digest.json",
+          digestClient: client,
+        ),
+      );
+
+      expect(find.text("No digest published yet"), findsOneWidget);
+    });
+
+    testWidgets(
+        "a fetch failure degrades to an error state with Retry, never a "
+        "crash", (tester) async {
+      final client = _FakeDigestClient(
+        (url) async => throw const SkcodeDigestFetchException("boom"),
+      );
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          digestUrl: "https://x/digest.json",
+          digestClient: client,
+        ),
+      );
+
+      expect(find.text("Could not load the digest"), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, "Retry"), findsOneWidget);
+      expect(client.calls, 1);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, "Retry"));
+      await tester.pumpAndSettle();
+
+      expect(client.calls, 2);
+    });
+
+    testWidgets("malformed digest content degrades to an error, not a crash",
+        (tester) async {
+      final client = _FakeDigestClient(
+        (url) async => throw const SkcodeDigestParseException("not json"),
+      );
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          digestUrl: "https://x/digest.json",
+          digestClient: client,
+        ),
+      );
+
+      expect(find.text("Could not load the digest"), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 
