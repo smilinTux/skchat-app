@@ -32,6 +32,12 @@
 ///  * [SkcodeTranscriptList] / [SkcodeRawRail] - the two views (card C-4
 ///    parts 2-3). Both key their rows on [skcodeEventRowId] so the same
 ///    underlying event anchors to the same row in either view.
+///  * [SkcodeArtifactPane] - the artifact pane (card C-7, spec section 7
+///    rev 2): Diff/Logs/Raw tabs (Digest is C-9's, chat content is C-12's;
+///    both have reserved slots), the two-layer negative-x panel-left
+///    shadow ported from Buzz with attribution, and
+///    [SkcodeArtifactPane.showBottomSheet] for the phone swipe-up
+///    presentation.
 ///  * [SkcodeApiClient] / [SkcodeSessionStore] / [SkcodeSessionsListStore] /
 ///                      [SkcodeWsTransport] / [SkcodeEvent] - the transport
 ///                      layer (card C-3, moved here unchanged by card C-3b):
@@ -57,6 +63,7 @@ library;
 
 export 'src/skcode_activity_taxonomy.dart';
 export 'src/skcode_api_client.dart';
+export 'src/skcode_artifact_pane.dart';
 export 'src/skcode_config.dart';
 export 'src/skcode_event.dart';
 export 'src/skcode_event_merge.dart';

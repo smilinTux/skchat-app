@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 
 import "skcode_api_client.dart";
+import "skcode_artifact_pane.dart";
 import "skcode_config.dart";
 import "skcode_raw_rail.dart";
 import "skcode_session_store.dart";
@@ -23,7 +24,10 @@ enum SkcodeRailMode { transcript, raw }
 /// [SkcodeRawRail] for its body, toggled EXCLUSIVELY: never both at once.
 ///
 /// The composer (chat send / session inject) is out of scope for this card
-/// (C-5); this screen is transcript + raw rail only.
+/// (C-5); this screen is transcript + raw rail, plus an "Artifacts" app bar
+/// action (card C-7) that presents [SkcodeArtifactPane.showBottomSheet]:
+/// the phone swipe-up entry point to the Diff/Logs/Raw tabs, spec section
+/// 7's "artifact tabs via a swipe-up bottom sheet".
 class SkcodeSessionScreen extends StatefulWidget {
   const SkcodeSessionScreen({
     super.key,
@@ -98,6 +102,14 @@ class _SkcodeSessionScreenState extends State<SkcodeSessionScreen> {
       appBar: AppBar(
         title: Text(widget.sid),
         actions: [
+          IconButton(
+            tooltip: "Artifacts",
+            icon: const Icon(Icons.dashboard_outlined),
+            onPressed: () => SkcodeArtifactPane.showBottomSheet(
+              context,
+              events: _state.events,
+            ),
+          ),
           IconButton(
             tooltip: isRaw ? "Show transcript" : "Show raw events",
             icon: Icon(isRaw ? Icons.forum_outlined : Icons.data_object),

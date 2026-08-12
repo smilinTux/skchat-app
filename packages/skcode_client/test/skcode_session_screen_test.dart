@@ -140,6 +140,36 @@ void main() {
     expect(find.text("hello from the wire"), findsOneWidget);
   });
 
+  testWidgets(
+    "the Artifacts action presents the artifact pane as a bottom sheet "
+    "(card C-7 phone entry point)",
+    (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(SkcodeArtifactPane), findsNothing);
+
+      await tester.tap(find.byTooltip("Artifacts"));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SkcodeArtifactPane), findsOneWidget);
+      expect(find.widgetWithText(Tab, "Diff"), findsOneWidget);
+    },
+  );
+
   testWidgets("disposing the screen does not throw", (tester) async {
     final apiClient = _FakeApiClient();
 
