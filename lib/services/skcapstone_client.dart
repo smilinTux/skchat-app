@@ -125,6 +125,25 @@ class SKCapstoneClient {
     }
   }
 
+  /// GET /api/gtd?list=... a GTD list (next-actions/inbox/waiting-for/...). Each
+  /// item carries a `cardId` (`gtd-ID`) so the AI suggest/queue actions drive the
+  /// SAME card routes as kanban. Empty list on error.
+  Future<List<GtdItem>> getGtdNext({String list = 'next-actions'}) async {
+    try {
+      final resp = await _dashDio.get<Map<String, dynamic>>(
+        '/api/gtd',
+        queryParameters: {'list': list},
+      );
+      final items = resp.data?['items'] as List? ?? const [];
+      return items
+          .whereType<Map<String, dynamic>>()
+          .map(GtdItem.fromJson)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// POST /api/card/{id}/{action} card mutation (move/assign/priority/label/
   /// note). Attributes the actor and returns true on success. `body` carries the
   /// action fields (e.g. move -> {column: 'doing'}).
@@ -205,6 +224,38 @@ class CardSuggestion {
   factory CardSuggestion.fromJson(Map<String, dynamic> j) => CardSuggestion(
         text: j['text'] as String? ?? '',
         mode: j['mode'] as String? ?? 'propose',
+      );
+}
+
+/// One GTD item (next-action / inbox / waiting-for). `cardId` is the shadow
+/// card id (`gtd-ID`) that the AI suggest/queue actions attach to.
+class GtdItem {
+  const GtdItem({
+    required this.id,
+    required this.cardId,
+    required this.text,
+    this.context,
+    this.priority,
+    this.status,
+    this.source,
+  });
+
+  final String id;
+  final String cardId;
+  final String text;
+  final String? context;
+  final String? priority;
+  final String? status;
+  final String? source;
+
+  factory GtdItem.fromJson(Map<String, dynamic> j) => GtdItem(
+        id: j['id'] as String? ?? '',
+        cardId: j['card_id'] as String? ?? 'gtd-${j['id'] ?? ''}',
+        text: j['text'] as String? ?? '',
+        context: j['context'] as String?,
+        priority: j['priority'] as String?,
+        status: j['status'] as String?,
+        source: j['source'] as String?,
       );
 }
 

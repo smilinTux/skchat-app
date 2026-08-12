@@ -156,6 +156,16 @@ const List<ModuleManifest> kBuiltinModules = [
     description: 'Move coord cards across columns',
   ),
   ModuleManifest(
+    id: 'gtd',
+    title: 'GTD',
+    icon: Icons.checklist_rtl_outlined,
+    route: AppRoutes.gtd,
+    defaultPlacement: ModulePlacement.drawer,
+    role: ModuleRole.operator,
+    order: 136,
+    description: 'GTD lists with AI next-steps',
+  ),
+  ModuleManifest(
     id: 'recordings',
     title: 'Recordings',
     icon: Icons.fiber_manual_record_outlined,
@@ -183,7 +193,7 @@ const List<ModuleManifest> kBuiltinModules = [
 /// [kModulesIntroducedAtVersion]. Fresh installs seed every module at this
 /// version; existing users additively pick up only the ids above their stored
 /// version.
-const int kCurrentSeedVersion = 2;
+const int kCurrentSeedVersion = 3;
 
 /// Module ids first shipped as default-on at each seed version (> 0). Version 1
 /// introduces `skcode`, folded in as the "Code" nav subapp (R4.1). Versions are
@@ -193,6 +203,7 @@ const int kCurrentSeedVersion = 2;
 const Map<int, List<String>> kModulesIntroducedAtVersion = {
   1: ['skcode'],
   2: ['kanban'],
+  3: ['gtd'],
 };
 
 /// Ids introduced strictly AFTER [fromVersion] and up to [kCurrentSeedVersion].

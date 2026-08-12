@@ -27,6 +27,7 @@ import '../../features/conf/conf_screen.dart';
 import '../../features/facetime/facetime_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
 import '../../features/coord/kanban_screen.dart';
+import '../../features/gtd/gtd_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
 import '../../features/skcode/skcode_pane.dart';
@@ -107,6 +108,9 @@ class AppRoutes {
 
   /// Kanban board (native): /kanban
   static const kanban = '/kanban';
+
+  /// GTD list (native): /gtd
+  static const gtd = '/gtd';
 
   /// Cluster control (skbloom): /cluster
   static const cluster = '/cluster';
@@ -438,6 +442,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const KanbanScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.gtd,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const GtdScreen(),
             ),
           ),
           GoRoute(
