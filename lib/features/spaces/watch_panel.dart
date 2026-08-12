@@ -195,40 +195,6 @@ class _WatchPanelState extends ConsumerState<WatchPanel> {
                 ),
               ],
             ),
-          // TEMPORARY sync diagnostic. A late joiner stages a video but never
-          // plays or seeks, and the three candidate causes are indistinguishable
-          // from the outside: nothing arriving, the drift policy declining, or
-          // the correction being issued and dropped by the embed. This shows
-          // which, on the device itself, because a devtools console is not
-          // practical on a phone. Remove once the cause is known.
-          if (state.isActive && state.syncTrace.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                state.syncTrace,
-                key: const Key("watch-sync-trace"),
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontFamily: "monospace",
-                  color: SovereignColors.textTertiary,
-                ),
-              ),
-            ),
-          // The host publishes heartbeats and never corrects itself, so it has
-          // no trace to show. Saying so beats an empty gap that reads like the
-          // diagnostic is broken.
-          if (state.isActive && state.isHostOfVideo)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: Text(
-                "this device is the host (it sends the beat, never corrects)",
-                style: TextStyle(
-                  fontSize: 10,
-                  fontFamily: "monospace",
-                  color: SovereignColors.textTertiary,
-                ),
-              ),
-            ),
           // Gated on isActive same as the transport controls above: there is
           // no room speed to set until a video is actually loaded.
           if (state.isActive)

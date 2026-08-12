@@ -198,8 +198,6 @@ lib/features/spaces/terminal_panel.dart:13
 lib/features/spaces/terminal_panel.dart:14
 lib/features/spaces/terminal_panel.dart:14
 lib/features/spaces/terminal_panel.dart:16
-lib/features/spaces/watch_panel.dart:10
-lib/features/spaces/watch_panel.dart:10
 lib/features/spaces/watch_panel.dart:12
 lib/features/spaces/watch_panel.dart:13
 lib/features/spaces/watch_panel.dart:16
