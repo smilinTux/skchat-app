@@ -29,6 +29,8 @@ import '../../features/coord/coord_board_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
 import '../../features/skcode/skcode_pane.dart';
+import '../../features/skcode/skcode_module_host_screen.dart';
+import '../../features/skcode/skcode_deeplink_routes.dart';
 import '../../features/shell/external_module_pane.dart';
 import '../../features/skmap/skmap_screen.dart';
 import '../../features/skos/skos_files_screen.dart';
@@ -53,23 +55,33 @@ class AppRoutes {
   /// SK Spaces directory (live audio rooms): /spaces
   static const spaces = '/spaces';
 
-  /// Code (skcode remote agent sessions), the skcode subapp pane: /code
+  /// Code (skcode remote agent sessions), the skcode subapp pane: /code.
+  /// GRADE A as of card C-10: mounts the native `skcode_client` module
+  /// (`SkcodeModuleHostScreen`).
   static const code = '/code';
 
   /// A single skcode session, full screen (spec section 7, card C-4 part 4):
-  /// /code/s/:sid. Not yet mounted to a screen (card C-10, the Grade A
-  /// registry flip, is deliberately last); the constant exists now so
-  /// `mapSkcodeDeeplink` (`lib/features/shell/app_shell_context.dart`) has a
-  /// real target to resolve `skworld://skcode/session/<sid>` onto (card C-9).
+  /// /code/s/:sid. Mounted (card C-10, the Grade A registry flip) to
+  /// `SkcodeSessionRouteScreen`, so `mapSkcodeDeeplink`
+  /// (`lib/features/shell/app_shell_context.dart`) resolving
+  /// `skworld://skcode/session/<sid>` onto this path (card C-9) now lands on
+  /// a real screen, not just a mapped string.
   static const codeSession = '/code/s/:sid';
 
   /// Build the concrete path for [codeSession].
   static String codeSessionPath(String sid) => '/code/s/$sid';
 
   /// The Digest tab's deep-link target (card C-9, spec section 9):
-  /// `skworld://skcode/digest` resolves here. Same not-yet-mounted status as
-  /// [codeSession].
+  /// `skworld://skcode/digest` resolves here. Mounted (card C-10) to
+  /// `SkcodeDigestRouteScreen`, same as [codeSession].
   static const codeDigest = '/code/digest';
+
+  /// The Grade B iframe pane, held back (card C-10's own parity finding: see
+  /// `lib/features/skcode/skcode_pane.dart`'s doc comment for exactly which
+  /// iframe capability the native pane does not yet reproduce). Reachable
+  /// only via the native pane's "open classic" affordance
+  /// (`SkcodeModuleHostScreen`), never linked from nav/drawer.
+  static const codeLegacy = '/code/legacy';
 
   /// Operator hub ("Ops" tab), links the operator control surfaces: /hub
   static const hub = '/hub';
@@ -377,8 +389,31 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.code,
             pageBuilder: (context, state) => _noTransitionPage(
               state,
-              const SkcodePane(),
+              const SkcodeModuleHostScreen(),
             ),
+            routes: [
+              // /code/s/:sid: a single session, deep-linkable (card C-10).
+              GoRoute(
+                path: 's/:sid',
+                builder: (context, state) {
+                  final sid = state.pathParameters['sid']!;
+                  return SkcodeSessionRouteScreen(sid: sid);
+                },
+              ),
+              // /code/digest: the artifact pane's Digest tab, deep-linkable
+              // (card C-10; card C-9 built the tab itself).
+              GoRoute(
+                path: 'digest',
+                builder: (context, state) => const SkcodeDigestRouteScreen(),
+              ),
+              // /code/legacy: the held-back Grade B iframe pane (card C-10's
+              // own parity finding). Reached only via the native pane's
+              // "open classic" affordance, never linked from nav/drawer.
+              GoRoute(
+                path: 'legacy',
+                builder: (context, state) => const SkcodePane(),
+              ),
+            ],
           ),
           GoRoute(
             path: AppRoutes.hub,
