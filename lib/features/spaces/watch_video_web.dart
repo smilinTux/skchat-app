@@ -82,8 +82,19 @@ class WatchVideoController implements WatchController {
   /// [_WatchVideoState.initState], right after [iframeEl] is assigned.
   void _attach() {
     _msgSub = html.window.onMessage.listen((event) {
-      // Other origins post to this window too; only trust the iframe we own.
-      if (event.source != iframeEl?.contentWindow) return;
+      // Trust by ORIGIN, not by element identity.
+      //
+      // The old check was `event.source != iframeEl?.contentWindow`, which
+      // silently rejected every frame whenever the controller's iframeEl is
+      // not the element Flutter actually slotted into the DOM. That is exactly
+      // what the live measurement showed: posting the handshake by hand to the
+      // DOM iframe produced 26 frames, while the app saw zero. Same symptom
+      // for the send side, which posts through the same reference.
+      //
+      // Origin is the security property that matters here anyway: only the
+      // YouTube embed can post as youtube.com, and the payload is then parsed
+      // strictly as an infoDelivery frame and discarded if it is anything else.
+      if (event.origin != "https://www.youtube.com") return;
       final data = event.data;
       if (data is! String) return;
       final snap = parseYouTubeInfo(data, previous: _latest);
@@ -97,18 +108,31 @@ class WatchVideoController implements WatchController {
   /// Idempotent: YouTube ignores a duplicate handshake, so re-sending is free.
   void _sendHandshake() {
     if (_mode != _WatchMode.youtube) return;
-    final win = iframeEl?.contentWindow;
-    if (win == null) return;
+    // Aim at every YouTube embed in the document, not just our own reference.
+    // If iframeEl is not the slotted element, posting through it goes nowhere,
+    // which is the send-side half of the same bug as the origin filter above.
+    final wins = <html.WindowBase>[];
+    final own = iframeEl?.contentWindow;
+    if (own != null) wins.add(own);
+    for (final el in html.document.querySelectorAll("iframe")) {
+      if (el is! html.IFrameElement) continue;
+      if (!el.src!.contains("youtube.com/embed/")) continue;
+      final w = el.contentWindow;
+      if (w != null && !wins.contains(w)) wins.add(w);
+    }
+    if (wins.isEmpty) return;
     // Never let a failed handshake break playback. An earlier version of this
     // called postMessage from inside load() with nothing catching a throw, so
     // a failure took load() down with it: the panel's Load never set state,
     // the stage never mounted, and the video simply did not appear. Position
     // reporting is best effort; showing the video is not.
     try {
-      win.postMessage(
-        jsonEncode({"event": "listening", "id": viewType ?? ""}),
-        "https://www.youtube.com",
-      );
+      for (final w in wins) {
+        w.postMessage(
+          jsonEncode({"event": "listening", "id": viewType ?? ""}),
+          "https://www.youtube.com",
+        );
+      }
     } catch (_) {
       // Posting into a frame that is between documents (or otherwise not
       // ready) is expected; the retry pump will try again.
