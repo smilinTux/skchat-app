@@ -117,20 +117,82 @@ class AgentModelState {
   List<AgentModel> get available => catalog.models;
 }
 
+/// The public-safe curated card for a model (the gateway model dex). Carried
+/// on `/v1/models` (and so through the daemon), minus the operator-internal
+/// `notes` which the gateway strips before the funnel. Every field is
+/// optional: a model with no curated card simply has `card == null`.
+class ModelCard {
+  const ModelCard({
+    this.displayName,
+    this.org,
+    this.summary,
+    this.goodAt = const [],
+    this.tier,
+    this.contextLength,
+    this.maxOutputTokens,
+    this.supportedParameters = const [],
+    this.modality,
+    this.params,
+    this.quant,
+    this.speed,
+    this.license,
+  });
+
+  final String? displayName;
+  final String? org;
+  final String? summary;
+  final List<String> goodAt;
+  final String? tier; // local | free-remote | paid-cloud
+  final int? contextLength;
+  final int? maxOutputTokens;
+  final List<String> supportedParameters;
+  final String? modality;
+  final String? params;
+  final String? quant;
+  final String? speed;
+  final String? license;
+
+  bool get tools => supportedParameters.contains('tools');
+  bool get vision => (modality ?? '').contains('image');
+
+  factory ModelCard.fromJson(Map<String, dynamic> j) => ModelCard(
+        displayName: j['display_name'] as String?,
+        org: j['org'] as String?,
+        summary: j['summary'] as String?,
+        goodAt: (j['good_at'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        tier: j['tier'] as String?,
+        contextLength: (j['context_length'] as num?)?.toInt(),
+        maxOutputTokens: (j['max_output_tokens'] as num?)?.toInt(),
+        supportedParameters: (j['supported_parameters'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        modality: j['modality'] as String?,
+        params: (j['params'] ?? j['size']) as String?,
+        quant: j['quant'] as String?,
+        speed: j['speed'] as String?,
+        license: j['license'] as String?,
+      );
+}
+
 /// A discovered gateway model plus whether it is ENABLED (advertised on the
-/// gateway allowlist, and so offered in the picker / to the brain).
+/// gateway allowlist, and so offered in the picker / to the brain). `card`
+/// carries the curated model-dex card when the gateway has one for this id.
 class ManagedModel {
   const ManagedModel({
     required this.id,
     required this.provider,
     required this.advertised,
     this.free,
+    this.card,
   });
 
   final String id;
   final String provider;
   final bool advertised;
   final bool? free;
+  final ModelCard? card;
 
   factory ManagedModel.fromJson(Map<String, dynamic> j) => ManagedModel(
         id: j['id'] as String? ?? '',
@@ -139,6 +201,9 @@ class ManagedModel {
             : (j['owned_by'] as String? ?? 'gateway'),
         advertised: j['advertised'] as bool? ?? false,
         free: j['free'] as bool?,
+        card: j['card'] is Map<String, dynamic>
+            ? ModelCard.fromJson(j['card'] as Map<String, dynamic>)
+            : null,
       );
 }
 
