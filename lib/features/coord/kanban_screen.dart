@@ -330,7 +330,19 @@ class _MiniChip extends StatelessWidget {
   }
 }
 
-class _CardSheet extends StatelessWidget {
+Color _modeColor(String mode) {
+  switch (mode) {
+    case 'execute':
+      return const Color(0xFFEF4444);
+    case 'dry-run':
+      return const Color(0xFFF59E0B);
+    case 'propose':
+    default:
+      return const Color(0xFF38BDF8);
+  }
+}
+
+class _CardSheet extends ConsumerStatefulWidget {
   const _CardSheet({
     required this.card,
     required this.columns,
@@ -342,59 +354,209 @@ class _CardSheet extends StatelessWidget {
   final ValueChanged<String> onMove;
 
   @override
+  ConsumerState<_CardSheet> createState() => _CardSheetState();
+}
+
+class _CardSheetState extends ConsumerState<_CardSheet> {
+  List<CardSuggestion>? _suggestions;
+  bool _loadingSuggestions = false;
+  String? _queuing; // the suggestion text currently being queued
+
+  Future<void> _suggest() async {
+    setState(() => _loadingSuggestions = true);
+    final s =
+        await ref.read(skCapstoneClientProvider).getCardSuggestions(widget.card.id);
+    if (!mounted) return;
+    setState(() {
+      _loadingSuggestions = false;
+      _suggestions = s;
+    });
+  }
+
+  Future<void> _queue(CardSuggestion sug) async {
+    setState(() => _queuing = sug.text);
+    final runId = await ref.read(skCapstoneClientProvider).queueAi(
+          widget.card.id,
+          instruction: sug.text,
+          mode: sug.mode,
+        );
+    if (!mounted) return;
+    setState(() => _queuing = null);
+    final ok = runId != null;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Queued the AI to proceed ($runId)'
+          : 'Could not queue (offline?)'),
+    ));
+    if (ok) Navigator.of(context).maybePop();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final card = widget.card;
     final tt = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(card.title, style: tt.titleMedium),
-            const SizedBox(height: 6),
-            Text(
-              [
-                if ((card.kind ?? '').isNotEmpty) card.kind,
-                if (card.swimlane.isNotEmpty) card.swimlane,
-                if ((card.priority ?? '').isNotEmpty) card.priority,
-                if ((card.owner ?? '').isNotEmpty) '@${card.owner}',
-                'in ${_columnLabel(card.status)}',
-              ].whereType<String>().join('  ·  '),
-              style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-            ),
-            if (card.labels.isNotEmpty) ...[
-              const SizedBox(height: 10),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(card.title, style: tt.titleMedium),
+              const SizedBox(height: 6),
+              Text(
+                [
+                  if ((card.kind ?? '').isNotEmpty) card.kind,
+                  if (card.swimlane.isNotEmpty) card.swimlane,
+                  if ((card.priority ?? '').isNotEmpty) card.priority,
+                  if ((card.owner ?? '').isNotEmpty) '@${card.owner}',
+                  'in ${_columnLabel(card.status)}',
+                ].whereType<String>().join('  ·  '),
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              if (card.labels.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: card.labels
+                      .map((l) => Chip(
+                            label: Text(l),
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Text('MOVE TO',
+                  style: tt.labelSmall?.copyWith(
+                      letterSpacing: 0.8, color: cs.onSurfaceVariant)),
+              const SizedBox(height: 8),
               Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: card.labels
-                    .map((l) => Chip(
-                          label: Text(l),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
+                spacing: 8,
+                runSpacing: 8,
+                children: widget.columns
+                    .where((c) => c != card.status)
+                    .map((c) => OutlinedButton(
+                          onPressed: () => widget.onMove(c),
+                          child: Text(_columnLabel(c)),
                         ))
                     .toList(),
               ),
+              const SizedBox(height: 20),
+              Text('NEXT STEPS (AI)',
+                  style: tt.labelSmall?.copyWith(
+                      letterSpacing: 0.8, color: cs.onSurfaceVariant)),
+              const SizedBox(height: 8),
+              if (_suggestions == null)
+                FilledButton.tonalIcon(
+                  onPressed: _loadingSuggestions ? null : _suggest,
+                  icon: _loadingSuggestions
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome_outlined),
+                  label: Text(
+                      _loadingSuggestions ? 'Thinking...' : 'Suggest next steps'),
+                )
+              else if (_suggestions!.isEmpty)
+                Text('No suggestions right now.',
+                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant))
+              else
+                Column(
+                  children: [
+                    for (final s in _suggestions!)
+                      _SuggestionTile(
+                        suggestion: s,
+                        busy: _queuing == s.text,
+                        onQueue: () => _queue(s),
+                      ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _loadingSuggestions ? null : _suggest,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Re-suggest'),
+                      ),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 4),
+              Text(
+                'Queue dispatches an agent to work this card. "propose" analyses '
+                'only, "execute" produces a draft.',
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+              ),
             ],
-            const SizedBox(height: 16),
-            Text('MOVE TO',
-                style: tt.labelSmall?.copyWith(
-                    letterSpacing: 0.8, color: cs.onSurfaceVariant)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: columns
-                  .where((c) => c != card.status)
-                  .map((c) => OutlinedButton(
-                        onPressed: () => onMove(c),
-                        child: Text(_columnLabel(c)),
-                      ))
-                  .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SuggestionTile extends StatelessWidget {
+  const _SuggestionTile({
+    required this.suggestion,
+    required this.busy,
+    required this.onQueue,
+  });
+
+  final CardSuggestion suggestion;
+  final bool busy;
+  final VoidCallback onQueue;
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final mc = _modeColor(suggestion.mode);
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(suggestion.text, style: tt.bodyMedium),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(5),
+                      border: Border.all(color: mc.withValues(alpha: 0.7)),
+                    ),
+                    child: Text(suggestion.mode,
+                        style: tt.labelSmall?.copyWith(color: mc)),
+                  ),
+                ],
+              ),
             ),
+            const SizedBox(width: 8),
+            busy
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : FilledButton(
+                    onPressed: onQueue,
+                    child: const Text('Queue'),
+                  ),
           ],
         ),
       ),

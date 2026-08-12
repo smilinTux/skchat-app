@@ -145,6 +145,67 @@ class SKCapstoneClient {
   /// Convenience: move a card to a column.
   Future<bool> moveCard(String cardId, String column) =>
       mutateCard(cardId, 'move', {'column': column});
+
+  /// GET /api/card/{id}/ai-suggestions, AI next-step options for a card. The
+  /// LLM path can take ~15-35s, so this uses a longer receive timeout. `llm:
+  /// false` returns instant heuristics. Empty list on error.
+  Future<List<CardSuggestion>> getCardSuggestions(String cardId,
+      {bool llm = true}) async {
+    try {
+      final resp = await _dashDio.get<Map<String, dynamic>>(
+        '/api/card/$cardId/ai-suggestions',
+        queryParameters: {'llm': llm ? '1' : '0'},
+        options: Options(receiveTimeout: const Duration(seconds: 45)),
+      );
+      final list = resp.data?['suggestions'] as List? ?? const [];
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(CardSuggestion.fromJson)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// POST /api/card/{id}/queue-ai, dispatch an agent to work the card with an
+  /// instruction. This is the "push the button and the AI proceeds" action.
+  /// Returns the run id on success, else null.
+  Future<String?> queueAi(
+    String cardId, {
+    required String instruction,
+    String mode = 'propose',
+    String agent = 'lumina',
+  }) async {
+    try {
+      final resp = await _dashDio.post<Map<String, dynamic>>(
+        '/api/card/$cardId/queue-ai',
+        data: {'instruction': instruction, 'mode': mode, 'agent': agent},
+        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+      );
+      if ((resp.data?['ok'] as bool?) == true) {
+        return resp.data?['run_id'] as String?;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// One AI-suggested next step for a card: a concise instruction plus the safety
+/// mode it should run in.
+class CardSuggestion {
+  const CardSuggestion({required this.text, required this.mode});
+
+  final String text;
+
+  /// propose (analysis, no change) | dry-run (reversible) | execute (draft PR).
+  final String mode;
+
+  factory CardSuggestion.fromJson(Map<String, dynamic> j) => CardSuggestion(
+        text: j['text'] as String? ?? '',
+        mode: j['mode'] as String? ?? 'propose',
+      );
 }
 
 /// Heartbeat snapshot for a single agent, sourced from
