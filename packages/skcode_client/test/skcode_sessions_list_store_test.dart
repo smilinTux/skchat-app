@@ -17,6 +17,16 @@ class _FakeApiClient implements SkcodeApiClient {
       {required String token, int? beforeSeq, int limit = 100}) async {
     throw UnimplementedError();
   }
+
+  @override
+  Future<void> injectText(String sid, String text, {required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsListStore tests");
+  }
+
+  @override
+  Future<void> ratifySession(String sid, {required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsListStore tests");
+  }
 }
 
 void main() {

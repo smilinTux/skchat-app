@@ -86,6 +86,16 @@ class _FakeApiClient implements SkcodeApiClient {
   }) async {
     throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
   }
+
+  @override
+  Future<void> injectText(String sid, String text, {required String token}) async {
+    throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
+  }
+
+  @override
+  Future<void> ratifySession(String sid, {required String token}) async {
+    throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
+  }
 }
 
 void main() {

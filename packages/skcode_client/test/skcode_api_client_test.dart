@@ -79,6 +79,32 @@ void main() {
       expect(req.uri.queryParameters.containsKey("before_seq"), isFalse);
       expect(req.uri.queryParameters["limit"], "100");
     });
+
+    test("injectText posts {text} to /sessions/{sid}/inject with the bearer header",
+        () async {
+      await client.injectText("s1", "echo hi", token: "WIRE-TOKEN-3");
+
+      final req = adapter.requests.single;
+      expect(req.method, "POST");
+      expect(req.headers["Authorization"], "Bearer WIRE-TOKEN-3");
+      expect(req.uri.toString(), isNot(contains("WIRE-TOKEN-3")));
+      expect(req.uri.path, "/skcode/api/v1/sessions/s1/inject");
+      // The card's core safety property: the text travels in the POST body,
+      // never in the URL/query string, so it can never end up in a proxy or
+      // access log line the way a query param would.
+      expect(req.uri.toString(), isNot(contains("echo hi")));
+      expect(req.data, {"text": "echo hi"});
+    });
+
+    test("ratifySession posts with no body to /sessions/{sid}/ratify", () async {
+      await client.ratifySession("s1", token: "WIRE-TOKEN-4");
+
+      final req = adapter.requests.single;
+      expect(req.method, "POST");
+      expect(req.headers["Authorization"], "Bearer WIRE-TOKEN-4");
+      expect(req.uri.path, "/skcode/api/v1/sessions/s1/ratify");
+      expect(req.data, isNull);
+    });
   });
 
   group("parsing", () {
@@ -158,6 +184,28 @@ void main() {
       expect(
         () => client.listSessions(token: "T"),
         throwsA(isA<SkcodeApiException>()),
+      );
+    });
+
+    test("injectText: a 403 (write scope missing) throws SkcodeApiException", () async {
+      adapter
+        ..status = 403
+        ..body = {"error": "forbidden"};
+
+      expect(
+        () => client.injectText("s1", "x", token: "T"),
+        throwsA(isA<SkcodeApiException>()),
+      );
+    });
+
+    test("ratifySession: a 401 throws SkcodeUnauthorizedException", () async {
+      adapter
+        ..status = 401
+        ..body = {"error": "unauthorized"};
+
+      expect(
+        () => client.ratifySession("s1", token: "STALE"),
+        throwsA(isA<SkcodeUnauthorizedException>()),
       );
     });
   });

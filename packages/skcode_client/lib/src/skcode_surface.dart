@@ -95,6 +95,11 @@ class _SkcodeSurfaceState extends State<SkcodeSurface> {
         origin: _resolvedOrigin,
         mintToken: _mintToken,
         onAuthRejected: widget.onAuthRejected ?? _noopAuthRejected,
+        // Card C-5: the mounted shell's AuthContext, forwarded so the pushed
+        // SkcodeSessionScreen can read `hasScope(kSkcodeInjectScope)`. Null
+        // in standalone mode (no shell, no login seam yet), which correctly
+        // fails the inject-composer gate closed.
+        auth: widget.shell?.auth,
       ),
     );
   }
