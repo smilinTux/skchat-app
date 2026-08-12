@@ -1,5 +1,6 @@
 import "package:dio/dio.dart";
 
+import "skcode_dispatch_targets.dart";
 import "skcode_event.dart";
 import "skcode_job_run.dart";
 
@@ -81,6 +82,23 @@ class SkcodeApiException implements Exception {
 
   @override
   String toString() => "SkcodeApiException: $message";
+}
+
+/// Thrown by [SkcodeApiClient.dispatch] / [SkcodeApiClient.cancelSession] on
+/// a 403: the caller carried the `skcode.dispatch` scope (a 401 would have
+/// fired instead) but capauth's PDP denied the specific decision
+/// (`daemon.py::authorize_dispatch`), e.g. an enrollment-posture gate or a
+/// repo the allowlist does not cover. Kept distinct from the generic
+/// [SkcodeApiException] so the dispatch form / cancel affordance can show
+/// "not authorized" as its own clear state rather than folding it into a
+/// bare network-failure message (card C-6: "a dispatch rejection (403 from
+/// PDP) needs a clear state, never a crash or a silent no-op").
+class SkcodeDispatchForbiddenException implements Exception {
+  const SkcodeDispatchForbiddenException([this.message = "not authorized"]);
+  final String message;
+
+  @override
+  String toString() => "SkcodeDispatchForbiddenException: $message";
 }
 
 /// HTTP client for skcode-hostd's read-only session plane, reached through
@@ -222,6 +240,115 @@ class SkcodeApiClient {
     } on DioException catch (e) {
       throw _wrap(e);
     }
+  }
+
+  /// `GET /skcode/api/v1/dispatch/targets` (spec 3.1, card C-6): the
+  /// advisory options a dispatch-scoped device may render in a New Session
+  /// form. EVERY value this client's dispatch form offers for
+  /// repo/harness/profile/model comes from parsing this one response
+  /// (`SkcodeDispatchTargets.fromJson`, see that class's own doc comment for
+  /// the no-hardcoded-fallback rule) -- this method adds nothing on top of
+  /// it.
+  Future<SkcodeDispatchTargets> fetchDispatchTargets({required String token}) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        "/skcode/api/v1/dispatch/targets",
+        options: _bearer(token),
+      );
+      return SkcodeDispatchTargets.fromJson(resp.data ?? const {});
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// `POST /skcode/api/v1/dispatch` (spec 3.1, card C-6): spawn a new
+  /// session. [repo]/[branch]/[model] may be empty strings (the server
+  /// accepts and defaults them, `daemon.py::dispatch_route`); every argument
+  /// here is exactly what the caller chose from [fetchDispatchTargets]'s
+  /// response (or, for [branch]/[permissionMode]/[mode]/[prompt], the
+  /// protocol-level fields that are not part of the targets response at
+  /// all -- see `skcode_dispatch_form.dart`'s doc comment for which fields
+  /// fall in which bucket). This method performs no allowlist check of its
+  /// own: the repo allowlist is enforced server-side only, by design (card
+  /// C-6 non-negotiable).
+  ///
+  /// Throws [SkcodeDispatchForbiddenException] on a 403 (PDP denied) and
+  /// [SkcodeApiException] on a 400 (spawn rejected, e.g. a stale/altered
+  /// repo choice the server no longer allows) with the server's own detail
+  /// message surfaced verbatim, so the form can render a clear state for
+  /// each rather than a bare "request failed".
+  Future<SkcodeDispatchResult> dispatch({
+    required String repo,
+    required String branch,
+    required String profile,
+    required String permissionMode,
+    required String mode,
+    required String prompt,
+    required String harness,
+    required String model,
+    required String token,
+  }) async {
+    try {
+      final resp = await _dio.post<Map<String, dynamic>>(
+        "/skcode/api/v1/dispatch",
+        data: {
+          "repo": repo,
+          "branch": branch,
+          "profile": profile,
+          "permission_mode": permissionMode,
+          "mode": mode,
+          "prompt": prompt,
+          "harness": harness,
+          "model": model,
+        },
+        options: _bearer(token),
+      );
+      return SkcodeDispatchResult.fromJson(resp.data ?? const {});
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 403) {
+        throw SkcodeDispatchForbiddenException(_detail(e) ?? "dispatch not authorized");
+      }
+      if (status == 400) {
+        throw SkcodeApiException(_detail(e) ?? "dispatch rejected");
+      }
+      throw _wrap(e);
+    }
+  }
+
+  /// `POST /skcode/api/v1/sessions/{sid}/cancel` (spec section 8, card
+  /// C-6): idempotent by construction on the server
+  /// (`daemon.py::cancel_session`) -- an unknown or already-finished [sid]
+  /// answers 200 with `{"cancelled": false, "reason": ...}` rather than an
+  /// error, so this method only throws for a genuine transport/auth/authz
+  /// failure (401/403/network), never for "there was nothing to cancel".
+  /// Rides the SAME `skcode.dispatch` scope + PDP decision path as
+  /// [dispatch] (spec: "cancel ... rides the dispatch scope through the
+  /// same PDP decision path as dispatch and inject"), so a 403 here means
+  /// exactly what it means on [dispatch]: scope present, PDP said no.
+  Future<SkcodeCancelResult> cancelSession(String sid, {required String token}) async {
+    try {
+      final resp = await _dio.post<Map<String, dynamic>>(
+        "/skcode/api/v1/sessions/$sid/cancel",
+        options: _bearer(token),
+      );
+      return SkcodeCancelResult.fromJson(resp.data ?? const {});
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 403) {
+        throw SkcodeDispatchForbiddenException(_detail(e) ?? "cancel not authorized");
+      }
+      throw _wrap(e);
+    }
+  }
+
+  /// Pulls FastAPI's `{"detail": "..."}` error body out of a [DioException],
+  /// when present, so a 400/403 can surface the server's OWN reason
+  /// (`HTTPException(403, "dispatch not authorized")` etc.) rather than a
+  /// generic client-invented message.
+  String? _detail(DioException e) {
+    final data = e.response?.data;
+    if (data is Map && data["detail"] is String) return data["detail"] as String;
+    return null;
   }
 
   Exception _wrap(DioException e) {

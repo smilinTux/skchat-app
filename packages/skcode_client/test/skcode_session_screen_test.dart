@@ -35,16 +35,26 @@ class _FakeWsTransport implements SkcodeWsTransport {
 /// already covers) and record every inject/ratify call so a test can assert
 /// on the exact route + payload without a real Dio adapter.
 class _FakeApiClient implements SkcodeApiClient {
-  _FakeApiClient({this.archive = const []});
+  _FakeApiClient({this.archive = const [], this.cancelResult, this.cancelError});
 
   final List<SkcodeEvent> archive;
 
   final List<({String sid, String text})> injectCalls = [];
   final List<String> ratifyCalls = [];
+  final List<String> cancelCalls = [];
 
   /// When set, the next `injectText`/`ratifySession` call throws this
   /// instead of recording/succeeding (a network-failure test seam).
   Object? failWith;
+
+  /// [cancelSession]'s response when [cancelError] is null: defaults to a
+  /// successful `cancelled: true` unless a test overrides it (e.g. the
+  /// idempotent `cancelled: false` case).
+  final SkcodeCancelResult? cancelResult;
+
+  /// When set, [cancelSession] throws this instead of returning
+  /// [cancelResult] (the 403/401/network degrade test seam).
+  final Object? cancelError;
 
   @override
   Future<List<SkcodeSessionSummary>> listSessions({required String token}) async => const [];
@@ -75,6 +85,34 @@ class _FakeApiClient implements SkcodeApiClient {
     final err = failWith;
     if (err != null) throw err;
     ratifyCalls.add(sid);
+  }
+
+  @override
+  Future<SkcodeDispatchTargets> fetchDispatchTargets({required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionScreen tests");
+  }
+
+  @override
+  Future<SkcodeDispatchResult> dispatch({
+    required String repo,
+    required String branch,
+    required String profile,
+    required String permissionMode,
+    required String mode,
+    required String prompt,
+    required String harness,
+    required String model,
+    required String token,
+  }) async {
+    throw UnimplementedError("not exercised by SkcodeSessionScreen tests");
+  }
+
+  @override
+  Future<SkcodeCancelResult> cancelSession(String sid, {required String token}) async {
+    cancelCalls.add(sid);
+    final err = cancelError;
+    if (err != null) throw err;
+    return cancelResult ?? const SkcodeCancelResult(cancelled: true, reason: "");
   }
 }
 
@@ -544,6 +582,226 @@ void main() {
       await tester.pump();
 
       expect(find.byType(SkcodeNeedsInputBanner), findsNothing);
+    });
+  });
+
+  group("card C-6: cancel affordance", () {
+    testWidgets("no cancel button without skcode.dispatch scope", (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.inject"}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeCancelButton")), findsNothing);
+    });
+
+    testWidgets("no cancel button with no AuthContext at all (standalone, fails closed)",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            // auth omitted entirely.
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeCancelButton")), findsNothing);
+    });
+
+    testWidgets(
+        "cancel button renders with skcode.dispatch scope on a NON-interactive session "
+        "(cancel is not gated on interactive, unlike the inject composer)", (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+            interactive: false,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeCancelButton")), findsOneWidget);
+    });
+
+    testWidgets("tapping cancel opens a confirmation dialog before firing anything",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key("skcodeCancelButton")));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text("Cancel session?"), findsOneWidget);
+      // Nothing fired yet: the dialog alone must never call the network.
+      expect(apiClient.cancelCalls, isEmpty);
+    });
+
+    testWidgets("dismissing the confirmation (Keep running) never calls cancelSession",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key("skcodeCancelButton")));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Keep running"));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(apiClient.cancelCalls, isEmpty);
+    });
+
+    testWidgets(
+        "confirming cancel calls apiClient.cancelSession(sid) and shows a cancelled message",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        cancelResult: const SkcodeCancelResult(cancelled: true, reason: ""),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-target",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key("skcodeCancelButton")));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key("skcodeCancelConfirm")));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.cancelCalls, ["s-target"]);
+      expect(find.text("Session cancelled."), findsOneWidget);
+    });
+
+    testWidgets(
+        "the server's idempotent cancelled: false is shown honestly, never reported as "
+        "success (card C-6: an unknown/already-finished session must not read as a win)",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        cancelResult: const SkcodeCancelResult(cancelled: false, reason: "already finished"),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key("skcodeCancelButton")));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key("skcodeCancelConfirm")));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.cancelCalls, ["s-1"]);
+      expect(find.text("Session cancelled."), findsNothing);
+      expect(find.textContaining("Not cancelled"), findsOneWidget);
+      expect(find.textContaining("already finished"), findsOneWidget);
+    });
+
+    testWidgets("a 403 PDP denial on cancel is shown honestly, not a crash", (tester) async {
+      final apiClient = _FakeApiClient(
+        cancelError: const SkcodeDispatchForbiddenException("cancel not authorized"),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key("skcodeCancelButton")));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key("skcodeCancelConfirm")));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(apiClient.cancelCalls, ["s-1"]);
+      expect(find.textContaining("not authorized"), findsOneWidget);
     });
   });
 }

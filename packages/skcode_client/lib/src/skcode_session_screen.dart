@@ -117,6 +117,17 @@ class _SkcodeSessionScreenState extends State<SkcodeSessionScreen> {
   /// live keystroke inject).
   bool get _canInject => _hasInjectScope && widget.interactive;
 
+  /// Card C-6's cancel gate: `skcode.dispatch` scope (spec section 8:
+  /// "cancel ... rides the dispatch scope through the same PDP decision
+  /// path as dispatch and inject"), unlike inject/ratify which read
+  /// [kSkcodeInjectScope]. Cancel applies to BOTH interactive sessions and
+  /// autocode runs alike (spec section 8's routing table lists "cancel" for
+  /// both rows under this same scope), so this gate is deliberately NOT
+  /// combined with [widget.interactive] the way [_canInject] is. A null
+  /// [SkcodeSessionScreen.auth] fails closed to false, matching
+  /// [_hasInjectScope].
+  bool get _hasDispatchScope => widget.auth?.hasScope(kSkcodeDispatchScope) ?? false;
+
   /// The most recent `needs_input` event not yet resolved this screen
   /// session, or null. [SkcodeSessionState.events] is already ascending
   /// `(ts, seq)` sorted (the store's own merge contract), so the latest one
@@ -170,6 +181,64 @@ class _SkcodeSessionScreenState extends State<SkcodeSessionScreen> {
         (token) => widget.apiClient.injectText(widget.sid, text, token: token),
       );
 
+  /// Cancel is destructive (card C-6), so this is the ONLY write action on
+  /// this screen a caller must confirm before it ever reaches the network
+  /// (contrast [_handleApprove]/[_handleDeny]/[_handleInject], which fire
+  /// immediately -- neither ratify nor a keystroke tears down the session).
+  Future<bool> _confirmCancel() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("Cancel session?"),
+        content: Text("This stops ${widget.sid}. It cannot be undone."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text("Keep running"),
+          ),
+          FilledButton(
+            key: const Key("skcodeCancelConfirm"),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text("Cancel session"),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  void _showCancelMessage(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// hostd's cancel route is idempotent by construction
+  /// (`daemon.py::cancel_session`): an unknown or already-finished [sid]
+  /// answers 200 with `cancelled: false` rather than an error. Both
+  /// outcomes -- and a genuine failure (unauthorized/network) -- are
+  /// surfaced honestly here rather than reporting success unconditionally
+  /// (card C-6: "surface that honestly rather than reporting success
+  /// unconditionally"). All three branches resolve normally (never
+  /// rethrow), so [_runAction]'s own outer catch is never reached for this
+  /// action.
+  Future<void> _handleCancel() => _runAction((token) async {
+        try {
+          final result = await widget.apiClient.cancelSession(widget.sid, token: token);
+          _showCancelMessage(
+            result.cancelled
+                ? "Session cancelled."
+                : "Not cancelled: "
+                    "${result.reason.isEmpty ? 'already finished or unknown session' : result.reason}",
+          );
+        } on SkcodeDispatchForbiddenException catch (e) {
+          _showCancelMessage("Cancel not authorized: ${e.message}");
+        } on SkcodeUnauthorizedException {
+          _showCancelMessage("Cancel failed: not authenticated.");
+        } on SkcodeApiException catch (e) {
+          _showCancelMessage("Cancel failed: ${e.message}");
+        }
+      });
+
   @override
   void initState() {
     super.initState();
@@ -210,6 +279,20 @@ class _SkcodeSessionScreenState extends State<SkcodeSessionScreen> {
       appBar: AppBar(
         title: Text(widget.sid),
         actions: [
+          // AC (card C-6): hidden entirely (not disabled, not present)
+          // unless the token carries skcode.dispatch, matching the inject
+          // composer's own "hidden, never disabled" gate pattern.
+          if (_hasDispatchScope)
+            IconButton(
+              key: const Key("skcodeCancelButton"),
+              tooltip: "Cancel session",
+              icon: const Icon(Icons.stop_circle_outlined),
+              onPressed: _actionBusy
+                  ? null
+                  : () async {
+                      if (await _confirmCancel()) await _handleCancel();
+                    },
+            ),
           IconButton(
             tooltip: "Artifacts",
             icon: const Icon(Icons.dashboard_outlined),

@@ -80,6 +80,21 @@
 ///                      only when the mounted module's [AuthContext] carries
 ///                      [kSkcodeInjectScope] (composer additionally requires
 ///                      an interactive session).
+///  * [SkcodeDispatchForm] / [SkcodeDispatchScreen] / [SkcodeDispatchTargets]
+///                      / [SkcodeDispatchResult] / [SkcodeCancelResult] -
+///                      card C-6, spec sections 3.1 and 8's "New run" row:
+///                      the New Session form, fed ENTIRELY by
+///                      `GET /dispatch/targets` (repo/harness/profile/model
+///                      options come from that response and nowhere else -
+///                      never hardcoded) and submitting to `POST /dispatch`;
+///                      plus the cancel affordance on [SkcodeSessionScreen]
+///                      (`POST /sessions/{sid}/cancel`, honest about the
+///                      server's idempotent `cancelled: false`). Both routes
+///                      are `skcode.dispatch` scope, PDP-decided:
+///                      [SkcodeSessionsRail]'s New Session entry point and
+///                      the session screen's cancel button both render only
+///                      when the mounted module's [AuthContext] carries
+///                      [kSkcodeDispatchScope].
 ///
 /// Import gate (module contract standard section 3.1, "a grep gate proves the
 /// module's UI package imports only skworld_module_api, never any shell
@@ -95,6 +110,8 @@ export 'src/skcode_artifact_pane.dart';
 export 'src/skcode_config.dart';
 export 'src/skcode_digest.dart';
 export 'src/skcode_digest_tab.dart';
+export 'src/skcode_dispatch_form.dart';
+export 'src/skcode_dispatch_targets.dart';
 export 'src/skcode_event.dart';
 export 'src/skcode_event_merge.dart';
 export 'src/skcode_inject_composer.dart';

@@ -101,6 +101,31 @@ class _FakeApiClient implements SkcodeApiClient {
   Future<void> ratifySession(String sid, {required String token}) async {
     throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
   }
+
+  @override
+  Future<SkcodeDispatchTargets> fetchDispatchTargets({required String token}) async {
+    throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
+  }
+
+  @override
+  Future<SkcodeDispatchResult> dispatch({
+    required String repo,
+    required String branch,
+    required String profile,
+    required String permissionMode,
+    required String mode,
+    required String prompt,
+    required String harness,
+    required String model,
+    required String token,
+  }) async {
+    throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
+  }
+
+  @override
+  Future<SkcodeCancelResult> cancelSession(String sid, {required String token}) async {
+    throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
+  }
 }
 
 /// Fakes [SkcodeDigestClient] (see `skcode_artifact_pane_test.dart`'s

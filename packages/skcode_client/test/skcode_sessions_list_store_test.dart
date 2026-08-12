@@ -32,6 +32,31 @@ class _FakeApiClient implements SkcodeApiClient {
   Future<void> ratifySession(String sid, {required String token}) async {
     throw UnimplementedError("not exercised by SkcodeSessionsListStore tests");
   }
+
+  @override
+  Future<SkcodeDispatchTargets> fetchDispatchTargets({required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsListStore tests");
+  }
+
+  @override
+  Future<SkcodeDispatchResult> dispatch({
+    required String repo,
+    required String branch,
+    required String profile,
+    required String permissionMode,
+    required String mode,
+    required String prompt,
+    required String harness,
+    required String model,
+    required String token,
+  }) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsListStore tests");
+  }
+
+  @override
+  Future<SkcodeCancelResult> cancelSession(String sid, {required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsListStore tests");
+  }
 }
 
 void main() {

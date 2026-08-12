@@ -4,6 +4,8 @@ import "package:flutter/material.dart";
 import "package:skworld_module_api/skworld_module_api.dart";
 
 import "skcode_api_client.dart";
+import "skcode_config.dart";
+import "skcode_dispatch_form.dart";
 import "skcode_job_run.dart";
 import "skcode_jobs_list_store.dart";
 import "skcode_session_screen.dart";
@@ -23,6 +25,14 @@ import "skcode_ws_transport.dart";
 /// [SkcodeSessionScreen] (no `sid`, nothing to stream). There is no
 /// run-now/retry/cancel control anywhere in this section: v1 is view plus
 /// the ledger's own `tail` summary, deliberately.
+///
+/// Above the sessions list sits the New Session entry point (spec section
+/// 8's "New run" row, card C-6): a single button that pushes
+/// [SkcodeDispatchScreen], rendered ONLY when [auth] carries
+/// [kSkcodeDispatchScope] -- the same fail-closed pattern the pushed
+/// [SkcodeSessionScreen]'s inject composer already established for card
+/// C-5's [kSkcodeInjectScope]. A token without the scope never sees the
+/// button at all, not a disabled one.
 class SkcodeSessionsRail extends StatefulWidget {
   const SkcodeSessionsRail({
     super.key,
@@ -98,10 +108,35 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
     );
   }
 
+  void _openDispatchForm(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SkcodeDispatchScreen(
+          apiClient: widget.apiClient,
+          mintToken: widget.mintToken,
+          auth: widget.auth,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        if (widget.auth?.hasScope(kSkcodeDispatchScope) ?? false)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                key: const Key("skcodeNewSessionButton"),
+                onPressed: () => _openDispatchForm(context),
+                icon: const Icon(Icons.add),
+                label: const Text("New session"),
+              ),
+            ),
+          ),
         Expanded(
           flex: 3,
           child: _sessions.isEmpty

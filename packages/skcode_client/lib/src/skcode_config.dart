@@ -18,6 +18,18 @@ const kSkcodeAudience = "skcode";
 /// `SkcodeSessionScreen`.
 const kSkcodeInjectScope = "skcode.inject";
 
+/// The capability scope that gates `GET .../dispatch/targets`,
+/// `POST .../dispatch`, and `POST .../sessions/{sid}/cancel` on
+/// skcode-hostd (spec 3.1: "scope skcode.dispatch (PDP-decided): GET
+/// /api/v1/dispatch/targets, POST /api/v1/dispatch"; spec section 8: cancel
+/// "rides the dispatch scope through the same PDP decision path"). Card
+/// C-6's New Session entry point (`SkcodeSessionsRail`) and the cancel
+/// affordance (`SkcodeSessionScreen`) both render only when the mounted
+/// module's [AuthContext] (`skworld_module_api`) carries this scope, the
+/// same fail-closed pattern [kSkcodeInjectScope] already established for
+/// card C-5.
+const kSkcodeDispatchScope = "skcode.dispatch";
+
 /// `wss://<origin>/skcode/api/v1/sessions/<sid>/stream?token=<wire>`
 /// (matches `skchat/src/skchat/webui.py::_skcode_ws_url`'s browser-facing
 /// contract exactly). The token stays in the query string HERE and ONLY

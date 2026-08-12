@@ -64,6 +64,31 @@ class _FakeApiClient implements SkcodeApiClient {
   Future<void> ratifySession(String sid, {required String token}) async {
     throw UnimplementedError("not exercised by SkcodeSessionsRail tests");
   }
+
+  @override
+  Future<SkcodeDispatchTargets> fetchDispatchTargets({required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsRail tests");
+  }
+
+  @override
+  Future<SkcodeDispatchResult> dispatch({
+    required String repo,
+    required String branch,
+    required String profile,
+    required String permissionMode,
+    required String mode,
+    required String prompt,
+    required String harness,
+    required String model,
+    required String token,
+  }) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsRail tests");
+  }
+
+  @override
+  Future<SkcodeCancelResult> cancelSession(String sid, {required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsRail tests");
+  }
 }
 
 void main() {
@@ -385,6 +410,106 @@ void main() {
         expect(find.byType(SkcodeSessionScreen), findsNothing);
       },
     );
+  });
+
+  group("card C-6: New Session entry point (spec section 8's \"New run\" row)", () {
+    testWidgets("no New Session button without skcode.dispatch scope", (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              auth: const _FakeAuth(scopes: {"skcode.inject"}),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeNewSessionButton")), findsNothing);
+    });
+
+    testWidgets("no New Session button with no AuthContext at all (standalone, fails closed)",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              // auth omitted entirely.
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeNewSessionButton")), findsNothing);
+    });
+
+    testWidgets("New Session button renders with skcode.dispatch scope", (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              auth: const _FakeAuth(scopes: {"skcode.dispatch"}),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeNewSessionButton")), findsOneWidget);
+    });
+
+    testWidgets("tapping New Session pushes SkcodeDispatchScreen, forwarding auth",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+      const auth = _FakeAuth(scopes: {"skcode.dispatch"});
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              auth: auth,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(SkcodeDispatchScreen), findsNothing);
+
+      await tester.tap(find.byKey(const Key("skcodeNewSessionButton")));
+      // Explicit pumps (never pumpAndSettle): SkcodeSessionsListStore's
+      // 15s poll Timer.periodic is still alive on the rail underneath, same
+      // reason the "tapping a session row" test above avoids it.
+      await tester.pump(); // frame that starts the push transition.
+      await tester.pump(const Duration(milliseconds: 400)); // transition settles.
+
+      expect(find.byType(SkcodeDispatchScreen), findsOneWidget);
+      final screen = tester.widget<SkcodeDispatchScreen>(find.byType(SkcodeDispatchScreen));
+      expect(screen.auth, same(auth));
+    });
   });
 }
 
