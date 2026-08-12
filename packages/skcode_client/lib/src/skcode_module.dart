@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:skworld_module_api/skworld_module_api.dart';
 
 import 'skcode_api_client.dart';
+import 'skcode_digest.dart';
 import 'skcode_surface.dart';
 
 /// The skcode subapp as a mountable SKWorld module (card C-2, spec section
@@ -32,12 +33,20 @@ import 'skcode_surface.dart';
 /// siblings and added [origin] / [onAuthRejected] as the injection seam;
 /// card C-4 wired that transport into a real render layer (the sessions
 /// rail, the activity taxonomy, the transcript, the raw rail) inside
-/// [SkcodeSurface]. The existing iframe at `lib/features/skcode/` stays the
-/// LIVE `/code` surface until the registry flip (card C-10, deliberately
-/// last); this module is fully built but not yet the one the app actually
-/// mounts.
+/// [SkcodeSurface]; card C-9 added [digestUrl] / [onOpenLink] as the same
+/// kind of injection seam for the artifact pane's Digest tab. The existing
+/// iframe at `lib/features/skcode/` stays the LIVE `/code` surface until the
+/// registry flip (card C-10, deliberately last); this module is fully built
+/// but not yet the one the app actually mounts.
 class SkcodeModule implements SkworldModule {
-  const SkcodeModule({this.origin, this.onAuthRejected, this.apiClient});
+  const SkcodeModule({
+    this.origin,
+    this.onAuthRejected,
+    this.apiClient,
+    this.digestUrl,
+    this.onOpenLink,
+    this.digestClient,
+  });
 
   /// Where skcode-hostd lives (card C-3b): the one thing missing from
   /// [ShellContext] / [AuthContext] that pushed the transport layer into the
@@ -64,6 +73,37 @@ class SkcodeModule implements SkworldModule {
   /// Production always constructs with this omitted.
   final SkcodeApiClient? apiClient;
 
+  /// The skwatchdog published `latest/` digest artifact's full URL (card
+  /// C-9, spec section 9), forwarded to the Digest tab in the artifact pane.
+  /// Nothing in [ShellContext] says where the watchdog publishes (the
+  /// watchdog is an skos capability, not a subapp with a manifest of its
+  /// own), so this follows [origin]'s precedent exactly: the one thing
+  /// missing from the shell contract, supplied here instead. Null renders
+  /// the Digest tab's honest "not configured" state rather than a crash.
+  final String? digestUrl;
+
+  /// Deep-link resolution seam (card C-9): invoked with a digest line's link
+  /// (its `skworld://` uri, or its `https://` fallback) when tapped. This
+  /// package cannot import host routing (the import gate forbids anything
+  /// outside `skworld_module_api`/`flutter`/`dio`/`web_socket_channel`/dart
+  /// core), so "the shell router" (watchdog spec section 8: "the shell
+  /// router is where those links were always meant to land") must be reached
+  /// through an injected callback, mirroring [onAuthRejected]. When omitted
+  /// and a [ShellContext] is mounted, [SkcodeSurface] defaults this to
+  /// `shell.bus.navigate`, which already IS the shell router
+  /// (`skworld_module_api`'s [ShellBus.navigate] docstring: "cross-module
+  /// links are routed by the shell to the owning module") - so a host does
+  /// not need to supply this explicitly for the common case; it exists
+  /// mainly as a test seam and an escape hatch for a host that wants custom
+  /// handling. Standalone mode (no shell) has no router to resolve against,
+  /// so links stay inert there unless a standalone runner supplies its own.
+  final void Function(String uri)? onOpenLink;
+
+  /// Test seam only (see [SkcodeSurface.digestClient]): lets a widget test
+  /// inject a fake [SkcodeDigestClient] so the Digest action never opens a
+  /// real socket. Production always constructs with this omitted.
+  final SkcodeDigestClient? digestClient;
+
   @override
   String get id => 'skcode';
 
@@ -87,6 +127,9 @@ class SkcodeModule implements SkworldModule {
       origin: origin,
       onAuthRejected: onAuthRejected,
       apiClient: apiClient,
+      digestUrl: digestUrl,
+      onOpenLink: onOpenLink,
+      digestClient: digestClient,
     );
   }
 }

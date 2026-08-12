@@ -33,11 +33,17 @@
 ///    parts 2-3). Both key their rows on [skcodeEventRowId] so the same
 ///    underlying event anchors to the same row in either view.
 ///  * [SkcodeArtifactPane] - the artifact pane (card C-7, spec section 7
-///    rev 2): Diff/Logs/Raw tabs (Digest is C-9's, chat content is C-12's;
-///    both have reserved slots), the two-layer negative-x panel-left
-///    shadow ported from Buzz with attribution, and
-///    [SkcodeArtifactPane.showBottomSheet] for the phone swipe-up
-///    presentation.
+///    rev 2): Diff/Digest/Logs/Raw tabs (chat content is C-12's; it has a
+///    reserved slot), the two-layer negative-x panel-left shadow ported from
+///    Buzz with attribution, and [SkcodeArtifactPane.showBottomSheet] for the
+///    phone swipe-up presentation.
+///  * [SkcodeDigestTab] / [SkcodeDigest] / [SkcodeDigestEvent] /
+///    [SkcodeDigestClient] - card C-9, spec section 9: fetches and renders
+///    the skwatchdog published `latest/` digest artifact over https, with
+///    every line's link tappable through an injected `onOpenLink` (the
+///    module boundary seam this package cannot resolve itself, since it
+///    cannot import host routing). No digest data is stored or recomputed
+///    here; the artifact stays the single narrative surface.
 ///  * [SkcodeApiClient] / [SkcodeSessionStore] / [SkcodeSessionsListStore] /
 ///                      [SkcodeWsTransport] / [SkcodeEvent] - the transport
 ///                      layer (card C-3, moved here unchanged by card C-3b):
@@ -75,6 +81,8 @@ export 'src/skcode_activity_taxonomy.dart';
 export 'src/skcode_api_client.dart';
 export 'src/skcode_artifact_pane.dart';
 export 'src/skcode_config.dart';
+export 'src/skcode_digest.dart';
+export 'src/skcode_digest_tab.dart';
 export 'src/skcode_event.dart';
 export 'src/skcode_event_merge.dart';
 export 'src/skcode_inject_composer.dart';

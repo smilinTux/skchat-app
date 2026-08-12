@@ -1,5 +1,7 @@
 import "package:flutter/material.dart";
 
+import "skcode_digest.dart";
+import "skcode_digest_tab.dart";
 import "skcode_event.dart";
 import "skcode_raw_rail.dart";
 
@@ -9,11 +11,12 @@ import "skcode_raw_rail.dart";
 /// are their own surfaces (C-12's four-column layout); this pane never
 /// renders either.
 ///
-/// Tabs built here, left to right: **Diff, Logs, Raw**, with an optional
-/// **Chat** tab prepended (see [showChatTab]). The **Digest** tab is C-9's
-/// job; it slots in between Diff and Logs (spec: "Chat | Diff | Digest |
-/// Logs | Raw"). [_tabs] is an ordered list precisely so that insertion
-/// point is a one-line change for that card, not a restructure.
+/// Tabs built here, left to right: **Diff, Digest, Logs, Raw**, with an
+/// optional **Chat** tab prepended (see [showChatTab]), matching the spec's
+/// "Chat | Diff | Digest | Logs | Raw" order. The Digest tab (card C-9) fetches
+/// and renders the skwatchdog published `latest/` artifact
+/// ([SkcodeDigestTab]); it owns no data of its own, taking [digestUrl] and
+/// [onOpenLink] straight through to that widget.
 ///
 /// ## The Chat tab slot contract (for C-12)
 ///
@@ -52,6 +55,9 @@ class SkcodeArtifactPane extends StatefulWidget {
     this.showChatTab = false,
     this.chatSlot,
     this.chatUnreadCount = 0,
+    this.digestUrl,
+    this.onOpenLink,
+    this.digestClient,
   });
 
   /// The session's merged, ordered event window (exactly
@@ -72,6 +78,22 @@ class SkcodeArtifactPane extends StatefulWidget {
   /// tier, "with an unread badge"). 0 renders no badge.
   final int chatUnreadCount;
 
+  /// The Digest tab's data source (card C-9): forwarded straight to
+  /// [SkcodeDigestTab.digestUrl]. Null renders that tab's honest
+  /// "not configured" state, never a crash.
+  final String? digestUrl;
+
+  /// The Digest tab's deep-link seam (card C-9): forwarded straight to
+  /// [SkcodeDigestTab.onOpenLink]. This is how a `skworld://` uri tapped
+  /// inside a rendered digest line reaches the shell router, since this
+  /// package cannot import host routing (see [SkcodeDigestTab]'s doc
+  /// comment for the full contract).
+  final void Function(String uri)? onOpenLink;
+
+  /// Test seam: forwarded to [SkcodeDigestTab.client] so a widget test never
+  /// opens a real socket for the Digest tab either.
+  final SkcodeDigestClient? digestClient;
+
   /// Presents this pane as a swipe-up bottom sheet (spec section 7,
   /// "PHONE ... artifact tabs via a swipe-up bottom sheet (the app's
   /// existing drawer-sheet gesture)"), mirroring `AppDrawerSheet.show`'s
@@ -83,6 +105,9 @@ class SkcodeArtifactPane extends StatefulWidget {
     bool showChatTab = false,
     Widget? chatSlot,
     int chatUnreadCount = 0,
+    String? digestUrl,
+    void Function(String uri)? onOpenLink,
+    SkcodeDigestClient? digestClient,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -93,6 +118,9 @@ class SkcodeArtifactPane extends StatefulWidget {
         showChatTab: showChatTab,
         chatSlot: chatSlot,
         chatUnreadCount: chatUnreadCount,
+        digestUrl: digestUrl,
+        onOpenLink: onOpenLink,
+        digestClient: digestClient,
       ),
     );
   }
@@ -102,11 +130,8 @@ class SkcodeArtifactPane extends StatefulWidget {
 }
 
 /// One artifact tab: a stable identity ([kind]), its label, its icon, and
-/// the content builder. Digest (C-9) inserts its own [_ArtifactTabSpec]
-/// between [_ArtifactTabKind.diff] and [_ArtifactTabKind.logs] in
-/// [_SkcodeArtifactPaneState._tabs]; nothing else in this file needs to
-/// change for that insertion.
-enum _ArtifactTabKind { chat, diff, logs, raw }
+/// the content builder.
+enum _ArtifactTabKind { chat, diff, digest, logs, raw }
 
 class _ArtifactTabSpec {
   const _ArtifactTabSpec({
@@ -180,7 +205,16 @@ class _SkcodeArtifactPaneState extends State<SkcodeArtifactPane>
         icon: Icons.difference_outlined,
         builder: (context) => _DiffTabView(events: widget.events),
       ),
-      // <- C-9 inserts its Digest _ArtifactTabSpec here.
+      _ArtifactTabSpec(
+        kind: _ArtifactTabKind.digest,
+        label: "Digest",
+        icon: Icons.summarize_outlined,
+        builder: (context) => SkcodeDigestTab(
+          digestUrl: widget.digestUrl,
+          onOpenLink: widget.onOpenLink,
+          client: widget.digestClient,
+        ),
+      ),
       _ArtifactTabSpec(
         kind: _ArtifactTabKind.logs,
         label: "Logs",
@@ -470,12 +504,18 @@ class _SkcodeArtifactBottomSheet extends StatelessWidget {
     required this.showChatTab,
     required this.chatSlot,
     required this.chatUnreadCount,
+    this.digestUrl,
+    this.onOpenLink,
+    this.digestClient,
   });
 
   final List<SkcodeEvent> events;
   final bool showChatTab;
   final Widget? chatSlot;
   final int chatUnreadCount;
+  final String? digestUrl;
+  final void Function(String uri)? onOpenLink;
+  final SkcodeDigestClient? digestClient;
 
   @override
   Widget build(BuildContext context) {
@@ -499,6 +539,9 @@ class _SkcodeArtifactBottomSheet extends StatelessWidget {
                   showChatTab: showChatTab,
                   chatSlot: chatSlot,
                   chatUnreadCount: chatUnreadCount,
+                  digestUrl: digestUrl,
+                  onOpenLink: onOpenLink,
+                  digestClient: digestClient,
                 ),
               ),
             ],

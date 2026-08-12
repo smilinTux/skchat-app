@@ -43,14 +43,56 @@ String? mapSkchatDeeplink(String deeplink) {
   }
 }
 
+/// Maps a `skworld://skcode/...` deep link onto the app's GoRouter path, or
+/// null when the link has no mapped target, mirroring [mapSkchatDeeplink]
+/// exactly (card C-9, spec section 9: "every digest line carries a
+/// `skworld://` uri that today resolves nowhere ... the shell router is
+/// where those links were always meant to land").
+///
+///   * `skworld://skcode/session/<sid>` -> `/code/s/<sid>` (a session pushed
+///     full screen, spec section 7)
+///   * `skworld://skcode/digest`        -> `/code/digest`  (the Digest tab,
+///     spec section 9)
+///   * `skworld://skcode/` (bare)       -> `/code`         (the landing rail)
+///
+/// Neither [AppRoutes.codeSession] nor [AppRoutes.codeDigest] is mounted to a
+/// live screen yet (card C-10, the Grade A registry flip, is deliberately
+/// last per the implementation plan): this function is the pure, independently
+/// testable RESOLUTION LOGIC card C-9 owns, ready for C-10 to wire onto real
+/// routes without this mapping changing shape.
+String? mapSkcodeDeeplink(String deeplink) {
+  final uri = Uri.tryParse(deeplink);
+  if (uri == null) return null;
+  if (uri.scheme != 'skworld' || uri.host != 'skcode') return null;
+
+  final segments =
+      uri.pathSegments.where((s) => s.isNotEmpty).toList(growable: false);
+  if (segments.isEmpty) return AppRoutes.code;
+
+  switch (segments.first) {
+    case 'session':
+      // Needs a session id: skworld://skcode/session/<sid> -> /code/s/<sid>.
+      if (segments.length >= 2) return AppRoutes.codeSessionPath(segments[1]);
+      return null;
+    case 'digest':
+      return AppRoutes.codeDigest;
+    default:
+      return null;
+  }
+}
+
 /// Concrete [ShellBus] the app supplies to a mounted [SkworldModule].
 ///
 /// It is deliberately transport-agnostic: [navigate] parses a `skworld://`
-/// deep link through [mapSkchatDeeplink] and, on a hit, calls [onNavigate]
-/// with the resolved app route (the host wires that to `context.go`); on a
-/// miss it calls the optional [onUnhandled] so the shell can log + no-op or
-/// show a SnackBar rather than crash. Events flow over a broadcast stream so
-/// the same contract survives a future out-of-process (postmessage) bridge.
+/// deep link by trying each module's own mapper in turn ([mapSkchatDeeplink],
+/// [mapSkcodeDeeplink]) and, on a hit, calls [onNavigate] with the resolved
+/// app route (the host wires that to `context.go`); on a miss it calls the
+/// optional [onUnhandled] so the shell can log + no-op or show a SnackBar
+/// rather than crash. This is "the shell router" the module contract and the
+/// skwatchdog/skcode specs both point at as the one place `skworld://` links
+/// resolve, regardless of which module's authority they carry (card C-9).
+/// Events flow over a broadcast stream so the same contract survives a future
+/// out-of-process (postmessage) bridge.
 class AppShellBus implements ShellBus {
   AppShellBus({required this.onNavigate, this.onUnhandled});
 
@@ -66,7 +108,7 @@ class AppShellBus implements ShellBus {
 
   @override
   void navigate(String deeplink) {
-    final route = mapSkchatDeeplink(deeplink);
+    final route = mapSkchatDeeplink(deeplink) ?? mapSkcodeDeeplink(deeplink);
     if (route != null) {
       onNavigate(route);
       return;
