@@ -1,6 +1,7 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
+import "package:skworld_module_api/skworld_module_api.dart";
 
 import "skcode_api_client.dart";
 import "skcode_session_screen.dart";
@@ -22,6 +23,7 @@ class SkcodeSessionsRail extends StatefulWidget {
     required this.mintToken,
     required this.onAuthRejected,
     this.connectTransport = SkcodeWsTransport.connect,
+    this.auth,
   });
 
   final SkcodeApiClient apiClient;
@@ -32,6 +34,11 @@ class SkcodeSessionsRail extends StatefulWidget {
   /// Forwarded to the pushed [SkcodeSessionScreen] (test seam: a widget test
   /// injects a fake transport so tapping a row never opens a real socket).
   final SkcodeWsTransport Function(Uri uri) connectTransport;
+
+  /// Forwarded straight through to the pushed [SkcodeSessionScreen] (card
+  /// C-5): the audience-scoped [AuthContext] its inject-composer scope gate
+  /// reads via `hasScope(kSkcodeInjectScope)`.
+  final AuthContext? auth;
 
   @override
   State<SkcodeSessionsRail> createState() => _SkcodeSessionsRailState();
@@ -63,16 +70,21 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
     super.dispose();
   }
 
-  void _openSession(BuildContext context, String sid) {
+  void _openSession(BuildContext context, SkcodeSessionSummary session) {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => SkcodeSessionScreen(
-          sid: sid,
+          sid: session.sid,
           apiClient: widget.apiClient,
           origin: widget.origin,
           mintToken: widget.mintToken,
           onAuthRejected: widget.onAuthRejected,
           connectTransport: widget.connectTransport,
+          auth: widget.auth,
+          // AC4's other half: the focused session must itself be
+          // interactive (`SkcodeSessionSummary.mode == "interactive"`) for
+          // the inject composer to render at all.
+          interactive: session.mode == "interactive",
         ),
       ),
     );
@@ -89,7 +101,7 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
         final session = _sessions[index];
         return _SessionTile(
           session: session,
-          onTap: () => _openSession(context, session.sid),
+          onTap: () => _openSession(context, session),
         );
       },
     );

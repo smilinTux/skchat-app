@@ -10,6 +10,14 @@
 /// runner's own capauth client).
 const kSkcodeAudience = "skcode";
 
+/// The capability scope that gates `POST .../inject` and `POST .../ratify`
+/// on skcode-hostd (spec 3.1: "scope skcode.inject (write, PDP-decided):
+/// POST .../ratify, POST .../inject"). Card C-5's inject composer and
+/// needs_input Approve/Deny banner both render only when the mounted
+/// module's [AuthContext] (`skworld_module_api`) carries this scope; see
+/// `SkcodeSessionScreen`.
+const kSkcodeInjectScope = "skcode.inject";
+
 /// `wss://<origin>/skcode/api/v1/sessions/<sid>/stream?token=<wire>`
 /// (matches `skchat/src/skchat/webui.py::_skcode_ws_url`'s browser-facing
 /// contract exactly). The token stays in the query string HERE and ONLY

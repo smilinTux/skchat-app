@@ -166,6 +166,43 @@ class SkcodeApiClient {
     }
   }
 
+  /// `POST /skcode/api/v1/sessions/{sid}/inject`, body `{"text": text}`
+  /// (spec 3.1). This is the P1 session WRITE surface: operator text sent
+  /// into a running session as keystrokes. hostd's own audit record stores a
+  /// sha256 plus the byte length of [text], NEVER the raw text (skharness
+  /// `daemon.py::inject_session`); this client does nothing on top of that
+  /// contract except NOT logging or printing [text] anywhere itself, so no
+  /// call site here may add a `print`/`debugPrint`/log line that echoes it.
+  /// Requires a [token] carrying [kSkcodeInjectScope].
+  Future<void> injectText(String sid, String text, {required String token}) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        "/skcode/api/v1/sessions/$sid/inject",
+        data: {"text": text},
+        options: _bearer(token),
+      );
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// `POST /skcode/api/v1/sessions/{sid}/ratify`, no body (spec 3.1). Runs
+  /// the autocode twin gate over the session's existing worktree diff;
+  /// grades only, never merges/commits/pushes
+  /// (skharness `daemon.py::ratify_session`). Requires a [token] carrying
+  /// [kSkcodeInjectScope] (the same write scope as [injectText]: ratify is a
+  /// write-class action even though it never touches the repo).
+  Future<void> ratifySession(String sid, {required String token}) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        "/skcode/api/v1/sessions/$sid/ratify",
+        options: _bearer(token),
+      );
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
   Exception _wrap(DioException e) {
     final status = e.response?.statusCode;
     if (status == 401) return const SkcodeUnauthorizedException();

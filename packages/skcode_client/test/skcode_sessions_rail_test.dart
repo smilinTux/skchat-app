@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:skcode_client/skcode_client.dart";
+import "package:skworld_module_api/skworld_module_api.dart";
 
 /// A [SkcodeWsTransport] whose `ready` never resolves, so a pushed
 /// [SkcodeSessionScreen] never opens (or waits on) a real socket in a
@@ -39,6 +40,16 @@ class _FakeApiClient implements SkcodeApiClient {
     int limit = 100,
   }) async =>
       const [];
+
+  @override
+  Future<void> injectText(String sid, String text, {required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsRail tests");
+  }
+
+  @override
+  Future<void> ratifySession(String sid, {required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionsRail tests");
+  }
 }
 
 void main() {
@@ -126,4 +137,55 @@ void main() {
       expect(find.widgetWithText(AppBar, "s-target"), findsOneWidget);
     },
   );
+
+  testWidgets(
+    "forwards auth and the tapped session's mode==interactive through to "
+    "the pushed SkcodeSessionScreen (card C-5's gate, AC4)",
+    (tester) async {
+      const auth = _FakeAuth(scopes: {"skcode.inject"});
+      final apiClient = _FakeApiClient(
+        sessions: const [SkcodeSessionSummary(sid: "s-interactive", mode: "interactive")],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              connectTransport: (_) => _FakeWsTransport(),
+              auth: auth,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text("s-interactive"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // The composer only renders when the pushed screen actually received
+      // BOTH the scope-carrying auth and interactive: true.
+      expect(find.byType(SkcodeInjectComposer), findsOneWidget);
+    },
+  );
+}
+
+class _FakeAuth implements AuthContext {
+  const _FakeAuth({this.scopes = const {}});
+
+  @override
+  final Set<String> scopes;
+
+  @override
+  String get audience => "skcode";
+  @override
+  String? get subjectFqid => "agent:test@skworld.io";
+  @override
+  bool hasScope(String scope) => scopes.contains(scope);
+  @override
+  Future<String?> token() async => "T";
 }

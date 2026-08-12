@@ -52,6 +52,16 @@
 ///  * [kSkcodeAudience] / [skcodeWsUri] - pure config the transport and its
 ///                      callers share (the capauth audience name, and the
 ///                      http(s) -> ws(s) URL builder).
+///  * [SkcodeInjectComposer] / [SkcodeNeedsInputBanner] - card C-5, spec
+///                      section 7.1: the terminal-styled, amber-bordered
+///                      session-inject composer (button verb "Inject", a
+///                      persistent `INJECT -> <sid>` target chip, its own
+///                      non-Tab-traversable [FocusNode]) and the
+///                      needs_input Approve/Deny banner pinned above it.
+///                      [SkcodeSessionScreen] owns the gate: both render
+///                      only when the mounted module's [AuthContext] carries
+///                      [kSkcodeInjectScope] (composer additionally requires
+///                      an interactive session).
 ///
 /// Import gate (module contract standard section 3.1, "a grep gate proves the
 /// module's UI package imports only skworld_module_api, never any shell
@@ -67,7 +77,9 @@ export 'src/skcode_artifact_pane.dart';
 export 'src/skcode_config.dart';
 export 'src/skcode_event.dart';
 export 'src/skcode_event_merge.dart';
+export 'src/skcode_inject_composer.dart';
 export 'src/skcode_module.dart';
+export 'src/skcode_needs_input_banner.dart';
 export 'src/skcode_raw_rail.dart';
 export 'src/skcode_session_screen.dart';
 export 'src/skcode_session_store.dart';
