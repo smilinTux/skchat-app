@@ -46,10 +46,18 @@ const List<ModuleManifest> kBuiltinModules = [
     description: 'Live audio rooms',
   ),
   // skcode: remote agent coding sessions, folded in as the "Code" subapp
-  // (reconciled spec R4.1/R4.7). Grade B today: the pane embeds the
-  // skcode-hostd web client over the 443 funnel. No `requires` yet (there is no
-  // node-capability id for skcode), so it is always placed; the pane itself
-  // shows a paired/unpaired state honestly rather than greying the tab.
+  // (reconciled spec R4.1/R4.7). GRADE A as of card C-10 (spec section 4.1,
+  // "the Grade A registry flip"): `/code` mounts the native `skcode_client`
+  // module (`SkcodeModuleHostScreen`, the same mount pattern
+  // `module_host_screen.dart` established for skchat) over the WS/HTTP
+  // transport, no iframe. The old Grade B embed pane stays reachable at
+  // `/code/legacy` behind a visible "open classic" affordance (card C-10's
+  // own parity finding: the native dispatch form has no repo-less "direct"
+  // session mode yet, and the native transcript has no TUI chrome-filter for
+  // capture/attach-mode sessions, so the fallback is not yet retired). No
+  // `requires` yet (there is no node-capability id for skcode), so it is
+  // always placed; the pane itself shows a paired/unpaired state honestly
+  // rather than greying the tab.
   ModuleManifest(
     id: 'skcode',
     title: 'Code',
@@ -59,6 +67,7 @@ const List<ModuleManifest> kBuiltinModules = [
     defaultPlacement: ModulePlacement.nav,
     order: 15,
     description: 'Remote agent coding sessions',
+    grade: 'A',
   ),
   ModuleManifest(
     id: 'activity',

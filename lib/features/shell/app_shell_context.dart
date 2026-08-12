@@ -132,12 +132,21 @@ class AppShellBus implements ShellBus {
   }
 }
 
-/// Minimal concrete [AuthContext] for the mounted skchat module.
+/// Minimal concrete [AuthContext] for a mounted module.
 ///
-/// The module never holds a root credential (spec 2.3): it is scoped to the
-/// `skchat` audience with the chat capability scopes. [subjectFqid] carries
-/// whatever local identity the host resolves (the device PGP fingerprint
-/// today), or null when no identity is established yet.
+/// A mounted module never holds a root credential (spec 2.3): it is scoped to
+/// its own audience with its own capability scopes. [audience] / [scopes]
+/// default to the ORIGINAL skchat-only values so every existing call site
+/// (`module_host_screen.dart`'s [AppAuthContext] construction, and every test
+/// that pattern-matches `audience == 'skchat'`) keeps compiling and passing
+/// unchanged. A different mounted module (skcode, card C-10's registry flip)
+/// passes its own `audience`/`scopes` explicitly rather than getting a second
+/// near-duplicate class: the shape (mint-through-[tokenMinter], never throw,
+/// client-declared scopes the server's own PDP is the real enforcement point
+/// for) is identical for every module, only the audience name and scope
+/// vocabulary differ. [subjectFqid] carries whatever local identity the host
+/// resolves (the device PGP fingerprint today), or null when no identity is
+/// established yet.
 ///
 /// [token] completes the audience-token chain: it delegates to [tokenMinter],
 /// which mints (and caches) a short-lived, audience-scoped bearer from the
@@ -152,6 +161,8 @@ class AppAuthContext implements AuthContext {
   const AppAuthContext({
     this.subjectFqid,
     Future<String?> Function(String audience)? tokenMinter,
+    this.audience = 'skchat',
+    this.scopes = const {'chat.read', 'chat.send'},
   }) : _tokenMinter = tokenMinter;
 
   /// Mints an audience-scoped bearer for the given audience, or null when none
@@ -161,13 +172,13 @@ class AppAuthContext implements AuthContext {
   final Future<String?> Function(String audience)? _tokenMinter;
 
   @override
-  String get audience => 'skchat';
+  final String audience;
 
   @override
   final String? subjectFqid;
 
   @override
-  Set<String> get scopes => const {'chat.read', 'chat.send'};
+  final Set<String> scopes;
 
   @override
   bool hasScope(String scope) => scopes.contains(scope);
