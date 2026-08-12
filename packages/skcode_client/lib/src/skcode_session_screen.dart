@@ -10,6 +10,7 @@ import "skcode_event.dart";
 import "skcode_event_merge.dart";
 import "skcode_inject_composer.dart";
 import "skcode_needs_input_banner.dart";
+import "skcode_project_chat.dart";
 import "skcode_raw_rail.dart";
 import "skcode_session_store.dart";
 import "skcode_transcript_list.dart";
@@ -53,6 +54,8 @@ class SkcodeSessionScreen extends StatefulWidget {
     this.connectTransport = SkcodeWsTransport.connect,
     this.auth,
     this.interactive = false,
+    this.repo = "",
+    this.projectChatBuilder,
   });
 
   final String sid;
@@ -82,6 +85,22 @@ class SkcodeSessionScreen extends StatefulWidget {
   /// session's own mode through, matching `SkcodeSessionsRail`'s
   /// `_openSession`.
   final bool interactive;
+
+  /// This session's own repo (`SkcodeSessionSummary.repo`), card C-12: the
+  /// concrete value the phone chat chip binds to. Empty when the caller
+  /// (a test, or a session opened before hostd started tagging a repo)
+  /// never supplied one, in which case the chip renders with no repo
+  /// suffix rather than a stale/guessed name.
+  final String repo;
+
+  /// Card C-12, spec section 7 ("PHONE ... project chat is a header chip on
+  /// the landing and session screens"): when supplied, an AppBar chat
+  /// action pushes this builder's widget (wrapped in this screen's own
+  /// minimal `Scaffold`/`AppBar` chrome, since the builder itself returns a
+  /// bare surface) scoped to [repo]. Null renders no chat action at all
+  /// (never a disabled one), matching every other capability-gated
+  /// affordance on this screen.
+  final SkcodeProjectChatBuilder? projectChatBuilder;
 
   @override
   State<SkcodeSessionScreen> createState() => _SkcodeSessionScreenState();
@@ -272,6 +291,27 @@ class _SkcodeSessionScreenState extends State<SkcodeSessionScreen> {
     });
   }
 
+  /// Card C-12: the phone chat chip's push target. The injected builder
+  /// returns a bare surface (no `Scaffold`/`AppBar` of its own, per
+  /// [SkcodeProjectChatBuilder]'s contract), so this screen supplies the
+  /// chrome that lets the operator get back.
+  void _openProjectChat(BuildContext context) {
+    final builder = widget.projectChatBuilder;
+    if (builder == null) return;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (chatContext) => Scaffold(
+          appBar: AppBar(
+            title: Text(
+              widget.repo.isEmpty ? "Project chat" : "Chat: ${widget.repo}",
+            ),
+          ),
+          body: builder(chatContext, widget.repo),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isRaw = _mode == SkcodeRailMode.raw;
@@ -292,6 +332,13 @@ class _SkcodeSessionScreenState extends State<SkcodeSessionScreen> {
                   : () async {
                       if (await _confirmCancel()) await _handleCancel();
                     },
+            ),
+          if (widget.projectChatBuilder != null)
+            IconButton(
+              key: const Key("skcodeSessionChatAction"),
+              tooltip: "Project chat",
+              icon: const Icon(Icons.forum_outlined),
+              onPressed: () => _openProjectChat(context),
             ),
           IconButton(
             tooltip: "Artifacts",

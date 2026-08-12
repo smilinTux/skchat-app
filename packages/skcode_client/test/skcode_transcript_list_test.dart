@@ -106,4 +106,95 @@ void main() {
 
     expect(find.byKey(ValueKey(skcodeEventRowId(call))), findsOneWidget);
   });
+
+  group("card C-12 (spec 7.2): the transcript follow-tails independently", () {
+    List<SkcodeEvent> manyEvents(int n) => [
+          for (var i = 1; i <= n; i++)
+            _ev(seq: i, ts: i.toDouble(), text: "message $i"),
+        ];
+
+    testWidgets("no jump-to-latest pill while nothing has scrolled away from the bottom",
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 300,
+              child: SkcodeTranscriptList(events: manyEvents(40)),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeTranscriptJumpToLatest")), findsNothing);
+    });
+
+    testWidgets(
+        "scrolling away from the bottom shows the jump-to-latest pill; a NEW event "
+        "while scrolled away does NOT force-scroll (follow-tail stays disengaged)",
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 300,
+              child: SkcodeTranscriptList(events: manyEvents(40)),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Scroll up, away from the tail.
+      await tester.drag(find.byType(SkcodeTranscriptList), const Offset(0, 300));
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeTranscriptJumpToLatest")), findsOneWidget);
+
+      // A fresh event arrives while scrolled away: the list must not yank
+      // the operator back down to it (spec 7.2: "disengages on user
+      // scroll-up").
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 300,
+              child: SkcodeTranscriptList(events: manyEvents(41)),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeTranscriptJumpToLatest")), findsOneWidget);
+      // The newest row is not the one on screen (still scrolled away).
+      expect(find.text("message 41"), findsNothing);
+    });
+
+    testWidgets("tapping the jump-to-latest pill scrolls to the newest row and "
+        "re-engages follow-tail (the pill then disappears)", (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 300,
+              child: SkcodeTranscriptList(events: manyEvents(40)),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.drag(find.byType(SkcodeTranscriptList), const Offset(0, 300));
+      await tester.pump();
+      expect(find.byKey(const Key("skcodeTranscriptJumpToLatest")), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key("skcodeTranscriptJumpToLatest")));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key("skcodeTranscriptJumpToLatest")), findsNothing);
+      expect(find.text("message 40"), findsOneWidget);
+    });
+  });
 }

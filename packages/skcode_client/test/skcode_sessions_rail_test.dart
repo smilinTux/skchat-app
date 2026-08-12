@@ -511,6 +511,167 @@ void main() {
       expect(screen.auth, same(auth));
     });
   });
+
+  group("card C-12: inline selection, header chip, chat forwarding", () {
+    testWidgets(
+        "with onSessionSelected supplied, tapping a row calls it INSTEAD of pushing "
+        "SkcodeSessionScreen (the wide-tier layout's inline-selection contract)",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        sessions: const [SkcodeSessionSummary(sid: "s-1", repo: "skworld-app")],
+      );
+      SkcodeSessionSummary? selected;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              onSessionSelected: (s) => selected = s,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text("s-1"));
+      await tester.pump();
+
+      expect(selected?.sid, "s-1");
+      expect(find.byType(SkcodeSessionScreen), findsNothing);
+    });
+
+    testWidgets("without onSessionSelected, tapping a row still pushes (unchanged phone behavior)",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        sessions: const [SkcodeSessionSummary(sid: "s-1")],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text("s-1"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(SkcodeSessionScreen), findsOneWidget);
+    });
+
+    testWidgets("selectedSid highlights the matching row only when onSessionSelected is set",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        sessions: const [
+          SkcodeSessionSummary(sid: "s-1"),
+          SkcodeSessionSummary(sid: "s-2"),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              onSessionSelected: (_) {},
+              selectedSid: "s-2",
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final tileS1 = tester.widget<ListTile>(
+        find.ancestor(of: find.text("s-1"), matching: find.byType(ListTile)),
+      );
+      final tileS2 = tester.widget<ListTile>(
+        find.ancestor(of: find.text("s-2"), matching: find.byType(ListTile)),
+      );
+      expect(tileS1.selected, isFalse);
+      expect(tileS2.selected, isTrue);
+    });
+
+    testWidgets("headerChip renders above the list when supplied, absent when null",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              headerChip: const Text("MY CHIP"),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text("MY CHIP"), findsOneWidget);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text("MY CHIP"), findsNothing);
+    });
+
+    testWidgets("projectChatBuilder is forwarded to the pushed SkcodeSessionScreen "
+        "along with the tapped session's own repo", (tester) async {
+      final apiClient = _FakeApiClient(
+        sessions: const [SkcodeSessionSummary(sid: "s-1", repo: "skworld-app")],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+              projectChatBuilder: (context, repo) => Text("CHAT $repo"),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text("s-1"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final screen = tester.widget<SkcodeSessionScreen>(find.byType(SkcodeSessionScreen));
+      expect(screen.repo, "skworld-app");
+      expect(screen.projectChatBuilder, isNotNull);
+    });
+  });
 }
 
 class _FakeAuth implements AuthContext {

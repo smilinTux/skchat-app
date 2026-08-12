@@ -4,7 +4,8 @@ import 'package:skworld_module_api/skworld_module_api.dart';
 import 'skcode_api_client.dart';
 import 'skcode_artifact_pane.dart';
 import 'skcode_digest.dart';
-import 'skcode_sessions_rail.dart';
+import 'skcode_project_chat.dart';
+import 'skcode_responsive_body.dart';
 
 /// skcode-hostd's own fallback (matches [SkcodeApiClient]'s default
 /// `baseUrl`), used when neither the mounted host nor the standalone runner
@@ -48,6 +49,8 @@ class SkcodeSurface extends StatefulWidget {
     this.digestUrl,
     this.onOpenLink,
     this.digestClient,
+    this.projectChatBuilder,
+    this.defaultRepo,
   });
 
   /// Null means standalone; non-null means mounted (module contract standard
@@ -77,6 +80,15 @@ class SkcodeSurface extends StatefulWidget {
   /// Test seam: inject a fake [SkcodeDigestClient] so a widget test never
   /// opens a real socket for the Digest action either.
   final SkcodeDigestClient? digestClient;
+
+  /// Forwarded from [SkcodeModule.projectChatBuilder] (card C-12, spec
+  /// section 10). See `skcode_project_chat.dart`'s doc comment for the full
+  /// injection contract.
+  final SkcodeProjectChatBuilder? projectChatBuilder;
+
+  /// Forwarded from [SkcodeModule.defaultRepo] (card C-12): the phone
+  /// landing screen's chat-chip target. See [SkcodeResponsiveBody.defaultRepo].
+  final String? defaultRepo;
 
   @override
   State<SkcodeSurface> createState() => _SkcodeSurfaceState();
@@ -143,7 +155,7 @@ class _SkcodeSurfaceState extends State<SkcodeSurface> {
           ),
         ],
       ),
-      body: SkcodeSessionsRail(
+      body: SkcodeResponsiveBody(
         apiClient: _apiClient,
         origin: _resolvedOrigin,
         mintToken: _mintToken,
@@ -153,6 +165,11 @@ class _SkcodeSurfaceState extends State<SkcodeSurface> {
         // in standalone mode (no shell, no login seam yet), which correctly
         // fails the inject-composer gate closed.
         auth: widget.shell?.auth,
+        projectChatBuilder: widget.projectChatBuilder,
+        defaultRepo: widget.defaultRepo,
+        digestUrl: widget.digestUrl,
+        onOpenLink: _onOpenLink,
+        digestClient: widget.digestClient,
       ),
     );
   }

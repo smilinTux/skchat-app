@@ -3,6 +3,7 @@ import 'package:skworld_module_api/skworld_module_api.dart';
 
 import 'skcode_api_client.dart';
 import 'skcode_digest.dart';
+import 'skcode_project_chat.dart';
 import 'skcode_surface.dart';
 
 /// The skcode subapp as a mountable SKWorld module (card C-2, spec section
@@ -46,6 +47,8 @@ class SkcodeModule implements SkworldModule {
     this.digestUrl,
     this.onOpenLink,
     this.digestClient,
+    this.projectChatBuilder,
+    this.defaultRepo,
   });
 
   /// Where skcode-hostd lives (card C-3b): the one thing missing from
@@ -104,6 +107,23 @@ class SkcodeModule implements SkworldModule {
   /// real socket. Production always constructs with this omitted.
   final SkcodeDigestClient? digestClient;
 
+  /// The project-chat injection seam (card C-12, spec section 10). See
+  /// `skcode_project_chat.dart`'s doc comment: this package cannot import
+  /// the host's chat surface, so the host supplies the ALREADY-mounted,
+  /// repo-scoped chat body through this builder, mirroring how [origin] and
+  /// [onOpenLink] solved the same shape of problem for cards C-3b and C-9.
+  /// Null (standalone, or a host that has not wired chat) degrades every
+  /// chat slot to an honest empty state, never a crash or a dead column.
+  final SkcodeProjectChatBuilder? projectChatBuilder;
+
+  /// The phone landing screen's chat-chip target repo (card C-12, spec
+  /// section 7: "PHONE ... project chat is a header chip on the landing AND
+  /// session screens"). A pushed session screen always knows its own repo
+  /// already; the landing screen, with no session focused yet, needs this
+  /// caller-supplied default instead. Null renders no landing chip (the
+  /// session-screen chip is unaffected).
+  final String? defaultRepo;
+
   @override
   String get id => 'skcode';
 
@@ -130,6 +150,8 @@ class SkcodeModule implements SkworldModule {
       digestUrl: digestUrl,
       onOpenLink: onOpenLink,
       digestClient: digestClient,
+      projectChatBuilder: projectChatBuilder,
+      defaultRepo: defaultRepo,
     );
   }
 }

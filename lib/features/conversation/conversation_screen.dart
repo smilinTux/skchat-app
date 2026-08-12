@@ -43,9 +43,28 @@ import 'location/location_payload.dart';
 /// Message rows carry the full interaction kit (swipe-reply, react, edit,
 /// receipts, thread). Reply composer chip sits above the input bar.
 class ConversationScreen extends ConsumerWidget {
-  const ConversationScreen({super.key, required this.peerId});
+  const ConversationScreen({
+    super.key,
+    required this.peerId,
+    this.showAppBar = true,
+    this.composerHintText,
+  });
 
   final String peerId;
+
+  /// Card C-12 (skcode project chat column): the Code section's four-column
+  /// tier embeds this SAME screen bare, as one column among siblings (rail,
+  /// transcript, artifact pane) rather than a full navigation destination,
+  /// so it has no use for its own back button / app bar chrome there. Every
+  /// existing call site omits this and keeps the app bar exactly as before.
+  final bool showAppBar;
+
+  /// Card C-12: overrides [InputBar.hintText] (`Message #<repo>` for the
+  /// project chat column) without changing anything else about the
+  /// composer -- see `InputBar.hintText`'s own doc comment for why that is
+  /// the ONLY thing this reuse changes. Null keeps the ordinary
+  /// `Message...` placeholder every existing call site already sees.
+  final String? composerHintText;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -67,7 +86,7 @@ class ConversationScreen extends ConsumerWidget {
       // meta in web/index.html) keeps the conversation visible instead of the
       // browser scrolling the whole canvas up when the composer is focused.
       resizeToAvoidBottomInset: true,
-      appBar: _buildAppBar(context, ref, conversation, soul, messages),
+      appBar: showAppBar ? _buildAppBar(context, ref, conversation, soul, messages) : null,
       body: Column(
         children: [
           // Active/minimized-call return strip for THIS peer (see
@@ -134,6 +153,7 @@ class ConversationScreen extends ConsumerWidget {
 
           InputBar(
             soulColor: soul,
+            hintText: composerHintText ?? 'Message...',
             onSend: (text) async {
               final reply = ref.read(replyStateProvider(peerId));
               final tempId = '${DateTime.now().millisecondsSinceEpoch}';

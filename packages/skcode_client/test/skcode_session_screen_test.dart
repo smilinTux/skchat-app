@@ -804,4 +804,59 @@ void main() {
       expect(find.textContaining("not authorized"), findsOneWidget);
     });
   });
+
+  group("card C-12: phone chat chip (spec section 7, \"and session screens\")", () {
+    testWidgets("no chat action in the app bar when projectChatBuilder is omitted",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeSessionChatAction")), findsNothing);
+    });
+
+    testWidgets(
+        "tapping the chat action pushes the builder's widget, scoped to this "
+        "session's own repo", (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkcodeSessionScreen(
+            sid: "s-1",
+            apiClient: apiClient,
+            origin: "http://localhost:9384",
+            mintToken: () async => "T",
+            onAuthRejected: () {},
+            connectTransport: (_) => _FakeWsTransport(),
+            repo: "skworld-app",
+            projectChatBuilder: (context, repo) => Text("CHAT SURFACE: $repo"),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeSessionChatAction")), findsOneWidget);
+      expect(find.text("CHAT SURFACE: skworld-app"), findsNothing);
+
+      await tester.tap(find.byKey(const Key("skcodeSessionChatAction")));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text("CHAT SURFACE: skworld-app"), findsOneWidget);
+      expect(find.text("Chat: skworld-app"), findsOneWidget); // pushed AppBar title.
+    });
+  });
 }

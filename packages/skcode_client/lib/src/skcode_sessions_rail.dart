@@ -8,6 +8,7 @@ import "skcode_config.dart";
 import "skcode_dispatch_form.dart";
 import "skcode_job_run.dart";
 import "skcode_jobs_list_store.dart";
+import "skcode_project_chat.dart";
 import "skcode_session_screen.dart";
 import "skcode_sessions_list_store.dart";
 import "skcode_ws_transport.dart";
@@ -42,6 +43,10 @@ class SkcodeSessionsRail extends StatefulWidget {
     required this.onAuthRejected,
     this.connectTransport = SkcodeWsTransport.connect,
     this.auth,
+    this.onSessionSelected,
+    this.selectedSid,
+    this.headerChip,
+    this.projectChatBuilder,
   });
 
   final SkcodeApiClient apiClient;
@@ -57,6 +62,38 @@ class SkcodeSessionsRail extends StatefulWidget {
   /// C-5): the audience-scoped [AuthContext] its inject-composer scope gate
   /// reads via `hasScope(kSkcodeInjectScope)`.
   final AuthContext? auth;
+
+  /// Card C-12 (spec section 7, tiers two/three/wide): when supplied, a
+  /// tapped row calls this INSTEAD of pushing [SkcodeSessionScreen] full
+  /// screen -- the wide-tier layout wants the session selected inline (rail,
+  /// project chat, transcript, and artifact pane all visible at once), not
+  /// navigated away from. Null (the default) preserves the phone-tier
+  /// behavior every existing caller/test already exercises: push full
+  /// screen, forwarding [projectChatBuilder] to the pushed screen's own chat
+  /// chip.
+  final ValueChanged<SkcodeSessionSummary>? onSessionSelected;
+
+  /// The currently inline-selected session's sid (card C-12), used only to
+  /// highlight the matching row. Ignored (no highlight) when
+  /// [onSessionSelected] is null, since a pushed-screen caller has no
+  /// concept of "currently selected" once it navigates away.
+  final String? selectedSid;
+
+  /// Card C-12 (spec section 7, "PHONE ... project chat is a header chip on
+  /// the landing and session screens"): rendered above the New Session
+  /// button when non-null. The caller decides whether a landing-screen chip
+  /// makes sense at all (it needs a default repo to bind to, since no
+  /// session is selected yet on the landing screen) -- this widget only
+  /// reserves the slot.
+  final Widget? headerChip;
+
+  /// Card C-12: forwarded to the pushed [SkcodeSessionScreen] so ITS OWN
+  /// chat chip (spec section 7, "and session screens") can push the
+  /// project-chat thread scoped to the tapped session's own repo, which
+  /// (unlike the landing screen) is always concretely known here. Ignored
+  /// entirely on the [onSessionSelected] (inline) path: the wide-tier layout
+  /// renders project chat as its own column/tab instead of a pushed chip.
+  final SkcodeProjectChatBuilder? projectChatBuilder;
 
   @override
   State<SkcodeSessionsRail> createState() => _SkcodeSessionsRailState();
@@ -89,6 +126,16 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
   }
 
   void _openSession(BuildContext context, SkcodeSessionSummary session) {
+    // Card C-12: the wide-tier layout wants this session selected INLINE,
+    // never navigated to (spec section 7, "ask on the left, watch it land
+    // on the right" needs the rail, chat, transcript, and artifact pane all
+    // visible at once). Phone-tier behavior (no onSessionSelected supplied)
+    // is completely unchanged below.
+    final onSelected = widget.onSessionSelected;
+    if (onSelected != null) {
+      onSelected(session);
+      return;
+    }
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => SkcodeSessionScreen(
@@ -103,6 +150,8 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
           // interactive (`SkcodeSessionSummary.mode == "interactive"`) for
           // the inject composer to render at all.
           interactive: session.mode == "interactive",
+          repo: session.repo,
+          projectChatBuilder: widget.projectChatBuilder,
         ),
       ),
     );
@@ -124,6 +173,7 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        if (widget.headerChip != null) widget.headerChip!,
         if (widget.auth?.hasScope(kSkcodeDispatchScope) ?? false)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -147,6 +197,8 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
                     final session = _sessions[index];
                     return _SessionTile(
                       session: session,
+                      selected: widget.onSessionSelected != null &&
+                          widget.selectedSid == session.sid,
                       onTap: () => _openSession(context, session),
                     );
                   },
@@ -176,10 +228,15 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
 }
 
 class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.session, required this.onTap});
+  const _SessionTile({required this.session, required this.onTap, this.selected = false});
 
   final SkcodeSessionSummary session;
   final VoidCallback onTap;
+
+  /// Card C-12: highlights the inline-selected row at tiers two/three/wide.
+  /// Always false on the phone (push) path, which has no notion of a
+  /// currently-selected row once it navigates away.
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -192,6 +249,8 @@ class _SessionTile extends StatelessWidget {
 
     return ListTile(
       key: ValueKey(session.sid),
+      selected: selected,
+      selectedTileColor: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
       leading: Icon(
         Icons.circle,
         size: 10,

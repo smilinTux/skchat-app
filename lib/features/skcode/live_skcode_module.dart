@@ -3,6 +3,15 @@ import "package:skcode_client/skcode_client.dart";
 
 import "../../services/audience_token_service.dart";
 import "../../services/daemon_config.dart";
+import "project_chat_column.dart";
+
+/// This IS the skworld-app repo running: the landing screen's phone chat
+/// chip (card C-12, spec section 7: "PHONE ... a header chip on the landing
+/// AND session screens") needs a default repo before any session is
+/// focused, and this app's own primary project is the one sensible default
+/// -- a pushed session screen always overrides it with that session's own
+/// concrete `repo` instead (`SkcodeSessionsRail._openSession`).
+const _kSkcodePrimaryRepo = "skworld-app";
 
 /// Builds the mountable skcode module wired to the app's real transport
 /// config (card C-3b).
@@ -48,5 +57,12 @@ SkcodeModule buildLiveSkcodeModule(WidgetRef ref) {
       ref.read(audienceTokenServiceProvider).invalidate(kSkcodeAudience);
       ref.invalidate(audienceTokenForAudienceProvider(kSkcodeAudience));
     },
+    // Card C-12: the project-chat column/tab/chip's injection seam. See
+    // ProjectChatColumn's own doc comment for the full contract (mounts the
+    // EXISTING skchat thread for the repo's `meta.project`-tagged group,
+    // zero new chat infrastructure) and its empty state for what renders
+    // while nothing has tagged a group yet.
+    projectChatBuilder: (context, repo) => ProjectChatColumn(repo: repo),
+    defaultRepo: _kSkcodePrimaryRepo,
   );
 }
