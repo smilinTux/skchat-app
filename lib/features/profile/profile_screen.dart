@@ -7,6 +7,7 @@ import '../../core/build_info.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/providers/theme_provider.dart';
+import '../../core/providers/density_provider.dart';
 import '../../services/backend_config.dart';
 import '../../services/daemon_config.dart';
 import '../../services/self_identity.dart';
@@ -147,6 +148,7 @@ class ProfileScreen extends ConsumerWidget {
     final backendCfg = ref.watch(backendConfigProvider);
     final transports = ref.watch(transportHealthProvider);
     final themeMode = ref.watch(themeProvider);
+    final density = ref.watch(densityProvider);
     final soulColor = SovereignColors.fromFingerprint(
       selfAsync.valueOrNull?.fingerprint ?? '',
     );
@@ -160,13 +162,15 @@ class ProfileScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Me', style: tt.displayLarge?.copyWith(fontSize: 24)),
+            Text('Me', style: tt.displayLarge),
             Text(
               appBuildLabel,
-              style: tt.bodySmall?.copyWith(
-                fontSize: 11,
-                color: tt.bodySmall?.color?.withValues(alpha: 0.55),
-              ),
+              style: Theme.of(context)
+                  .extension<SovereignTypeExtras>()
+                  ?.micro
+                  .copyWith(
+                    color: tt.bodySmall?.color?.withValues(alpha: 0.55),
+                  ),
             ),
           ],
         ),
@@ -314,6 +318,20 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  const Divider(height: 1, indent: 56),
+                  ListTile(
+                    key: const Key('font-size-entry'),
+                    leading: const Icon(Icons.format_size_rounded),
+                    title: const Text('Font Size'),
+                    subtitle: Text(
+                      _densityLabel(density),
+                      style: tt.labelSmall?.copyWith(
+                        color: SovereignColors.textTertiary,
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => _showDensityPicker(context, ref, density),
+                  ),
                 ],
               ),
             ),
@@ -450,24 +468,20 @@ class ProfileScreen extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'The server this app connects to (chat, calls, spaces). '
               'No app rebuild needed.',
-              style: TextStyle(
-                fontSize: 12,
-                color: SovereignColors.textTertiary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
             ),
             const SizedBox(height: 16),
             TextField(
               key: const Key('server-url-field'),
               controller: controller,
               autofocus: true,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 14,
-                color: SovereignColors.textPrimary,
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'https://host.tailnet.ts.net',
                 hintStyle:
@@ -555,23 +569,19 @@ class ProfileScreen extends ConsumerWidget {
                   ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'On native this is your local daemon. In a browser, point this at '
               'a network-reachable daemon (e.g. a tailnet host) with CORS '
               'enabled, localhost is this device, which has no daemon.',
-              style: TextStyle(
-                fontSize: 12,
-                color: SovereignColors.textTertiary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 14,
-                color: SovereignColors.textPrimary,
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'localhost:9384',
                 hintStyle:
@@ -685,14 +695,13 @@ class ProfileScreen extends ConsumerWidget {
                   ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Switch which sovereign node this app federates with. A preset '
               'repoints every backend at once, the SKComms daemon, the SK '
               'Spaces / LiveKit web-UI, the LiveKit SFU, and skcapstone.',
-              style: TextStyle(
-                fontSize: 12,
-                color: SovereignColors.textTertiary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
             ),
             const SizedBox(height: 16),
             for (final preset in kBackendPresets)
@@ -715,11 +724,10 @@ class ProfileScreen extends ConsumerWidget {
                 ),
                 subtitle: Text(
                   preset.config.skchatWebuiUrl,
-                  style: const TextStyle(
-                    fontFamily: 'JetBrainsMono',
-                    fontSize: 11,
-                    color: SovereignColors.textTertiary,
-                  ),
+                  style: SovereignTypography.micro().copyWith(
+                        color: SovereignColors.textTertiary,
+                        fontFamily: 'JetBrainsMono',
+                      ),
                 ),
                 onTap: () {
                   applyPreset(preset);
@@ -727,22 +735,18 @@ class ProfileScreen extends ConsumerWidget {
                 },
               ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Custom host',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: SovereignColors.textSecondary,
-              ),
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: SovereignColors.textSecondary,
+                  ),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: customController,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 14,
-                color: SovereignColors.textPrimary,
-              ),
+              style:
+                  SovereignTypography.mono(color: SovereignColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'https://host.tailnet.ts.net',
                 hintStyle:
@@ -805,6 +809,102 @@ class ProfileScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  /// The PRD's promised "Font Size: Medium" row, delivered: picks the
+  /// app-wide [SovereignDensity], persisted via [densityProvider].
+  void _showDensityPicker(
+    BuildContext context,
+    WidgetRef ref,
+    SovereignDensity current,
+  ) {
+    final tt = Theme.of(context).textTheme;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SovereignColors.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Font Size',
+              style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Sets the app-wide type and spacing scale. Your OS text-size '
+              'preference still applies on top of this, at every level.',
+              style: tt.bodySmall?.copyWith(color: SovereignColors.textTertiary),
+            ),
+            const SizedBox(height: 16),
+            for (final option in SovereignDensity.values)
+              ListTile(
+                key: Key('density-option-${option.name}'),
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  option == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: option == current
+                      ? SovereignColors.soulLumina
+                      : SovereignColors.textTertiary,
+                ),
+                title: Text(
+                  _densityLabel(option),
+                  style: TextStyle(
+                    color: SovereignColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: tt.bodyMedium?.fontFamily,
+                  ),
+                ),
+                subtitle: Text(
+                  _densityDescription(option),
+                  style: tt.labelSmall?.copyWith(
+                    color: SovereignColors.textTertiary,
+                  ),
+                ),
+                onTap: () {
+                  ref.read(densityProvider.notifier).setDensity(option);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _densityLabel(SovereignDensity density) {
+    switch (density) {
+      case SovereignDensity.comfortable:
+        return 'Comfortable';
+      case SovereignDensity.compact:
+        return 'Compact (default)';
+      case SovereignDensity.dense:
+        return 'Dense';
+    }
+  }
+
+  String _densityDescription(SovereignDensity density) {
+    switch (density) {
+      case SovereignDensity.comfortable:
+        return 'Roomier text and spacing, the original scale';
+      case SovereignDensity.compact:
+        return 'Smaller, tighter, fits more on screen';
+      case SovereignDensity.dense:
+        return 'Smallest scale, for large screens and rails';
+    }
   }
 }
 
@@ -962,7 +1062,6 @@ class _IdentityHeader extends StatelessWidget {
                 style: tt.labelSmall?.copyWith(
                   fontFamily: 'JetBrainsMono',
                   color: soulColor.withValues(alpha: 0.9),
-                  fontSize: 11,
                   letterSpacing: 1.0,
                 ),
               ),
@@ -983,7 +1082,6 @@ class _IdentityHeader extends StatelessWidget {
                       'reload (storage is blocked in this browser).',
                       style: tt.labelSmall?.copyWith(
                         color: SovereignColors.accentWarning,
-                        fontSize: 11,
                       ),
                     ),
                   ),
@@ -1143,11 +1241,10 @@ class _TransportChip extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             name,
-            style: TextStyle(
-              fontSize: 11,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w500,
+                ),
           ),
         ],
       ),
@@ -1220,7 +1317,6 @@ class _EncryptionCard extends StatelessWidget {
                   style: tt.labelSmall?.copyWith(
                     fontFamily: 'JetBrainsMono',
                     color: SovereignColors.textTertiary,
-                    fontSize: 11,
                   ),
                 ),
                 trailing: Container(

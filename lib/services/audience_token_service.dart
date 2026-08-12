@@ -77,6 +77,22 @@ class AudienceTokenService {
     return token;
   }
 
+  /// Drop the cached token for [audience], if one is held.
+  ///
+  /// [mint]'s clock-freshness check cannot detect every way a token goes bad:
+  /// a token can be unexpired and still get rejected server-side because it
+  /// was revoked, the verifier restarted, or a PDP policy changed. An HTTP
+  /// 401 or a WS 1008 close is the server telling the caller its cache is
+  /// wrong, something the 30s expiry margin alone can never see. Callers on
+  /// that path MUST call [invalidate] before the next [mint], or [mint] just
+  /// hands back the identical stale (but still clock-fresh) token and the
+  /// retry fails identically.
+  ///
+  /// A no-op when nothing is cached for [audience] (never throws).
+  void invalidate(String audience) {
+    _cache.remove(audience);
+  }
+
   /// True when [cached] is still comfortably before its expiry. An unknown
   /// (null) expiry is treated as stale so the token is re-minted rather than
   /// reused past a moment the dataplane may already reject.

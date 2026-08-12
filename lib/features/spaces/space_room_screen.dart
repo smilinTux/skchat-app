@@ -5,7 +5,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:go_router/go_router.dart";
 import "package:livekit_client/livekit_client.dart";
 
-import "../../core/theme/sovereign_colors.dart";
+import "../../core/theme/theme.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/peer_trust_store.dart";
 import "../identity/widgets/trust_badge.dart";
@@ -756,12 +756,12 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          const Text(
+          Text(
             "Joining Space...",
-            style: TextStyle(
-              color: SovereignColors.textSecondary,
-              fontSize: 15,
-            ),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: SovereignColors.textSecondary,
+                  fontWeight: FontWeight.w400,
+                ),
           ),
         ],
       ),
@@ -781,22 +781,18 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
               size: 44,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               "Couldn't join Space",
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: SovereignColors.textPrimary,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               error,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: SovereignTypography.mono(
                 color: SovereignColors.textSecondary,
-                fontSize: 12,
-                fontFamily: "JetBrainsMono",
               ),
             ),
             const SizedBox(height: 24),
@@ -848,13 +844,12 @@ class _InvitedToStageBanner extends ConsumerWidget {
             size: 20,
           ),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
             child: Text(
               "The host invited you to speak.",
-              style: TextStyle(
-                color: SovereignColors.textPrimary,
-                fontSize: 13,
-              ),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: SovereignColors.textPrimary,
+                  ),
             ),
           ),
           TextButton(
@@ -916,11 +911,10 @@ class _Header extends StatelessWidget {
               children: [
                 Text(
                   join.title.isNotEmpty ? join.title : "Space",
-                  style: const TextStyle(
-                    color: SovereignColors.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: SovereignColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
@@ -930,18 +924,16 @@ class _Header extends StatelessWidget {
                       state.isConnected
                           ? "$listeners listening"
                           : "connecting...",
-                      style: const TextStyle(
-                        color: SovereignColors.textSecondary,
-                        fontSize: 12,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SovereignColors.textSecondary,
+                          ),
                     ),
                     if (state.isConnected) ...[
-                      const Text(
+                      Text(
                         "  ·  ",
-                        style: TextStyle(
-                          color: SovereignColors.textTertiary,
-                          fontSize: 12,
-                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SovereignColors.textTertiary,
+                            ),
                       ),
                       CallElapsedTimer(isConnected: state.isConnected),
                     ],
@@ -978,15 +970,14 @@ class _Header extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 5),
-                  const Text(
+                  Text(
                     "REC",
-                    style: TextStyle(
-                      color: SovereignColors.accentDanger,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
-                      fontFamily: "JetBrainsMono",
-                    ),
+                    style: SovereignTypography.badge().copyWith(
+                          color: SovereignColors.accentDanger,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                          fontFamily: "JetBrainsMono",
+                        ),
                   ),
                 ],
               ),
@@ -1073,7 +1064,7 @@ class _Stage extends ConsumerWidget {
           if (!liveVideoOnTop) const SizedBox(height: 24),
         ],
         if (join.isHost && raisedHands.isNotEmpty) ...[
-          _sectionLabel("Raised hands", raisedHands.length),
+          _sectionLabel(context, "Raised hands", raisedHands.length),
           const SizedBox(height: 12),
           Wrap(
             spacing: 16,
@@ -1088,7 +1079,7 @@ class _Stage extends ConsumerWidget {
           ),
           const SizedBox(height: 28),
         ],
-        _sectionLabel("Speakers", speakers.length),
+        _sectionLabel(context, "Speakers", speakers.length),
         const SizedBox(height: 12),
         Wrap(
           spacing: 20,
@@ -1106,7 +1097,7 @@ class _Stage extends ConsumerWidget {
         ),
         if (listeners.isNotEmpty) ...[
           const SizedBox(height: 28),
-          _sectionLabel("Listeners", listeners.length),
+          _sectionLabel(context, "Listeners", listeners.length),
           const SizedBox(height: 12),
           Wrap(
             spacing: 16,
@@ -1133,14 +1124,14 @@ class _Stage extends ConsumerWidget {
         .invite(join.identity, identity);
   }
 
-  Widget _sectionLabel(String label, int count) {
+  Widget _sectionLabel(BuildContext context, String label, int count) {
+    final labelSmall = Theme.of(context).textTheme.labelSmall;
     return Row(
       children: [
         Text(
           label.toUpperCase(),
-          style: const TextStyle(
+          style: labelSmall?.copyWith(
             color: SovereignColors.textTertiary,
-            fontSize: 11,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.8,
           ),
@@ -1148,10 +1139,7 @@ class _Stage extends ConsumerWidget {
         const SizedBox(width: 8),
         Text(
           "$count",
-          style: const TextStyle(
-            color: SovereignColors.textTertiary,
-            fontSize: 11,
-          ),
+          style: labelSmall?.copyWith(color: SovereignColors.textTertiary),
         ),
       ],
     );
@@ -1350,11 +1338,10 @@ class _WatchStage extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     label,
-                    style: const TextStyle(
-                      color: SovereignColors.textPrimary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: SovereignColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
                   ),
                 ],
               ),
@@ -1365,9 +1352,8 @@ class _WatchStage extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             others == 1 ? "+1 other is also live" : "+$others others are also live",
-            style: const TextStyle(
+            style: SovereignTypography.micro().copyWith(
               color: SovereignColors.textTertiary,
-              fontSize: 11,
             ),
           ),
         ],
@@ -1384,7 +1370,7 @@ class _WatchStage extends StatelessWidget {
                 color: SovereignColors.textTertiary,
               ),
               const SizedBox(width: 6),
-              const Expanded(
+              Expanded(
                 child: Text(
                   // The dedicated system-audio toggle in the Screen share
                   // panel (ScreenSharePanel, "Share system audio") captures
@@ -1392,9 +1378,8 @@ class _WatchStage extends StatelessWidget {
                   // points there instead of asking listeners to hand-pick a
                   // PulseAudio monitor device as their mic.
                   "Desktop audio? Turn on \"Share system audio\" in the Screen share panel so listeners hear it.",
-                  style: TextStyle(
+                  style: SovereignTypography.micro().copyWith(
                     color: SovereignColors.textTertiary,
-                    fontSize: 11,
                   ),
                 ),
               ),
@@ -1480,19 +1465,18 @@ class _WatchTogetherStage extends ConsumerWidget {
                       color:
                           SovereignColors.accentEncrypt.withValues(alpha: 0.6)),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.smart_display_outlined,
+                    const Icon(Icons.smart_display_outlined,
                         size: 14, color: SovereignColors.textPrimary),
-                    SizedBox(width: 6),
+                    const SizedBox(width: 6),
                     Text(
                       "Watching together",
-                      style: TextStyle(
-                        color: SovereignColors.textPrimary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SovereignColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
                     ),
                   ],
                 ),
@@ -1573,11 +1557,9 @@ class _SpeakerRing extends ConsumerWidget {
                   Center(
                     child: Text(
                       initials,
-                      style: TextStyle(
-                        color: soul,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                            color: soul,
+                          ),
                     ),
                   ),
                   if (snapshot.isMuted)
@@ -1612,11 +1594,10 @@ class _SpeakerRing extends ConsumerWidget {
                       snapshot.isLocal ? "You" : snapshot.identity,
                       textAlign: TextAlign.center,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: SovereignColors.textPrimary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SovereignColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
                     ),
                   ),
                   if (showBadge) ...[
@@ -1627,11 +1608,10 @@ class _SpeakerRing extends ConsumerWidget {
               ),
             ),
             if (isHost)
-              const Text(
+              Text(
                 "host",
-                style: TextStyle(
+                style: SovereignTypography.badge().copyWith(
                   color: SovereignColors.textTertiary,
-                  fontSize: 10,
                 ),
               ),
           ],
@@ -1674,11 +1654,9 @@ class _ListenerDot extends StatelessWidget {
               child: Center(
                 child: Text(
                   initials,
-                  style: TextStyle(
-                    color: soul.withValues(alpha: 0.9),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: soul.withValues(alpha: 0.9),
+                      ),
                 ),
               ),
             ),
@@ -1689,10 +1667,9 @@ class _ListenerDot extends StatelessWidget {
                 snapshot.isLocal ? "You" : snapshot.identity,
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: SovereignColors.textSecondary,
-                  fontSize: 11,
-                ),
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: SovereignColors.textSecondary,
+                    ),
               ),
             ),
           ],
@@ -1740,11 +1717,10 @@ class _RaisedHand extends StatelessWidget {
                   child: Center(
                     child: Text(
                       initials,
-                      style: TextStyle(
-                        color: soul,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: soul,
+                            fontWeight: FontWeight.w700,
+                          ),
                     ),
                   ),
                 ),
@@ -1773,18 +1749,16 @@ class _RaisedHand extends StatelessWidget {
                 snapshot.isLocal ? "You" : snapshot.identity,
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: SovereignColors.textPrimary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: SovereignColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ),
-            const Text(
+            Text(
               "tap to invite",
-              style: TextStyle(
+              style: SovereignTypography.badge().copyWith(
                 color: SovereignColors.textTertiary,
-                fontSize: 9,
               ),
             ),
           ],
@@ -1982,14 +1956,13 @@ class _ControlBar extends ConsumerWidget {
           // available via the separate canPublish branch, which this flag
           // does not touch.
           if (canShare && !canPublishVideoLocal)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 "The host turned off your sharing",
-                style: TextStyle(
-                  color: SovereignColors.textSecondary,
-                  fontSize: 12,
-                ),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: SovereignColors.textSecondary,
+                    ),
               ),
             ),
           // DECOUPLE: shown only right after a content share with system
@@ -1998,15 +1971,14 @@ class _ControlBar extends ConsumerWidget {
           // independent and usable the whole time; this is just the
           // one-time echo-avoidance explainer, not a lock notice.
           if (state.isSharingSystemAudio && !state.isMicEnabled)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 "Mic muted to avoid echo. Unmute to talk; headphones "
                 "recommended.",
-                style: TextStyle(
-                  color: SovereignColors.textSecondary,
-                  fontSize: 12,
-                ),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: SovereignColors.textSecondary,
+                    ),
               ),
             ),
           Row(
@@ -2205,10 +2177,9 @@ class _RoundButton extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               label,
-              style: const TextStyle(
-                color: SovereignColors.textSecondary,
-                fontSize: 11,
-              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.textSecondary,
+                  ),
             ),
           ],
         ),
@@ -2246,13 +2217,12 @@ class _LeaveButton extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               "Leave",
-              style: TextStyle(
-                color: SovereignColors.accentDanger,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: SovereignColors.accentDanger,
+                    fontWeight: FontWeight.w600,
+                  ),
             ),
           ],
         ),

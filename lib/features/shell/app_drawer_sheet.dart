@@ -184,8 +184,8 @@ class _DrawerModuleTile extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 52,
-              height: 52,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
                 color: tint.withValues(alpha: 0.14),
                 borderRadius: BorderRadius.circular(14),

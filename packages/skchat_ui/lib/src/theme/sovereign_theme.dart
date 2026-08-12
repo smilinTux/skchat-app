@@ -2,13 +2,21 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'sovereign_colors.dart';
+import 'sovereign_density.dart';
+import 'sovereign_spacing.dart';
 import 'sovereign_typography.dart';
 
 /// Builds the Sovereign Glass ThemeData for dark and light modes.
+///
+/// [density] threads through the text theme, `visualDensity`, and
+/// `listTileTheme`; every other sub-theme below (appBar, navigationBar,
+/// chip, dialog, snackbar, input) inherits automatically since it already
+/// references the text theme. Defaults to [SovereignDensity.compact], the
+/// app-wide default (density spec section 3.1).
 class SovereignTheme {
   SovereignTheme._();
 
-  static ThemeData dark() {
+  static ThemeData dark({SovereignDensity density = SovereignDensity.compact}) {
     final colorScheme = ColorScheme(
       brightness: Brightness.dark,
       primary: SovereignColors.soulLumina,
@@ -41,7 +49,12 @@ class SovereignTheme {
       surfaceTint: Colors.transparent,
     );
 
-    final textTheme = SovereignTypography.buildTextTheme(dark: true);
+    final textTheme = SovereignTypography.buildTextTheme(
+      dark: true,
+      density: density,
+    );
+    final spacing = SovereignSpacing.forDensity(density);
+    final typeExtras = SovereignTypeExtras.build(dark: true, density: density);
 
     return ThemeData(
       useMaterial3: true,
@@ -49,6 +62,8 @@ class SovereignTheme {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: SovereignColors.surfaceBase,
       textTheme: textTheme,
+      visualDensity: _visualDensityFor(density),
+      extensions: [spacing, typeExtras],
 
       // AppBar, transparent glass
       appBarTheme: AppBarTheme(
@@ -208,9 +223,16 @@ class SovereignTheme {
         }),
       ),
 
-      // List tile
-      listTileTheme: const ListTileThemeData(
-        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      // List tile, density-resolved contentPadding + minTileHeight
+      // (spec section 4). Comfortable leaves minTileHeight unset (null),
+      // so Material's own default height applies unmodified, exactly
+      // matching pre-density behavior.
+      listTileTheme: ListTileThemeData(
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: spacing.listTileContentPaddingV,
+        ),
+        minTileHeight: spacing.listTileMinHeight,
         iconColor: SovereignColors.textSecondary,
         textColor: SovereignColors.textPrimary,
       ),
@@ -236,8 +258,10 @@ class SovereignTheme {
     );
   }
 
-  static ThemeData light() {
-    final base = dark();
+  static ThemeData light({
+    SovereignDensity density = SovereignDensity.compact,
+  }) {
+    final base = dark(density: density);
     final colorScheme = base.colorScheme.copyWith(
       brightness: Brightness.light,
       surface: SovereignColors.surfaceBaseLight,
@@ -247,12 +271,17 @@ class SovereignTheme {
       outline: SovereignColors.surfaceGlassBorderLight,
       outlineVariant: SovereignColors.surfaceGlassLight,
     );
-    final textTheme = SovereignTypography.buildTextTheme(dark: false);
+    final textTheme = SovereignTypography.buildTextTheme(
+      dark: false,
+      density: density,
+    );
+    final typeExtras = SovereignTypeExtras.build(dark: false, density: density);
     return base.copyWith(
       brightness: Brightness.light,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: SovereignColors.surfaceBaseLight,
       textTheme: textTheme,
+      extensions: [base.extension<SovereignSpacing>()!, typeExtras],
       appBarTheme: base.appBarTheme.copyWith(
         foregroundColor: const Color(0xFF1A1A2E),
         systemOverlayStyle: const SystemUiOverlayStyle(
@@ -261,5 +290,19 @@ class SovereignTheme {
         ),
       ),
     );
+  }
+
+  /// Density spec section 3.3: comfortable keeps Material's own standard
+  /// density, compact/dense tighten Material component internals (buttons,
+  /// list tiles, checkboxes) for free.
+  static VisualDensity _visualDensityFor(SovereignDensity density) {
+    switch (density) {
+      case SovereignDensity.comfortable:
+        return VisualDensity.standard;
+      case SovereignDensity.compact:
+        return const VisualDensity(horizontal: -1, vertical: -1);
+      case SovereignDensity.dense:
+        return const VisualDensity(horizontal: -2, vertical: -2);
+    }
   }
 }

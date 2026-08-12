@@ -14,6 +14,7 @@ class InputBar extends StatefulWidget {
     this.onShareLocation,
     this.onTyping,
     this.soulColor = SovereignColors.soulLumina,
+    this.hintText = 'Message...',
   });
 
   final void Function(String text) onSend;
@@ -35,6 +36,17 @@ class InputBar extends StatefulWidget {
   final Future<void> Function()? onShareLocation;
 
   final Color soulColor;
+
+  /// The composer's placeholder text. Defaults to the ordinary Chats-tab
+  /// wording; card C-12 (skcode project chat column) overrides this to
+  /// `Message #<repo>` when this SAME widget is reused (unmodified visuals:
+  /// rounded field, soul-color accent) to render the project chat's
+  /// composer, so a `Message #<repo>` placeholder is the ONLY thing that
+  /// differs from an ordinary 1:1/group composer -- the deliberate opposite
+  /// of `SkcodeInjectComposer`'s mono/flat/amber chrome, which shares no
+  /// token with this widget at all (see
+  /// `test/features/skcode/skcode_composer_disambiguation_test.dart`).
+  final String hintText;
 
   @override
   State<InputBar> createState() => _InputBarState();
@@ -243,9 +255,9 @@ class _InputBarState extends State<InputBar> {
                           fontSize: 15,
                           color: SovereignColors.textPrimary,
                         ),
-                        decoration: const InputDecoration(
-                          hintText: 'Message...',
-                          hintStyle: TextStyle(
+                        decoration: InputDecoration(
+                          hintText: widget.hintText,
+                          hintStyle: const TextStyle(
                             color: SovereignColors.textTertiary,
                             fontSize: 15,
                           ),
@@ -291,16 +303,24 @@ class _SendButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: soulColor,
-          shape: BoxShape.circle,
+    return Tooltip(
+      // The verb, made explicit for anything that reads by tooltip/semantics
+      // rather than shape alone (card C-12, spec 7.1: "button verb Send" --
+      // the icon-only shape is the Chats tab's own long-standing chrome and
+      // stays untouched; this only ADDS the textual verb, it changes no
+      // pixel).
+      message: 'Send',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: soulColor,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.send_rounded, color: Colors.black, size: 20),
         ),
-        child: const Icon(Icons.send_rounded, color: Colors.black, size: 20),
       ),
     );
   }

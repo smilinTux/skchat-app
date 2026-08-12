@@ -1,0 +1,10 @@
+# Font-literal ratchet guard allowlist (density spec section 7.1).
+#
+# Exact `path:trimmed-line-content` entries for genuinely decorative
+# fontSize literals that should NOT count as a burn-down target and should
+# NOT need a baseline entry. Empty at D-1 landing: nothing in the current
+# 300+ literals is decorative enough to exempt outright rather than route
+# to a SovereignTypography role during the D-2 burn-down.
+#
+# Format: one entry per line, `relative/path.dart:exact trimmed line text`.
+# See test/font_literal_guard_test.dart for the matching logic.

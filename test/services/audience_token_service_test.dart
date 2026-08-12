@@ -137,4 +137,92 @@ void main() {
       expect(await auth.token(), isNull);
     });
   });
+
+  group("AudienceTokenService.invalidate", () {
+    // Trap 2 (card f2e35195): mint()'s freshness check is CLOCK-based only.
+    // A token can be unexpired and still rejected server-side (revoked,
+    // verifier restarted, PDP policy changed): that is exactly what an HTTP
+    // 401 or WS 1008 close means. Re-minting without first invalidating the
+    // cache is a no-op: mint() sees the still-clock-fresh cached token and
+    // hands back the SAME stale token, so the retry fails identically. This
+    // test proves invalidate() breaks that loop: after invalidate(), the
+    // next mint() call MUST hit the network again even though the cached
+    // token has not clock-expired.
+    test("forces a re-mint even when the cached token has not clock-expired",
+        () async {
+      final farFuture = DateTime.now().add(const Duration(hours: 1));
+      final adapter = _AudienceTokenAdapter(
+        body: {
+          "token": "AUD-TOKEN-STALE",
+          "expires_at": farFuture.millisecondsSinceEpoch ~/ 1000,
+        },
+      );
+      final dio = Dio(BaseOptions(baseUrl: "http://localhost:9384"))
+        ..httpClientAdapter = adapter;
+      final service = AudienceTokenService(client: SKCommsClient(dio: dio));
+
+      final first = await service.mint("skcode");
+      expect(first, "AUD-TOKEN-STALE");
+      expect(adapter.hitCount, 1);
+
+      // Still comfortably clock-fresh (expires in ~1h): a plain mint() call
+      // must serve the cache, NOT re-fetch.
+      final second = await service.mint("skcode");
+      expect(second, "AUD-TOKEN-STALE");
+      expect(adapter.hitCount, 1,
+          reason: "clock-fresh token must be served from cache");
+
+      // Simulate the server rejecting it anyway (revoked / 1008 / PDP
+      // change): the caller invalidates, then re-mints once.
+      adapter.body = {
+        "token": "AUD-TOKEN-FRESH",
+        "expires_at": farFuture.millisecondsSinceEpoch ~/ 1000,
+      };
+      service.invalidate("skcode");
+
+      final third = await service.mint("skcode");
+      expect(third, "AUD-TOKEN-FRESH",
+          reason: "invalidate() must force mint() to hit the network again "
+              "and pick up the new token, not replay the stale cached one");
+      expect(adapter.hitCount, 2);
+    });
+
+    test("invalidating an audience with nothing cached is a no-op", () {
+      final adapter = _AudienceTokenAdapter(body: const {});
+      final dio = Dio(BaseOptions(baseUrl: "http://localhost:9384"))
+        ..httpClientAdapter = adapter;
+      final service = AudienceTokenService(client: SKCommsClient(dio: dio));
+
+      expect(() => service.invalidate("skcode"), returnsNormally);
+    });
+
+    test("invalidating one audience does not disturb another's cache",
+        () async {
+      final farFuture = DateTime.now().add(const Duration(hours: 1));
+      final adapter = _AudienceTokenAdapter(
+        body: {
+          "token": "SHARED-BODY-TOKEN",
+          "expires_at": farFuture.millisecondsSinceEpoch ~/ 1000,
+        },
+      );
+      final dio = Dio(BaseOptions(baseUrl: "http://localhost:9384"))
+        ..httpClientAdapter = adapter;
+      final service = AudienceTokenService(client: SKCommsClient(dio: dio));
+
+      await service.mint("skcode");
+      await service.mint("skchat");
+      expect(adapter.hitCount, 2);
+
+      service.invalidate("skcode");
+
+      // skchat's cache is untouched: no new network round-trip for it.
+      await service.mint("skchat");
+      expect(adapter.hitCount, 2,
+          reason: "invalidate(skcode) must not evict the skchat cache entry");
+
+      // skcode was invalidated: mint() must hit the network again.
+      await service.mint("skcode");
+      expect(adapter.hitCount, 3);
+    });
+  });
 }

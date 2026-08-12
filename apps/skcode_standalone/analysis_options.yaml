@@ -1,0 +1,8 @@
+include: package:flutter_lints/flutter.yaml
+
+# Same lints as the workspace packages. The standalone runner is deliberately
+# small (a MaterialApp, a login seam, a scaffold), so it stays warning-clean.
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true

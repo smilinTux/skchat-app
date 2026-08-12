@@ -159,6 +159,7 @@ class Conversation {
     this.mode,
     this.ringers = const [],
     this.expiresAt,
+    this.metaProject,
   });
 
   final String peerId;
@@ -241,6 +242,17 @@ class Conversation {
     return DateTime.now().millisecondsSinceEpoch / 1000 >= e;
   }
 
+  /// skcode Code section card C-12 (spec section 10): a group carrying
+  /// server-side `meta.project = repo:<name>` binds this thread to a
+  /// repo/project, so the Code pane can mount the SAME conversation thread
+  /// as its project-chat column/tab instead of inventing a second chat
+  /// store. Parsed defensively from an optional `meta` object nobody else
+  /// on the wire needs to send or understand; null on every conversation
+  /// until the server actually tags one (an honest, expected steady state
+  /// today, not a parse failure -- the Code pane's own empty state covers
+  /// exactly this case).
+  final String? metaProject;
+
   /// Who to name on an incoming gdm ring, or null when the room is not a gdm
   /// or the server named nobody. Never guessed client-side: an unnamed ring
   /// stays unnamed rather than borrowing the room's title as a person.
@@ -318,6 +330,7 @@ class Conversation {
     // `expiresAt: null` cannot mean "clear" in a copyWith, so clearing the
     // room's schedule is an explicit flag (same idiom as GuestContact).
     bool clearExpiry = false,
+    String? metaProject,
   }) {
     return Conversation(
       peerId: peerId ?? this.peerId,
@@ -346,6 +359,7 @@ class Conversation {
       mode: mode ?? this.mode,
       ringers: ringers ?? this.ringers,
       expiresAt: clearExpiry ? null : (expiresAt ?? this.expiresAt),
+      metaProject: metaProject ?? this.metaProject,
     );
   }
 
@@ -388,6 +402,13 @@ class Conversation {
               .toList() ??
           const [],
       expiresAt: (json['expires_at'] as num?)?.toDouble(),
+      // Defensive: `meta` may be absent entirely, present but not a Map, or
+      // present without a `project` key -- every shape degrades to null
+      // rather than throwing, matching this file's existing tolerance for a
+      // server that has not caught up to every optional field yet.
+      metaProject: (json['meta'] is Map)
+          ? (json['meta'] as Map)['project'] as String?
+          : null,
     );
   }
 }
