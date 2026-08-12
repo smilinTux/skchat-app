@@ -1,6 +1,7 @@
 import "package:dio/dio.dart";
 
 import "skcode_event.dart";
+import "skcode_job_run.dart";
 
 /// One row of `GET /skcode/api/v1/sessions`, mirroring skharness's
 /// `SessionDescriptor.to_dict()` (skcode Code-section card C-1).
@@ -161,6 +162,26 @@ class SkcodeApiClient {
       final rows = (resp.data?["events"] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>();
       return rows.map(SkcodeEvent.fromJson).toList();
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// `GET /skcode/api/v1/jobs` (spec section 8, card C-8): the read-only
+  /// view over the scheduler's cron ledger, scope `skcode.stream` (the same
+  /// read scope as [listSessions]; there is no write scope for jobs in v1,
+  /// deliberately -- no run-now/retry/cancel exists on this surface). Rows
+  /// come back exactly as the server computed them (including `stale` /
+  /// `staleness_s`); this client performs no staleness math of its own.
+  Future<List<SkcodeJobRun>> listJobs({required String token}) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        "/skcode/api/v1/jobs",
+        options: _bearer(token),
+      );
+      final rows = (resp.data?["jobs"] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>();
+      return rows.map(SkcodeJobRun.fromJson).toList();
     } on DioException catch (e) {
       throw _wrap(e);
     }
