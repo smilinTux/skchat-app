@@ -59,6 +59,11 @@ class _FakeApiClient implements SkcodeApiClient {
       archive;
 
   @override
+  Future<List<SkcodeJobRun>> listJobs({required String token}) async {
+    throw UnimplementedError("not exercised by SkcodeSessionScreen tests");
+  }
+
+  @override
   Future<void> injectText(String sid, String text, {required String token}) async {
     final err = failWith;
     if (err != null) throw err;

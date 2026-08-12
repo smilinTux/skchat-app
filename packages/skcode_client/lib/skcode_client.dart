@@ -49,6 +49,18 @@
 ///                      ONLY through the `mintToken` / `onAuthRejected`
 ///                      callbacks its constructors take, never a host
 ///                      service directly.
+///  * [SkcodeJobRun] / [SkcodeJobsListStore] / [SkcodeJobsPoll] - the Jobs
+///                      section's own read-only view (card C-8, spec
+///                      section 8) over `GET /skcode/api/v1/jobs`: a
+///                      separately-polled cron-ledger row shape, NEVER
+///                      folded into [SkcodeSessionSummary] or
+///                      `SkcodeSessionStore`'s event merge. `stale` /
+///                      `staleness_s` are server-computed and displayed
+///                      as-is; nothing here recomputes them. Rendered
+///                      beneath the sessions list by
+///                      [SkcodeSessionsRail]'s private `_JobsSection`; there
+///                      is no run-now/retry/cancel action on this surface in
+///                      v1.
 ///  * [kSkcodeAudience] / [skcodeWsUri] - pure config the transport and its
 ///                      callers share (the capauth audience name, and the
 ///                      http(s) -> ws(s) URL builder).
@@ -78,6 +90,8 @@ export 'src/skcode_config.dart';
 export 'src/skcode_event.dart';
 export 'src/skcode_event_merge.dart';
 export 'src/skcode_inject_composer.dart';
+export 'src/skcode_job_run.dart';
+export 'src/skcode_jobs_list_store.dart';
 export 'src/skcode_module.dart';
 export 'src/skcode_needs_input_banner.dart';
 export 'src/skcode_raw_rail.dart';

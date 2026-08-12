@@ -24,13 +24,27 @@ class _FakeWsTransport implements SkcodeWsTransport {
 }
 
 class _FakeApiClient implements SkcodeApiClient {
-  _FakeApiClient({this.sessions = const []});
+  _FakeApiClient({this.sessions = const [], this.jobs = const [], this.jobsError});
 
   final List<SkcodeSessionSummary> sessions;
+
+  /// Rows [listJobs] resolves with, unless [jobsError] is set.
+  final List<SkcodeJobRun> jobs;
+
+  /// When set, [listJobs] throws this instead of returning [jobs] (the
+  /// "endpoint unavailable" degrade-state test seam).
+  final Object? jobsError;
 
   @override
   Future<List<SkcodeSessionSummary>> listSessions({required String token}) async =>
       sessions;
+
+  @override
+  Future<List<SkcodeJobRun>> listJobs({required String token}) async {
+    final err = jobsError;
+    if (err != null) throw err;
+    return jobs;
+  }
 
   @override
   Future<List<SkcodeEvent>> fetchEventsPage(
@@ -172,6 +186,206 @@ void main() {
       expect(find.byType(SkcodeInjectComposer), findsOneWidget);
     },
   );
+
+  group("Jobs section (card C-8, spec section 8)", () {
+    testWidgets(
+      "renders a Jobs section beneath Sessions with name, last-run and status",
+      (tester) async {
+        final apiClient = _FakeApiClient(
+          sessions: const [SkcodeSessionSummary(sid: "s-1")],
+          jobs: const [
+            SkcodeJobRun(
+              job: "drchiro-ingest",
+              host: "noroc2027",
+              status: "ok",
+              stale: false,
+              stalenessS: 120,
+            ),
+          ],
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SkcodeSessionsRail(
+                apiClient: apiClient,
+                origin: "http://localhost:9384",
+                mintToken: () async => "T",
+                onAuthRejected: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // Sessions still render (the Jobs section is ADDITIVE, beneath).
+        expect(find.text("s-1"), findsOneWidget);
+        expect(find.text("Jobs"), findsOneWidget);
+        expect(find.text("drchiro-ingest"), findsOneWidget);
+        expect(find.textContaining("noroc2027"), findsOneWidget);
+        expect(find.textContaining("OK"), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "a stale job's staleness badge renders distinctly from a healthy job's",
+      (tester) async {
+        final apiClient = _FakeApiClient(
+          jobs: const [
+            SkcodeJobRun(job: "fresh-job", status: "ok", stale: false, stalenessS: 30),
+            SkcodeJobRun(job: "stale-job", status: "ok", stale: true, stalenessS: 999999),
+          ],
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SkcodeSessionsRail(
+                apiClient: apiClient,
+                origin: "http://localhost:9384",
+                mintToken: () async => "T",
+                onAuthRejected: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // Distinct keys, distinct labels.
+        expect(find.byKey(const Key("skcodeJobBadgeFresh")), findsOneWidget);
+        expect(find.byKey(const Key("skcodeJobBadgeStale")), findsOneWidget);
+        expect(find.text("FRESH"), findsOneWidget);
+        expect(find.text("STALE"), findsOneWidget);
+
+        // And distinct color, not merely distinct text: the badge must read
+        // "visually obvious at a glance" (card C-8), not just on close read.
+        final freshBadge = tester.widget<Container>(
+          find.byKey(const Key("skcodeJobBadgeFresh")),
+        );
+        final staleBadge = tester.widget<Container>(
+          find.byKey(const Key("skcodeJobBadgeStale")),
+        );
+        final freshColor = (freshBadge.decoration as BoxDecoration).color;
+        final staleColor = (staleBadge.decoration as BoxDecoration).color;
+        expect(freshColor, isNot(equals(staleColor)));
+      },
+    );
+
+    testWidgets(
+      "a job with status unknown renders a clear Unknown state, not a crash",
+      (tester) async {
+        final apiClient = _FakeApiClient(
+          jobs: const [SkcodeJobRun(job: "mystery-job", status: "unknown", stale: true)],
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SkcodeSessionsRail(
+                apiClient: apiClient,
+                origin: "http://localhost:9384",
+                mintToken: () async => "T",
+                onAuthRejected: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text("mystery-job"), findsOneWidget);
+        expect(find.textContaining("Unknown"), findsOneWidget);
+        // "unknown" carries no known-good timestamp, so the badge still
+        // reads stale rather than silently defaulting to fresh.
+        expect(find.byKey(const Key("skcodeJobBadgeStale")), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "an empty job list renders a clear empty state, not a blank area",
+      (tester) async {
+        final apiClient = _FakeApiClient(jobs: const []);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SkcodeSessionsRail(
+                apiClient: apiClient,
+                origin: "http://localhost:9384",
+                mintToken: () async => "T",
+                onAuthRejected: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text("No scheduled jobs"), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "the jobs endpoint being unavailable renders a clear state, not a crash",
+      (tester) async {
+        final apiClient = _FakeApiClient(
+          jobsError: const SkcodeApiException("boom"),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SkcodeSessionsRail(
+                apiClient: apiClient,
+                origin: "http://localhost:9384",
+                mintToken: () async => "T",
+                onAuthRejected: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text("Jobs unavailable"), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      "the Jobs section has no run-now/retry/cancel control and a row "
+      "never navigates anywhere (view-only, card C-8: no mutating action)",
+      (tester) async {
+        final apiClient = _FakeApiClient(
+          jobs: const [SkcodeJobRun(job: "job-1", status: "ok", stale: false)],
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SkcodeSessionsRail(
+                apiClient: apiClient,
+                origin: "http://localhost:9384",
+                mintToken: () async => "T",
+                onAuthRejected: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byType(IconButton), findsNothing);
+        expect(find.byType(ElevatedButton), findsNothing);
+        expect(find.byType(FilledButton), findsNothing);
+        expect(find.byType(TextButton), findsNothing);
+
+        await tester.tap(find.text("job-1"));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+
+        expect(find.byType(SkcodeSessionScreen), findsNothing);
+      },
+    );
+  });
 }
 
 class _FakeAuth implements AuthContext {
