@@ -112,6 +112,39 @@ class SKCapstoneClient {
       return null;
     }
   }
+
+  /// GET /api/kanban (dashboard :7778 via the webui proxy), the full kanban
+  /// board: columns x swimlanes x cards. Null when the dashboard is unreachable.
+  Future<KanbanBoard?> getKanban() async {
+    try {
+      final resp = await _dashDio.get<Map<String, dynamic>>('/api/kanban');
+      if (resp.data == null) return null;
+      return KanbanBoard.fromJson(resp.data!);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// POST /api/card/{id}/{action} card mutation (move/assign/priority/label/
+  /// note). Attributes the actor and returns true on success. `body` carries the
+  /// action fields (e.g. move -> {column: 'doing'}).
+  Future<bool> mutateCard(
+      String cardId, String action, Map<String, dynamic> body) async {
+    try {
+      final resp = await _dashDio.post<Map<String, dynamic>>(
+        '/api/card/$cardId/$action',
+        data: body,
+        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+      );
+      return (resp.data?['ok'] as bool?) ?? (resp.statusCode == 200);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Convenience: move a card to a column.
+  Future<bool> moveCard(String cardId, String column) =>
+      mutateCard(cardId, 'move', {'column': column});
 }
 
 /// Heartbeat snapshot for a single agent, sourced from
@@ -306,6 +339,83 @@ class CoordBoardData {
           .map((e) => AgentBoardStatus.fromJson(e as Map<String, dynamic>))
           .toList(),
       summary: CoordSummary.fromJson(rawSummary),
+    );
+  }
+}
+
+// ── Kanban board models (GET /api/kanban) ───────────────────────────────────
+
+/// One card on the kanban board.
+class KanbanCard {
+  const KanbanCard({
+    required this.id,
+    required this.title,
+    required this.status,
+    required this.swimlane,
+    this.kind,
+    this.priority,
+    this.owner,
+    this.labels = const [],
+  });
+
+  final String id;
+  final String title;
+
+  /// The column: backlog | ready | doing | review | done.
+  final String status;
+
+  /// The swimlane: feature | bug | security | expedite | change | problem.
+  final String swimlane;
+
+  final String? kind; // epic | story | task | ...
+  final String? priority; // critical | high | medium | low
+  final String? owner;
+  final List<String> labels;
+
+  factory KanbanCard.fromJson(Map<String, dynamic> j) => KanbanCard(
+        id: j['id'] as String? ?? '',
+        title: j['title'] as String? ?? '',
+        status: j['status'] as String? ?? 'backlog',
+        swimlane: (j['swimlane'] ?? j['lane']) as String? ?? '',
+        kind: j['kind'] as String?,
+        priority: j['priority'] as String?,
+        owner: j['owner'] as String?,
+        labels:
+            (j['labels'] as List? ?? const []).map((e) => e.toString()).toList(),
+      );
+}
+
+/// The full kanban board: the ordered columns plus every card (flattened across
+/// swimlanes; each card carries its own `swimlane`).
+class KanbanBoard {
+  const KanbanBoard({required this.columns, required this.cards});
+
+  final List<String> columns;
+  final List<KanbanCard> cards;
+
+  /// Cards in a given column, preserving board order.
+  List<KanbanCard> inColumn(String column) =>
+      cards.where((c) => c.status == column).toList();
+
+  factory KanbanBoard.fromJson(Map<String, dynamic> j) {
+    final cols = (j['columns'] as List? ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    final cards = <KanbanCard>[];
+    for (final lane in (j['lanes'] as List? ?? const [])) {
+      if (lane is! Map<String, dynamic>) continue;
+      final laneCols = lane['columns'] as Map<String, dynamic>? ?? const {};
+      for (final entry in laneCols.entries) {
+        for (final c in (entry.value as List? ?? const [])) {
+          if (c is Map<String, dynamic>) cards.add(KanbanCard.fromJson(c));
+        }
+      }
+    }
+    return KanbanBoard(
+      columns: cols.isEmpty
+          ? const ['backlog', 'ready', 'doing', 'review', 'done']
+          : cols,
+      cards: cards,
     );
   }
 }

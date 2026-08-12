@@ -26,6 +26,7 @@ import '../../features/spaces/space_models.dart';
 import '../../features/conf/conf_screen.dart';
 import '../../features/facetime/facetime_screen.dart';
 import '../../features/coord/coord_board_screen.dart';
+import '../../features/coord/kanban_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
 import '../../features/skcode/skcode_pane.dart';
@@ -103,6 +104,9 @@ class AppRoutes {
 
   /// Coordination board: /coord
   static const coord = '/coord';
+
+  /// Kanban board (native): /kanban
+  static const kanban = '/kanban';
 
   /// Cluster control (skbloom): /cluster
   static const cluster = '/cluster';
@@ -427,6 +431,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => _noTransitionPage(
               state,
               const CoordBoardScreen(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.kanban,
+            pageBuilder: (context, state) => _noTransitionPage(
+              state,
+              const KanbanScreen(),
             ),
           ),
           GoRoute(

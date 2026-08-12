@@ -146,6 +146,16 @@ const List<ModuleManifest> kBuiltinModules = [
     description: 'Agent coordination tasks',
   ),
   ModuleManifest(
+    id: 'kanban',
+    title: 'Kanban',
+    icon: Icons.view_kanban_outlined,
+    route: AppRoutes.kanban,
+    defaultPlacement: ModulePlacement.drawer,
+    role: ModuleRole.operator,
+    order: 135,
+    description: 'Move coord cards across columns',
+  ),
+  ModuleManifest(
     id: 'recordings',
     title: 'Recordings',
     icon: Icons.fiber_manual_record_outlined,
@@ -173,7 +183,7 @@ const List<ModuleManifest> kBuiltinModules = [
 /// [kModulesIntroducedAtVersion]. Fresh installs seed every module at this
 /// version; existing users additively pick up only the ids above their stored
 /// version.
-const int kCurrentSeedVersion = 1;
+const int kCurrentSeedVersion = 2;
 
 /// Module ids first shipped as default-on at each seed version (> 0). Version 1
 /// introduces `skcode`, folded in as the "Code" nav subapp (R4.1). Versions are
@@ -182,6 +192,7 @@ const int kCurrentSeedVersion = 1;
 /// migration pass).
 const Map<int, List<String>> kModulesIntroducedAtVersion = {
   1: ['skcode'],
+  2: ['kanban'],
 };
 
 /// Ids introduced strictly AFTER [fromVersion] and up to [kCurrentSeedVersion].
