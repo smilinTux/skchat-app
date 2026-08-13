@@ -206,8 +206,63 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
   StreamSubscription<List<LiveKitParticipantSnapshot>>? _participantSub;
   StreamSubscription<ConnectionState>? _connSub;
 
+  /// True once the user has deliberately BACKGROUNDED this call, which is the
+  /// ONE exit that keeps the room alive on purpose. See [background].
+  bool _backgrounded = false;
+
   @override
   LiveKitCallState? build() => null;
+
+  /// Hand this call off to CallSession instead of ending it: the PiP pill and
+  /// the in-thread CallBanner keep a backgrounded call reachable, so the
+  /// teardown armed by [_armTeardown] must stand down. Only the collapse
+  /// chevron calls this, and only when a CallSession actually exists to come
+  /// back through.
+  void background() => _backgrounded = true;
+
+  /// Make leaving the call surface, by ANY route, end the call.
+  ///
+  /// Hang-up is only one way out: the route also pops on the system back
+  /// button, a browser back, a swipe-back, a `pushReplacement` from a
+  /// deep-link join, and a host screen simply rebuilding without this widget.
+  /// None of those touched a teardown, so the LiveKit room stayed connected
+  /// and subscribed with nothing in the UI pointing at it: the far end kept
+  /// playing through the speakers on whatever screen the user moved to, and it
+  /// kept burning bandwidth. Several entry points (a group call, the agent
+  /// room, a guest room, a join link) never create a CallSession at all, so
+  /// there was not even a pill or banner left to end it with.
+  ///
+  /// This notifier's own disposal is the seam: it is autoDispose and the call
+  /// screen is its only listener, so it dies with the screen for every one of
+  /// those exits, including the ones no button handler can observe. [svc] and
+  /// [session] are captured here, at join time, so teardown runs against the
+  /// objects that actually own the live room. Teardown is idempotent and
+  /// non-throwing (see [LiveKitCallService.leaveRoom]), so running after the
+  /// hang-up button already tore the same room down is a clean no-op.
+  void _armTeardown(LiveKitCallService svc) {
+    // A new join is a new call: never inherit a previous one's hand-off. The
+    // notifier can outlive one screen if the next mounts in the same frame
+    // (collapse, then return through the banner), and a stale true here would
+    // silently disarm the teardown for the whole next call.
+    _backgrounded = false;
+    final session = ref.read(callSessionProvider.notifier);
+    ref.onDispose(() {
+      if (_backgrounded) return;
+      // hangUp clears the CallSession so no pill or banner points at a dead
+      // call, and tears the room down; leaveRoom covers the sessionless entry
+      // points, where hangUp has nothing to act on.
+      unawaited(() async {
+        try {
+          await session.hangUp();
+        } catch (_) {
+          // Best-effort: one failing leg must not skip the other.
+        }
+        try {
+          await svc.leaveRoom();
+        } catch (_) {}
+      }());
+    });
+  }
 
   /// Join the room, mints a token, connects, publishes mic (+ optional cam).
   Future<void> join({
@@ -226,6 +281,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
 
     ref.onDispose(_cancelSubs);
     final svc = ref.read(liveKitCallServiceProvider);
+    _armTeardown(svc);
 
     // Subscribe to participant stream BEFORE joining so we don't miss events.
     _participantSub = svc.participants.listen((list) {
@@ -283,6 +339,7 @@ class LiveKitCallNotifier extends AutoDisposeNotifier<LiveKitCallState?> {
 
     ref.onDispose(_cancelSubs);
     final svc = ref.read(liveKitCallServiceProvider);
+    _armTeardown(svc);
 
     _participantSub = svc.participants.listen((list) {
       if (state != null) state = state!.copyWith(participants: list);
@@ -481,6 +538,21 @@ class LiveKitCallArgs {
 /// step if the bar's padding or control size changes.
 const double _kCallControlBarHeight = 116;
 
+/// Pop the call screen through whichever navigator actually pushed it.
+///
+/// Most entries are GoRouter pushes, but the guest room and the guest ring
+/// push a plain MaterialPageRoute, and `GoRouter.of` asserts when there is no
+/// router above. Falling back to `Navigator.maybePop` keeps the collapse
+/// chevron working on those screens instead of throwing.
+void _popCallScreen(BuildContext context) {
+  final router = GoRouter.maybeOf(context);
+  if (router != null && router.canPop()) {
+    router.pop();
+    return;
+  }
+  Navigator.of(context).maybePop();
+}
+
 class LiveKitCallScreen extends ConsumerStatefulWidget {
   const LiveKitCallScreen({
     super.key,
@@ -501,6 +573,22 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
     super.initState();
     // Kick off join after first frame so the notifier is ready.
     WidgetsBinding.instance.addPostFrameCallback((_) => _join());
+  }
+
+  /// Collapse: hand the live call to CallSession and pop, the one exit that
+  /// deliberately KEEPS the room. Only legitimate when there is a session to
+  /// hand it to, since the PiP pill and the CallBanner both render off
+  /// [callSessionProvider]. Without one (a group call, an agent room, a guest
+  /// room, a join link) there is nothing to restore the call from, so this
+  /// falls through to the normal teardown (see
+  /// [LiveKitCallNotifier.background]) instead of orphaning a room nobody can
+  /// reach.
+  void _collapse() {
+    if (ref.read(callSessionProvider) != null) {
+      ref.read(callSessionProvider.notifier).minimize();
+      ref.read(liveKitCallProvider.notifier).background();
+    }
+    _popCallScreen(context);
   }
 
   Future<void> _join() async {
@@ -658,6 +746,7 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
           child: _TopBar(
             callState: callState,
             displayName: widget.args.displayName,
+            onCollapse: _collapse,
           ),
         ),
 
@@ -676,10 +765,20 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
 // ── Top bar ────────────────────────────────────────────────────────────────
 
 class _TopBar extends ConsumerWidget {
-  const _TopBar({required this.callState, this.displayName});
+  const _TopBar({
+    required this.callState,
+    required this.onCollapse,
+    this.displayName,
+  });
 
   final LiveKitCallState callState;
   final String? displayName;
+
+  /// Collapse (background) the call. Owned by the screen state, which is what
+  /// decides whether backgrounding is even possible here and tells the
+  /// notifier to stand its teardown down, see
+  /// `_LiveKitCallScreenState._collapse`.
+  final VoidCallback onCollapse;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -704,12 +803,14 @@ class _TopBar extends ConsumerWidget {
           // CallBanner pick it back up) instead of orphaning it: previously
           // this was a bare context.pop() that never told CallSession the
           // room was still connected, so the call stayed live server-side
-          // with no UI referencing it (the orphaned-call bug).
+          // with no UI referencing it (the orphaned-call bug). It now runs
+          // through the screen's own handler, which also tells the notifier
+          // this exit was deliberate so its teardown stands down, and which
+          // refuses to background a call that has no CallSession to come back
+          // through.
           GestureDetector(
-            onTap: () {
-              ref.read(callSessionProvider.notifier).minimize();
-              if (context.canPop()) context.pop();
-            },
+            key: const Key('call-collapse'),
+            onTap: onCollapse,
             child: const Icon(
               Icons.keyboard_arrow_down_rounded,
               color: SovereignColors.textPrimary,
