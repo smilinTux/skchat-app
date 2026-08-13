@@ -209,6 +209,130 @@ class SKCapstoneClient {
       return null;
     }
   }
+
+  // ── Change management (CM P2.5): validate / schedule / arm ────────────────
+  //
+  // These call the NEW skdashboard `/api/change/{id}/*` routes (design doc
+  // docs/specs/2026-08-13-change-management-cab-ai-arch.md sections 6-8), on
+  // the SAME `_dashDio` and `x-sk-actor` pattern as [queueAi]/[mutateCard]
+  // above, so they ride the same operator-auth interceptor. Unlike those,
+  // failures here carry the server's `error`/`reason` string (409 no
+  // prepared_pr, 409 invalid schedule transition, 403 unauthorized) so the
+  // popout can surface it verbatim instead of a generic "failed".
+
+  /// Shared POST for a `/api/change/{id}/{action}` PEP route.
+  Future<ChangeActionResult> _postChangeAction(
+    String changeId,
+    String action,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final resp = await _dashDio.post<Map<String, dynamic>>(
+        '/api/change/$changeId/$action',
+        data: body,
+        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+      );
+      return ChangeActionResult(ok: true, data: resp.data ?? const {});
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      String? reason;
+      if (data is Map) {
+        final err = data['error'] ?? data['reason'];
+        if (err is String) reason = err;
+      }
+      return ChangeActionResult(
+        ok: false,
+        error: reason ?? e.message ?? 'request failed',
+        statusCode: e.response?.statusCode,
+      );
+    } catch (e) {
+      return ChangeActionResult(ok: false, error: e.toString());
+    }
+  }
+
+  /// POST /api/change/{id}/validate, run checks against the change's
+  /// `prepared_pr` and attach the verdict. 409s (via [ChangeActionResult.ok]
+  /// false, [ChangeActionResult.error] set) when the change has no
+  /// `prepared_pr` yet, nothing to validate.
+  Future<ChangeActionResult> validateChange(String changeId) =>
+      _postChangeAction(changeId, 'validate', const {});
+
+  /// POST /api/change/{id}/schedule, either an ASAP or a windowed schedule.
+  /// `deploy_mode` is LOCKED to `"confirm"` here: the backend rejects any
+  /// other value with 400 (design doc section 9, Phase 3a), so this client
+  /// never sends anything else, matching the popout's locked toggle.
+  Future<ChangeActionResult> scheduleChange(
+    String changeId, {
+    DateTime? windowStart,
+    DateTime? windowEnd,
+    bool asap = false,
+    String note = '',
+  }) =>
+      _postChangeAction(
+        changeId,
+        'schedule',
+        buildScheduleBody(
+          windowStart: windowStart,
+          windowEnd: windowEnd,
+          asap: asap,
+          note: note,
+        ),
+      );
+
+  /// POST /api/change/{id}/schedule with `{unschedule: true}`, returning the
+  /// change to `approved` and clearing its scheduled window.
+  Future<ChangeActionResult> unscheduleChange(String changeId,
+          {String note = ''}) =>
+      _postChangeAction(
+          changeId, 'schedule', {'unschedule': true, 'note': note});
+
+  /// POST /api/change/{id}/arm, writes the per-agent human-arm file the
+  /// (later) deploy runner requires for `deploy_mode == "confirm"`. Visible
+  /// only on scheduled changes for verified operators; the server PEP is the
+  /// real enforcement, this call just surfaces its verdict.
+  Future<ChangeActionResult> armChangeDeploy(String changeId) =>
+      _postChangeAction(changeId, 'arm', const {});
+}
+
+/// Body for `POST /api/change/{id}/schedule`, a pure function so the
+/// `deploy_mode: "confirm"` lock is unit-testable without any HTTP mocking.
+/// `asap: true` omits `window_start`/`window_end` (the server derives its own
+/// ASAP window); otherwise both are sent as UTC ISO-8601 when present.
+Map<String, dynamic> buildScheduleBody({
+  DateTime? windowStart,
+  DateTime? windowEnd,
+  bool asap = false,
+  String note = '',
+}) {
+  final body = <String, dynamic>{
+    'asap': asap,
+    // LOCKED: the backend 400s on any value other than "confirm" (Phase 3a).
+    'deploy_mode': 'confirm',
+    'note': note,
+  };
+  if (!asap) {
+    if (windowStart != null) {
+      body['window_start'] = windowStart.toUtc().toIso8601String();
+    }
+    if (windowEnd != null) {
+      body['window_end'] = windowEnd.toUtc().toIso8601String();
+    }
+  }
+  return body;
+}
+
+/// Result of a change.* PEP call ([SKCapstoneClient.validateChange] /
+/// [SKCapstoneClient.scheduleChange] / [SKCapstoneClient.armChangeDeploy]).
+/// [error] carries the server's explanation verbatim on failure (never a
+/// generic message when the server supplied one), so the popout can show the
+/// same reason a human operator would see.
+class ChangeActionResult {
+  const ChangeActionResult({required this.ok, this.data, this.error, this.statusCode});
+
+  final bool ok;
+  final Map<String, dynamic>? data;
+  final String? error;
+  final int? statusCode;
 }
 
 /// One AI-suggested next step for a card: a concise instruction plus the safety
@@ -468,6 +592,12 @@ class KanbanCard {
     this.priority,
     this.owner,
     this.labels = const [],
+    this.itilStatus,
+    this.preparedPr,
+    this.preparedBy,
+    this.validation,
+    this.scheduledWindow,
+    this.chips,
   });
 
   final String id;
@@ -484,6 +614,23 @@ class KanbanCard {
   final String? owner;
   final List<String> labels;
 
+  /// Change-management fields (CM P2.4/P2.5). Present only on change cards
+  /// (`kind == 'change'`, id `chg-*`); null on every other card, so the
+  /// popout renders nothing extra for them. Sourced straight from the
+  /// `/api/kanban` card brief, never refetched.
+  final String? itilStatus;
+  final Map<String, dynamic>? preparedPr;
+  final String? preparedBy;
+  final Map<String, dynamic>? validation;
+  final Map<String, dynamic>? scheduledWindow;
+  final ChangeChips? chips;
+
+  /// True for change-management tickets: the popout's Prepare label, CAB
+  /// tally/validation/window chips, and Validate/Schedule/Arm buttons apply
+  /// ONLY to these cards (design doc section 8). Checked both ways (kind +
+  /// id prefix) so a hand-built card in a test needs to set only one.
+  bool get isChange => kind == 'change' || id.startsWith('chg-');
+
   factory KanbanCard.fromJson(Map<String, dynamic> j) => KanbanCard(
         id: j['id'] as String? ?? '',
         title: j['title'] as String? ?? '',
@@ -494,6 +641,108 @@ class KanbanCard {
         owner: j['owner'] as String?,
         labels:
             (j['labels'] as List? ?? const []).map((e) => e.toString()).toList(),
+        itilStatus: j['itil_status'] as String?,
+        preparedPr: (j['prepared_pr'] as Map?)?.cast<String, dynamic>(),
+        preparedBy: j['prepared_by'] as String?,
+        validation: (j['validation'] as Map?)?.cast<String, dynamic>(),
+        scheduledWindow:
+            (j['scheduled_window'] as Map?)?.cast<String, dynamic>(),
+        chips: j['chips'] is Map
+            ? ChangeChips.fromJson((j['chips'] as Map).cast<String, dynamic>())
+            : null,
+      );
+}
+
+/// CAB tally chip: approve/reject/abstain counts plus the `human` voter's own
+/// decision (a distinct marker, not folded into the counts), matching
+/// skdashboard's `_cab_chip`.
+class ChangeCabTally {
+  const ChangeCabTally({
+    this.approved = 0,
+    this.rejected = 0,
+    this.abstain = 0,
+    this.humanDecision,
+  });
+
+  final int approved;
+  final int rejected;
+  final int abstain;
+
+  /// 'approved' | 'rejected' | 'abstain' | null (human has not voted yet).
+  final String? humanDecision;
+
+  factory ChangeCabTally.fromJson(Map<String, dynamic> j) => ChangeCabTally(
+        approved: j['approved'] as int? ?? 0,
+        rejected: j['rejected'] as int? ?? 0,
+        abstain: j['abstain'] as int? ?? 0,
+        humanDecision: j['human_decision'] as String?,
+      );
+}
+
+/// Validation verdict chip, matching skdashboard's `_validation_chip`. Null
+/// on the parent [ChangeChips.validation] when the change has never been
+/// validated.
+class ChangeValidationVerdict {
+  const ChangeValidationVerdict({
+    required this.passed,
+    required this.checkCount,
+    required this.stale,
+  });
+
+  final bool passed;
+  final int checkCount;
+
+  /// True when the verdict's head SHA no longer matches the PR's current
+  /// head: the change moved after it was validated, re-validate before CAB
+  /// relies on this.
+  final bool stale;
+
+  factory ChangeValidationVerdict.fromJson(Map<String, dynamic> j) =>
+      ChangeValidationVerdict(
+        passed: j['passed'] as bool? ?? false,
+        checkCount: j['check_count'] as int? ?? 0,
+        stale: j['stale'] as bool? ?? false,
+      );
+}
+
+/// Window chip, matching skdashboard's `_window_chip`. `label` is one of
+/// `"ASAP"`, a formatted window start (`"Fri 02:00Z"`), `"MISSED"`, or
+/// `"none"`.
+class ChangeWindowChip {
+  const ChangeWindowChip({required this.label, required this.asap});
+
+  final String label;
+  final bool asap;
+
+  factory ChangeWindowChip.fromJson(Map<String, dynamic> j) =>
+      ChangeWindowChip(
+        label: j['label'] as String? ?? 'none',
+        asap: j['asap'] as bool? ?? false,
+      );
+}
+
+/// The three change-card chips a kanban brief carries under `chips`
+/// (skdashboard `_change_chips`): CAB tally, validation verdict, window.
+class ChangeChips {
+  const ChangeChips({
+    required this.cab,
+    this.validation,
+    required this.window,
+  });
+
+  final ChangeCabTally cab;
+  final ChangeValidationVerdict? validation;
+  final ChangeWindowChip window;
+
+  factory ChangeChips.fromJson(Map<String, dynamic> j) => ChangeChips(
+        cab: ChangeCabTally.fromJson(
+            (j['cab'] as Map?)?.cast<String, dynamic>() ?? const {}),
+        validation: j['validation'] is Map
+            ? ChangeValidationVerdict.fromJson(
+                (j['validation'] as Map).cast<String, dynamic>())
+            : null,
+        window: ChangeWindowChip.fromJson(
+            (j['window'] as Map?)?.cast<String, dynamic>() ?? const {}),
       );
 }
 

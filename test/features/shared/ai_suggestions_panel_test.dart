@@ -73,4 +73,119 @@ void main() {
           mode: 'propose',
         )).called(1);
   });
+
+  Future<void> pumpChange(
+    WidgetTester tester,
+    SKCapstoneClient client, {
+    String? changeItilStatus,
+  }) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          skCapstoneClientProvider.overrideWithValue(client),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: AiSuggestionsPanel(
+              cardId: 'chg-1',
+              isChangeCard: true,
+              changeItilStatus: changeItilStatus,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
+
+  testWidgets(
+      'change card: mode chips relabel Propose/Dry-run/Prepare, Prepare '
+      'enabled while proposed', (tester) async {
+    final client = MockSKCapstoneClient();
+    when(() => client.getCardSuggestions(any())).thenAnswer(
+      (_) async => const [
+        CardSuggestion(text: 'Assess the risk', mode: 'propose'),
+        CardSuggestion(text: 'Dry-run the migration', mode: 'dry-run'),
+        CardSuggestion(text: 'Draft the change', mode: 'execute'),
+      ],
+    );
+    when(() => client.queueAi(
+          any(),
+          instruction: any(named: 'instruction'),
+          mode: any(named: 'mode'),
+        )).thenAnswer((_) async => 'run-999');
+
+    await pumpChange(tester, client, changeItilStatus: 'proposed');
+
+    await tester.tap(find.text('Suggest next steps'));
+    await tester.pump();
+
+    // Raw wire mode text never appears on a change card: it's relabeled.
+    expect(find.text('propose'), findsNothing);
+    expect(find.text('execute'), findsNothing);
+    expect(find.text('Propose'), findsOneWidget);
+    expect(find.text('Dry-run'), findsOneWidget);
+    expect(find.text('Prepare'), findsOneWidget);
+    // proposed is inside the draft window: Prepare's Queue stays enabled and
+    // the blocked-execute explanation is not shown.
+    expect(find.text(kChangeExecuteBlockedReason), findsNothing);
+    final queueButtons = tester.widgetList<FilledButton>(
+      find.widgetWithText(FilledButton, 'Queue'),
+    );
+    expect(queueButtons.every((b) => b.onPressed != null), isTrue);
+  });
+
+  testWidgets(
+      'change card: Prepare is blocked outside proposed/reviewing, reason '
+      'shown verbatim and Queue disabled', (tester) async {
+    final client = MockSKCapstoneClient();
+    when(() => client.getCardSuggestions(any())).thenAnswer(
+      (_) async => const [
+        CardSuggestion(text: 'Draft the change', mode: 'execute'),
+      ],
+    );
+
+    await pumpChange(tester, client, changeItilStatus: 'approved');
+
+    await tester.tap(find.text('Suggest next steps'));
+    await tester.pump();
+
+    expect(find.text('Prepare'), findsOneWidget);
+    expect(find.text(kChangeExecuteBlockedReason), findsOneWidget);
+    final queueButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Queue'),
+    );
+    expect(queueButton.onPressed, isNull);
+
+    // Tapping a disabled button is a no-op; nothing should be queued.
+    await tester.tap(find.widgetWithText(FilledButton, 'Queue'), warnIfMissed: false);
+    await tester.pump();
+    verifyNever(() => client.queueAi(
+          any(),
+          instruction: any(named: 'instruction'),
+          mode: any(named: 'mode'),
+        ));
+  });
+
+  testWidgets('non-change card keeps the raw lowercase mode text (unaffected)',
+      (tester) async {
+    final client = MockSKCapstoneClient();
+    when(() => client.getCardSuggestions(any())).thenAnswer(
+      (_) async => const [
+        CardSuggestion(text: 'Implement it', mode: 'execute'),
+      ],
+    );
+
+    await pump(tester, client); // isChangeCard defaults to false
+
+    await tester.tap(find.text('Suggest next steps'));
+    await tester.pump();
+
+    expect(find.text('execute'), findsOneWidget);
+    expect(find.text('Prepare'), findsNothing);
+    final queueButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Queue'),
+    );
+    expect(queueButton.onPressed, isNotNull);
+  });
 }

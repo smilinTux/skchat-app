@@ -78,6 +78,7 @@ class _KanbanScreenState extends ConsumerState<KanbanScreen> {
         card: card,
         columns: _board?.columns ?? const [],
         onMove: (col) => _move(card, col),
+        onChanged: _load,
       ),
     );
   }
@@ -336,11 +337,18 @@ class _CardSheet extends StatelessWidget {
     required this.card,
     required this.columns,
     required this.onMove,
+    required this.onChanged,
   });
 
   final KanbanCard card;
   final List<String> columns;
   final ValueChanged<String> onMove;
+
+  /// Called after a change-management action (validate/schedule/arm)
+  /// succeeds, so the board behind this sheet refreshes its chips. The sheet
+  /// itself keeps showing the snapshot it opened with (like `onMove`, which
+  /// pops the sheet before reloading); the caller decides when to refetch.
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -381,6 +389,10 @@ class _CardSheet extends StatelessWidget {
                       .toList(),
                 ),
               ],
+              if (card.isChange) ...[
+                const SizedBox(height: 16),
+                _ChangeManagementSection(card: card, onChanged: onChanged),
+              ],
               const SizedBox(height: 16),
               Text('MOVE TO',
                   style: tt.labelSmall?.copyWith(
@@ -400,11 +412,334 @@ class _CardSheet extends StatelessWidget {
               const SizedBox(height: 20),
               AiSuggestionsPanel(
                 cardId: card.id,
-                footnote: 'Queue dispatches an agent to work this card. '
-                    '"propose" analyses only, "execute" produces a draft.',
+                footnote: card.isChange
+                    ? 'Queue dispatches an agent to work this change. '
+                        '"Propose"/"Dry-run" analyse only; "Prepare" drafts a '
+                        'sandboxed PR for CAB review (still mode=execute on '
+                        'the wire).'
+                    : 'Queue dispatches an agent to work this card. '
+                        '"propose" analyses only, "execute" produces a draft.',
+                isChangeCard: card.isChange,
+                changeItilStatus: card.itilStatus,
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// CM P2.5: ticket-state chips (CAB tally / validation / window) plus the
+/// Validate / Schedule / Arm buttons for a change card. Calls the NEW
+/// `/api/change/{id}/*` routes on the same authenticated dashboard client
+/// [AiSuggestionsPanel] uses for `queue-ai`; the chips render straight from
+/// `card.chips` (no refetch), per the design doc.
+class _ChangeManagementSection extends ConsumerStatefulWidget {
+  const _ChangeManagementSection({required this.card, required this.onChanged});
+
+  final KanbanCard card;
+  final VoidCallback onChanged;
+
+  @override
+  ConsumerState<_ChangeManagementSection> createState() =>
+      _ChangeManagementSectionState();
+}
+
+class _ChangeManagementSectionState
+    extends ConsumerState<_ChangeManagementSection> {
+  bool _busy = false;
+
+  void _report(ChangeActionResult result, String successMessage) {
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(result.ok ? successMessage : (result.error ?? 'Failed')),
+    ));
+    if (result.ok) widget.onChanged();
+  }
+
+  Future<void> _validate() async {
+    setState(() => _busy = true);
+    final result =
+        await ref.read(skCapstoneClientProvider).validateChange(widget.card.id);
+    final passed = result.data?['validation']?['passed'] == true;
+    _report(result, passed ? 'Validation PASSED' : 'Validation FAILED');
+  }
+
+  Future<void> _arm() async {
+    setState(() => _busy = true);
+    final result = await ref
+        .read(skCapstoneClientProvider)
+        .armChangeDeploy(widget.card.id);
+    _report(result, 'Deploy armed');
+  }
+
+  Future<void> _unschedule() async {
+    setState(() => _busy = true);
+    final result = await ref
+        .read(skCapstoneClientProvider)
+        .unscheduleChange(widget.card.id);
+    _report(result, 'Unscheduled');
+  }
+
+  Future<void> _schedule() async {
+    final choice = await showModalBottomSheet<_ScheduleChoice>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => const _ScheduleSheet(),
+    );
+    if (choice == null || !mounted) return;
+    setState(() => _busy = true);
+    final result = await ref.read(skCapstoneClientProvider).scheduleChange(
+          widget.card.id,
+          windowStart: choice.windowStart,
+          windowEnd: choice.windowEnd,
+          asap: choice.asap,
+          note: choice.note,
+        );
+    _report(result, 'Scheduled');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    final card = widget.card;
+    final chips = card.chips;
+    final scheduled = card.itilStatus == 'scheduled';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('CHANGE MANAGEMENT',
+            style: tt.labelSmall
+                ?.copyWith(letterSpacing: 0.8, color: cs.onSurfaceVariant)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            if ((card.itilStatus ?? '').isNotEmpty)
+              _MiniChip(text: card.itilStatus!, color: cs.primary),
+            if (chips != null) _CabChip(tally: chips.cab),
+            if (chips?.validation != null)
+              _ValidationChipView(v: chips!.validation!),
+            if (chips != null) _WindowChipView(w: chips.window),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton(
+              onPressed: _busy ? null : _validate,
+              child: const Text('Validate'),
+            ),
+            OutlinedButton(
+              onPressed: _busy ? null : _schedule,
+              child: Text(scheduled ? 'Reschedule' : 'Schedule'),
+            ),
+            if (scheduled)
+              OutlinedButton(
+                onPressed: _busy ? null : _unschedule,
+                child: const Text('Unschedule'),
+              ),
+            if (scheduled)
+              FilledButton(
+                onPressed: _busy ? null : _arm,
+                child: const Text('Arm deploy'),
+              ),
+          ],
+        ),
+        if (_busy) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(minHeight: 2),
+        ],
+      ],
+    );
+  }
+}
+
+class _CabChip extends StatelessWidget {
+  const _CabChip({required this.tally});
+  final ChangeCabTally tally;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final color = tally.rejected > 0
+        ? const Color(0xFFEF4444)
+        : (tally.approved > 0 ? const Color(0xFF22C55E) : cs.onSurfaceVariant);
+    final human = tally.humanDecision != null ? ', human: ${tally.humanDecision}' : '';
+    return _MiniChip(
+      text: 'CAB ${tally.approved}A/${tally.rejected}R/${tally.abstain}Ab$human',
+      color: color,
+    );
+  }
+}
+
+class _ValidationChipView extends StatelessWidget {
+  const _ValidationChipView({required this.v});
+  final ChangeValidationVerdict v;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = v.passed ? const Color(0xFF22C55E) : const Color(0xFFEF4444);
+    final stale = v.stale ? ' (stale)' : '';
+    return _MiniChip(
+      text: '${v.passed ? 'PASS' : 'FAIL'} · ${v.checkCount} checks$stale',
+      color: color,
+    );
+  }
+}
+
+class _WindowChipView extends StatelessWidget {
+  const _WindowChipView({required this.w});
+  final ChangeWindowChip w;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final color = w.label == 'MISSED' ? const Color(0xFFEF4444) : cs.onSurfaceVariant;
+    return _MiniChip(text: w.label, color: color);
+  }
+}
+
+/// Result of the schedule sheet: either ASAP, or an explicit window.
+class _ScheduleChoice {
+  const _ScheduleChoice({
+    this.asap = false,
+    this.windowStart,
+    this.windowEnd,
+    this.note = '',
+  });
+
+  final bool asap;
+  final DateTime? windowStart;
+  final DateTime? windowEnd;
+  final String note;
+}
+
+/// Date-time-or-ASAP picker for `POST /api/change/{id}/schedule`.
+/// `deploy_mode` is shown but LOCKED to "confirm": there is no control to
+/// change it, matching [SKCapstoneClient.scheduleChange]/[buildScheduleBody],
+/// which never send anything else (the backend 400s on any other value).
+class _ScheduleSheet extends StatefulWidget {
+  const _ScheduleSheet();
+
+  @override
+  State<_ScheduleSheet> createState() => _ScheduleSheetState();
+}
+
+class _ScheduleSheetState extends State<_ScheduleSheet> {
+  bool _asap = false;
+  DateTime? _start;
+  DateTime? _end;
+  final _noteController = TextEditingController();
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<DateTime?> _pickDateTime(DateTime initial) async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return null;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return null;
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  Future<void> _pickStart() async {
+    final picked = await _pickDateTime(_start ?? DateTime.now());
+    if (picked != null) setState(() => _start = picked);
+  }
+
+  Future<void> _pickEnd() async {
+    final picked =
+        await _pickDateTime(_end ?? (_start ?? DateTime.now()).add(const Duration(hours: 2)));
+    if (picked != null) setState(() => _end = picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    final canSubmit = _asap || (_start != null && _end != null);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Schedule change', style: tt.titleMedium),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('ASAP'),
+              subtitle:
+                  const Text('Deploy as soon as CAB + the runner allow it'),
+              value: _asap,
+              onChanged: (v) => setState(() => _asap = v),
+            ),
+            if (!_asap) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Window start'),
+                subtitle: Text(_start?.toLocal().toString() ?? 'Not set'),
+                trailing: const Icon(Icons.edit_calendar_outlined),
+                onTap: _pickStart,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Window end'),
+                subtitle: Text(_end?.toLocal().toString() ?? 'Not set'),
+                trailing: const Icon(Icons.edit_calendar_outlined),
+                onTap: _pickEnd,
+              ),
+            ],
+            const SizedBox(height: 8),
+            TextField(
+              controller: _noteController,
+              decoration: const InputDecoration(labelText: 'Note (optional)'),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Text('DEPLOY MODE',
+                    style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
+                const SizedBox(width: 8),
+                _MiniChip(text: 'confirm (locked)', color: cs.onSurfaceVariant),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: canSubmit
+                    ? () => Navigator.of(context).pop(_ScheduleChoice(
+                          asap: _asap,
+                          windowStart: _start,
+                          windowEnd: _end,
+                          note: _noteController.text,
+                        ))
+                    : null,
+                child: const Text('Schedule'),
+              ),
+            ),
+          ],
         ),
       ),
     );
