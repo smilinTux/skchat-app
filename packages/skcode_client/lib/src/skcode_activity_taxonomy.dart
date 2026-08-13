@@ -126,6 +126,57 @@ ActivityTone _mcpVerbTone(String toolName) {
   return ActivityTone.write;
 }
 
+/// TUI chrome + terminal-redraw filter for ATTACH-mode (capture-pane)
+/// sessions. This is SKWorld's own logic, not a Buzz port: it is lifted from
+/// hostd's read-only web client, `skharness/src/skharness/client/index.html`
+/// (`isChromeLine` / `addEvent`'s capture-pane branch). An attach session
+/// streams a raw tmux capture-pane diff of the harness's full-screen TUI
+/// (`skharness/src/skharness/session_events.py` module doc: "tmux
+/// capture-pane diff"), so its `assistant_text` lines carry terminal
+/// FURNITURE no other source emits: full-width box-drawing separators, the
+/// persistent status bar, and the "thinking" spinner line. Strip ONLY those
+/// three unambiguous shapes so no real content is ever lost; the prompt/
+/// answer glyph lines and any ordinary text always pass through.
+///
+/// Unlike the JS client (which had no server-asserted signal for "this is a
+/// capture-pane stream" and so inferred it at runtime by watching for the
+/// first structured-only event), this port has [SkcodeEvent.source] as an
+/// explicit discriminator: the filter below applies only when `source ==
+/// "attach"`, and only to `assistant_text` (the one event type a capture-pane
+/// stream ever emits with scraped terminal text in it).
+const int _kBoxDrawingLow = 0x2500;
+const int _kBoxDrawingHigh = 0x257F;
+
+/// The "thinking" spinner glyph (heavy teardrop-spoked asterisk, U+273B)
+/// that always opens the spinner line in hostd's capture-pane stream.
+const int _kThinkingSpinnerGlyph = 0x273B;
+
+bool _isAttachChromeLine(String text) {
+  final t = text.trim();
+  if (t.isEmpty) return false; // blanks are handled by the redraw dedupe
+
+  // Full-width separator: every non-space glyph is a box-drawing character.
+  var boxOnly = true;
+  for (final rune in t.runes) {
+    if (rune == 0x20) continue;
+    if (rune < _kBoxDrawingLow || rune > _kBoxDrawingHigh) {
+      boxOnly = false;
+      break;
+    }
+  }
+  if (boxOnly && t.length >= 8) return true;
+
+  // The persistent status bar.
+  if (t.contains("manual mode on") ||
+      t.contains("for shortcuts") ||
+      t.contains("for agents")) {
+    return true;
+  }
+
+  // The thinking spinner line, always begins with the U+273B glyph.
+  return t.runes.first == _kThinkingSpinnerGlyph;
+}
+
 /// Harness heartbeat / keepalive noise (spec section 6: "harness heartbeat
 /// noise -> suppressed/neutral", the explicit noise valve). No emitter in
 /// `skharness`'s `claude_code.py` adapter sends this today (verified at
@@ -227,6 +278,12 @@ ActivityClassification classifySkcodeEvent(SkcodeEvent event) {
 
   switch (event.type) {
     case "assistant_text":
+      if (event.source == "attach" && _isAttachChromeLine(event.text)) {
+        return const ActivityClassification(
+          renderClass: ActivityRenderClass.suppressed,
+          tone: ActivityTone.neutral,
+        );
+      }
       return const ActivityClassification(
         renderClass: ActivityRenderClass.message,
         tone: ActivityTone.neutral,
@@ -314,15 +371,73 @@ class ActivityRecord {
   }
 }
 
+/// Classify an ordered, single-session [SkcodeEvent] window, positionally
+/// aligned with [events] (`result[i]` classifies `events[i]`), folding in
+/// the ATTACH-mode terminal-redraw dedupe that [classifySkcodeEvent] alone
+/// cannot see: a duplicate tmux-pane redraw only exists in relation to the
+/// line that rendered immediately before it, so it is not something a
+/// single event can be classified as "in isolation" (see
+/// [classifySkcodeEvent]'s own doc comment on that phrase).
+///
+/// Mirrors hostd's client-side `_lastRenderedText` (`index.html`'s
+/// `addEvent`): the last ATTACH `assistant_text` line that survived both the
+/// chrome filter and this dedupe. A line is a redraw, and gets reclassified
+/// to [ActivityRenderClass.suppressed], when it is byte-identical to that
+/// line, OR it is blank and the last rendered line was also blank (the TUI
+/// pads redraws with runs of blank lines). `lastAttachText` starts empty, so
+/// a stream that opens on a blank line suppresses that leading blank too,
+/// exactly like the JS client.
+///
+/// This is the ONE place both consumers of the taxonomy ([buildSkcodeTranscript]
+/// and `SkcodeRawRail`) get their classification from, so a genuine chrome
+/// line and a deduped redraw look identical (both `suppressed`) in either
+/// view -- the raw rail marks the row as suppressed the same way it does for
+/// heartbeat noise, giving an operator one consistent answer for "why isn't
+/// this in the transcript."
+List<ActivityClassification> classifySkcodeEventsInContext(
+  List<SkcodeEvent> events,
+) {
+  final result = <ActivityClassification>[];
+  var lastAttachText = "";
+
+  for (final event in events) {
+    var classification = classifySkcodeEvent(event);
+
+    if (event.type == "assistant_text" &&
+        event.source == "attach" &&
+        classification.renderClass != ActivityRenderClass.suppressed) {
+      final text = event.text;
+      final isBlank = text.trim().isEmpty;
+      final isRedraw = text == lastAttachText ||
+          (isBlank && lastAttachText.trim().isEmpty);
+      if (isRedraw) {
+        classification = const ActivityClassification(
+          renderClass: ActivityRenderClass.suppressed,
+          tone: ActivityTone.neutral,
+        );
+      } else {
+        lastAttachText = text;
+      }
+    }
+
+    result.add(classification);
+  }
+
+  return result;
+}
+
 /// Fold a merged, ordered [SkcodeEvent] window (exactly what
 /// [SkcodeSessionStore.state]'s `events` already is: deduped, `(ts, seq)`
 /// sorted) into the rows the TRANSCRIPT renders (spec section 6/7 part 2).
 ///
 /// Two things happen here that a plain per-event map does not do:
-///  * `suppressed` events (the noise valve) are dropped entirely, never
-///    becoming a transcript row (they still appear in the raw rail, which
-///    classifies every event independently; see [classifySkcodeEvent] /
-///    `SkcodeRawRail`).
+///  * `suppressed` events (the noise valve, which now includes both
+///    heartbeat noise and, per [classifySkcodeEventsInContext], ATTACH-mode
+///    TUI chrome/redraws) are dropped entirely, never becoming a transcript
+///    row. They still appear in the raw rail, which renders every event in
+///    [events] regardless of classification (see `SkcodeRawRail`) -- this
+///    reducer only ever removes ROWS from its own output, it never mutates
+///    or drops anything from [events] itself.
 ///  * a `tool_result` never becomes its own row. It looks up its matching
 ///    open `tool_call` (by `data.id` == `data.tool_use_id`) and CLOSES that
 ///    row: [ToolStatus.completed] normally, [ToolStatus.failed] plus a
@@ -336,8 +451,10 @@ class ActivityRecord {
 List<ActivityRecord> buildSkcodeTranscript(List<SkcodeEvent> events) {
   final records = <ActivityRecord>[];
   final openCallIndex = <String, int>{};
+  final classifications = classifySkcodeEventsInContext(events);
 
-  for (final event in events) {
+  for (var i = 0; i < events.length; i++) {
+    final event = events[i];
     if (event.type == "tool_result") {
       final id = event.data["tool_use_id"];
       final idx = id is String ? openCallIndex[id] : null;
@@ -352,7 +469,7 @@ List<ActivityRecord> buildSkcodeTranscript(List<SkcodeEvent> events) {
       continue;
     }
 
-    final classification = classifySkcodeEvent(event);
+    final classification = classifications[i];
     if (classification.renderClass == ActivityRenderClass.suppressed) {
       continue;
     }

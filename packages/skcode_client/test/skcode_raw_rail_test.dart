@@ -9,8 +9,17 @@ SkcodeEvent _ev({
   int seq = 1,
   double ts = 1000.0,
   String sid = "s-1",
+  String source = "interactive",
 }) =>
-    SkcodeEvent(type: type, text: text, data: data, seq: seq, ts: ts, sid: sid);
+    SkcodeEvent(
+      type: type,
+      text: text,
+      data: data,
+      seq: seq,
+      ts: ts,
+      sid: sid,
+      source: source,
+    );
 
 void main() {
   testWidgets("renders one expandable row per event, including suppressed ones",
@@ -71,6 +80,62 @@ void main() {
     );
     expect(find.text("No events yet"), findsOneWidget);
   });
+
+  testWidgets(
+    "card C-17: an attach-mode TUI chrome line and a terminal redraw are "
+    "hidden from the transcript, but the SAME frames still appear in the "
+    "raw rail (the suppressed contract: filtering, not discarding)",
+    (tester) async {
+      final events = [
+        _ev(type: "assistant_text", seq: 1, text: "❯ do the thing", source: "attach"),
+        _ev(type: "assistant_text", seq: 2, text: "─" * 40, source: "attach"), // chrome
+        _ev(type: "assistant_text", seq: 3, text: "● done", source: "attach"),
+        _ev(type: "assistant_text", seq: 4, text: "● done", source: "attach"), // redraw
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                SizedBox(height: 200, child: SkcodeTranscriptList(events: events)),
+                SizedBox(height: 400, child: SkcodeRawRail(events: events)),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      // Half 1: the transcript only shows the two real lines. Row 2 (the
+      // chrome separator) and row 4 (the redraw of row 3) never became rows.
+      expect(find.text("❯ do the thing"), findsOneWidget);
+      expect(find.text("● done"), findsOneWidget); // one row, not two
+      expect(find.text("─" * 40), findsNothing);
+
+      // Half 2: the raw rail still renders all four original events. A test
+      // that only checked half 1 would also pass on an implementation that
+      // discarded the frames outright instead of filtering them -- this
+      // assertion is the one that would catch that regression. Scoped to
+      // the raw rail subtree: rows 1 and 3 also key-match inside the
+      // transcript above (they are NOT suppressed there), so an unscoped
+      // lookup would over-count them.
+      final rawRail = find.byType(SkcodeRawRail);
+      expect(
+        find.descendant(of: rawRail, matching: find.byType(ExpansionTile)),
+        findsNWidgets(4),
+      );
+      for (final event in events) {
+        expect(
+          find.descendant(
+            of: rawRail,
+            matching: find.byKey(ValueKey(skcodeEventRowId(event))),
+          ),
+          findsOneWidget,
+          reason: "event seq ${event.seq} must still be in the raw rail",
+        );
+      }
+    },
+  );
 
   testWidgets("raw rail rows share the sid:seq:ts anchor id with transcript rows",
       (tester) async {

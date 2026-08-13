@@ -31,17 +31,28 @@ class SkcodeRawRail extends StatelessWidget {
     if (events.isEmpty) {
       return const Center(child: Text("No events yet"));
     }
+    // Computed once over the whole (ordered, single-session) window so an
+    // ATTACH-mode terminal redraw gets the SAME "suppressed" answer here as
+    // it does in the transcript reducer (see
+    // [classifySkcodeEventsInContext]'s doc comment): the raw rail is the
+    // noise valve an operator checks when something looks hidden, so it
+    // must not silently disagree with the transcript about what got hidden.
+    final classifications = classifySkcodeEventsInContext(events);
     return ListView.builder(
       itemCount: events.length,
-      itemBuilder: (context, index) => _RawRailRow(event: events[index]),
+      itemBuilder: (context, index) => _RawRailRow(
+        event: events[index],
+        classification: classifications[index],
+      ),
     );
   }
 }
 
 class _RawRailRow extends StatelessWidget {
-  const _RawRailRow({required this.event});
+  const _RawRailRow({required this.event, required this.classification});
 
   final SkcodeEvent event;
+  final ActivityClassification classification;
 
   String _description(ActivityClassification classification) {
     if (classification.label != null) return classification.label!;
@@ -62,7 +73,6 @@ class _RawRailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final classification = classifySkcodeEvent(event);
     final toneColor = skcodeToneColor(context, classification.tone);
     final rowId = skcodeEventRowId(event);
     final isSuppressed =

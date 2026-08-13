@@ -8,8 +8,27 @@ SkcodeEvent _ev({
   int seq = 1,
   double ts = 1000.0,
   String sid = "s-1",
+  String source = "interactive",
 }) =>
-    SkcodeEvent(type: type, text: text, data: data, seq: seq, ts: ts, sid: sid);
+    SkcodeEvent(
+      type: type,
+      text: text,
+      data: data,
+      seq: seq,
+      ts: ts,
+      sid: sid,
+      source: source,
+    );
+
+/// An attach-mode (capture-pane) `assistant_text` event, the only shape the
+/// TUI chrome filter / redraw dedupe (card C-17) ever touches.
+SkcodeEvent _attachEv({
+  String text = "",
+  int seq = 1,
+  double ts = 1000.0,
+  String sid = "s-1",
+}) =>
+    _ev(type: "assistant_text", text: text, seq: seq, ts: ts, sid: sid, source: "attach");
 
 void main() {
   group("every ActivityRenderClass has a tone (spec section 6)", () {
@@ -263,6 +282,174 @@ void main() {
     });
   });
 
+  group(
+    "card C-17: attach-mode TUI chrome filter (ported from hostd's "
+    "index.html isChromeLine, SKWorld's own logic, not Buzz)",
+    () {
+      test("a full-width box-drawing separator -> suppressed/neutral", () {
+        final c = classifySkcodeEvent(_attachEv(text: "─" * 40));
+        expect(c.renderClass, ActivityRenderClass.suppressed);
+        expect(c.tone, ActivityTone.neutral);
+      });
+
+      test("a short run of box-drawing chars (< 8) is NOT stripped", () {
+        // isChromeLine requires length >= 8 even when every glyph is
+        // box-drawing, matching the iframe's boundary exactly.
+        final c = classifySkcodeEvent(_attachEv(text: "─" * 7));
+        expect(c.renderClass, ActivityRenderClass.message);
+      });
+
+      for (final phrase in const [
+        "manual mode on (shift+tab to cycle)",
+        "? for shortcuts",
+        "esc to interrupt · ctrl+t for agents",
+      ]) {
+        test("status bar line containing '$phrase' -> suppressed/neutral", () {
+          final c = classifySkcodeEvent(_attachEv(text: phrase));
+          expect(c.renderClass, ActivityRenderClass.suppressed);
+        });
+      }
+
+      test("the thinking-spinner line (leading U+273B) -> suppressed/neutral", () {
+        final c = classifySkcodeEvent(_attachEv(text: "✻ Thinking..."));
+        expect(c.renderClass, ActivityRenderClass.suppressed);
+      });
+
+      test("ordinary text on an attach session passes straight through", () {
+        final c = classifySkcodeEvent(_attachEv(text: "❯ Fix the login bug"));
+        expect(c.renderClass, ActivityRenderClass.message);
+      });
+
+      test("a blank line is never itself chrome (the dedupe below owns blanks)", () {
+        final c = classifySkcodeEvent(_attachEv(text: "   "));
+        expect(c.renderClass, ActivityRenderClass.message);
+      });
+
+      test(
+        "the SAME chrome-shaped text on a non-attach source is never suppressed "
+        "(the filter is scoped to source == attach, not to text shape alone)",
+        () {
+          final interactive =
+              classifySkcodeEvent(_ev(type: "assistant_text", text: "─" * 40));
+          final autocode = classifySkcodeEvent(
+            _ev(type: "assistant_text", text: "─" * 40, source: "autocode"),
+          );
+          expect(interactive.renderClass, ActivityRenderClass.message);
+          expect(autocode.renderClass, ActivityRenderClass.message);
+        },
+      );
+    },
+  );
+
+  group(
+    "card C-17: attach-mode terminal-redraw dedupe "
+    "(classifySkcodeEventsInContext, ported from hostd's addEvent)",
+    () {
+      test("an exact duplicate of the line just rendered is suppressed", () {
+        final events = [
+          _attachEv(text: "same frame", seq: 1),
+          _attachEv(text: "same frame", seq: 2),
+        ];
+        final cs = classifySkcodeEventsInContext(events);
+        expect(cs[0].renderClass, ActivityRenderClass.message);
+        expect(cs[1].renderClass, ActivityRenderClass.suppressed);
+      });
+
+      test("distinct consecutive lines are both kept", () {
+        final events = [
+          _attachEv(text: "line one", seq: 1),
+          _attachEv(text: "line two", seq: 2),
+        ];
+        final cs = classifySkcodeEventsInContext(events);
+        expect(cs[0].renderClass, ActivityRenderClass.message);
+        expect(cs[1].renderClass, ActivityRenderClass.message);
+      });
+
+      test("a blank line following a blank line is suppressed (TUI padding)", () {
+        final events = [
+          _attachEv(text: "content", seq: 1),
+          _attachEv(text: "", seq: 2),
+          _attachEv(text: "   ", seq: 3),
+        ];
+        final cs = classifySkcodeEventsInContext(events);
+        expect(cs[0].renderClass, ActivityRenderClass.message);
+        expect(cs[1].renderClass, ActivityRenderClass.message, reason: "first blank stands");
+        expect(cs[2].renderClass, ActivityRenderClass.suppressed, reason: "blank-after-blank");
+      });
+
+      test(
+        "a leading blank line is suppressed too (the dedupe state starts "
+        "empty, exactly like the client on stream-open)",
+        () {
+          final cs = classifySkcodeEventsInContext([_attachEv(text: "", seq: 1)]);
+          expect(cs[0].renderClass, ActivityRenderClass.suppressed);
+        },
+      );
+
+      test(
+        "a blank between two non-blank lines does not carry the dedupe "
+        "state across it: a later blank is judged against the line "
+        "immediately before it, not the whole history",
+        () {
+          final events = [
+            _attachEv(text: "", seq: 1), // leading blank, suppressed
+            _attachEv(text: "hello", seq: 2), // kept, becomes lastAttachText
+            _attachEv(text: "", seq: 3), // NOT a redraw: previous kept line was non-blank
+          ];
+          final cs = classifySkcodeEventsInContext(events);
+          expect(cs[0].renderClass, ActivityRenderClass.suppressed);
+          expect(cs[1].renderClass, ActivityRenderClass.message);
+          expect(cs[2].renderClass, ActivityRenderClass.message);
+        },
+      );
+
+      test(
+        "a chrome line between two identical lines never updates the dedupe "
+        "state, so the second real line still reads as a redraw of the "
+        "first (matches the iframe: chrome lines never touch _lastRenderedText)",
+        () {
+          final events = [
+            _attachEv(text: "hello", seq: 1),
+            _attachEv(text: "─" * 40, seq: 2), // chrome, filtered first
+            _attachEv(text: "hello", seq: 3),
+          ];
+          final cs = classifySkcodeEventsInContext(events);
+          expect(cs[0].renderClass, ActivityRenderClass.message);
+          expect(cs[1].renderClass, ActivityRenderClass.suppressed, reason: "chrome line");
+          expect(
+            cs[2].renderClass,
+            ActivityRenderClass.suppressed,
+            reason: "redraw of the last REAL rendered line",
+          );
+        },
+      );
+
+      test("dedupe never applies on a non-attach source", () {
+        final events = [
+          _ev(type: "assistant_text", text: "same", seq: 1),
+          _ev(type: "assistant_text", text: "same", seq: 2),
+        ];
+        final cs = classifySkcodeEventsInContext(events);
+        expect(cs[0].renderClass, ActivityRenderClass.message);
+        expect(cs[1].renderClass, ActivityRenderClass.message);
+      });
+
+      test(
+        "classifySkcodeEventsInContext is positionally aligned 1:1 with its "
+        "input and never drops or reorders an entry",
+        () {
+          final events = [
+            _attachEv(text: "a", seq: 1),
+            _ev(type: "status", data: {"subtype": "heartbeat"}, seq: 2),
+            _attachEv(text: "a", seq: 3),
+          ];
+          final cs = classifySkcodeEventsInContext(events);
+          expect(cs.length, events.length);
+        },
+      );
+    },
+  );
+
   group("buildSkcodeTranscript: tool_call/tool_result folding + suppressed drop", () {
     test(
       "tool_result is_error overrides the open tool_call to error and the tone is preserved",
@@ -338,6 +525,27 @@ void main() {
       ];
       expect(buildSkcodeTranscript(events), isEmpty);
     });
+
+    test(
+      "card C-17: attach-mode TUI chrome and terminal redraws are hidden from "
+      "the transcript, exactly like heartbeat noise",
+      () {
+        final events = [
+          _attachEv(text: "❯ fix the login bug", seq: 1),
+          _attachEv(text: "─" * 40, seq: 2), // box-drawing separator: chrome
+          _attachEv(text: "manual mode on (shift+tab to cycle)", seq: 3), // status bar: chrome
+          _attachEv(text: "✻ Thinking...", seq: 4), // spinner: chrome
+          _attachEv(text: "● Done editing the file.", seq: 5),
+          _attachEv(text: "● Done editing the file.", seq: 6), // redraw of row 5
+        ];
+        final records = buildSkcodeTranscript(events);
+        expect(records, hasLength(2));
+        expect(
+          records.map((r) => r.event.text),
+          ["❯ fix the login bug", "● Done editing the file."],
+        );
+      },
+    );
   });
 
   group("suppressed events still appear in the raw rail's classification path", () {
