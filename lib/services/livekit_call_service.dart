@@ -520,7 +520,9 @@ class LiveKitCallService {
     bool withVideo = false,
     String? metadata,
   }) async {
-    if (_room != null) await dispose();
+    // Tear the previous room down, but keep this service alive: a re-join must
+    // not close the streams the new room is about to publish on.
+    if (_room != null) await leaveRoom();
 
     // 1. Mint a token from the web-UI.
     final tokenResult = await mintToken(
@@ -573,7 +575,8 @@ class LiveKitCallService {
     required String wsUrl,
     required String token,
   }) async {
-    if (_room != null) await dispose();
+    // See [joinRoom]: leaveRoom, not dispose, so the service survives the swap.
+    if (_room != null) await leaveRoom();
     await _connectRoom(wsUrl: wsUrl, token: token);
     _emitParticipants();
   }
@@ -734,8 +737,61 @@ class LiveKitCallService {
   static RTCIceTransportPolicy parseIcePolicy(dynamic raw) =>
       raw == 'relay' ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all;
 
-  /// Disconnect from the room and clean up resources.
-  Future<void> leaveRoom() => dispose();
+  /// Disconnect from the room and release every room-scoped resource, leaving
+  /// this service usable for the next call.
+  ///
+  /// WHY this is separate from [dispose]: the service outlives a single call
+  /// (see [liveKitCallServiceProvider]), so leaving a room must not close the
+  /// streams the next call will publish on. `leaveRoom` used to be an alias
+  /// for [dispose], which closed all five broadcast controllers, so a service
+  /// that was reused after one call went permanently silent (every
+  /// `_emitParticipants` / connection-state add is dropped by an isClosed
+  /// guard, with nothing failing loudly).
+  ///
+  /// Idempotent and non-throwing by contract. Teardown runs from several
+  /// independent paths (the hang-up button, the call screen being disposed,
+  /// the provider being torn down, a re-join over a live room), and a second
+  /// run, or a run against a room the SFU already dropped, has to be a clean
+  /// no-op. An exception here would skip the rest of the teardown and strand
+  /// exactly what this method exists to release: a live subscription that
+  /// keeps decoding and PLAYING remote audio after the user has left.
+  ///
+  /// Room state is cleared BEFORE the awaits so a concurrent second call sees
+  /// an already-empty service rather than racing on the same [Room].
+  Future<void> leaveRoom() async {
+    final room = _room;
+    final events = _roomEvents;
+    final systemAudio = _systemAudioTrack;
+    _room = null;
+    _localParticipant = null;
+    _roomEvents = null;
+    _systemAudioTrack = null;
+    _lastToken = null;
+    mediaWarning = null;
+    _selfMuteInFlight = false;
+
+    if (systemAudio != null) {
+      try {
+        await systemAudio.stop();
+      } catch (_) {}
+    }
+    if (events != null) {
+      try {
+        await events.dispose();
+      } catch (_) {}
+    }
+    if (room != null) {
+      try {
+        room.removeListener(_onRoomChanged);
+      } catch (_) {}
+      try {
+        await room.disconnect();
+      } catch (_) {}
+      try {
+        await room.dispose();
+      } catch (_) {}
+    }
+  }
 
   // ── Track controls ────────────────────────────────────────────────────────
 
@@ -1759,15 +1815,12 @@ class LiveKitCallService {
 
   // ── Dispose ───────────────────────────────────────────────────────────────
 
-  /// Disconnect from the room and release all resources.
+  /// Disconnect from the room and release all resources, INCLUDING the
+  /// streams. Terminal: the service cannot be reused afterwards, so this is
+  /// for the provider's own teardown. Everything that merely ends a call
+  /// wants [leaveRoom].
   Future<void> dispose() async {
-    _room?.removeListener(_onRoomChanged);
-    await _roomEvents?.dispose();
-    _roomEvents = null;
-    await _room?.disconnect();
-    await _room?.dispose();
-    _room = null;
-    _localParticipant = null;
+    await leaveRoom();
     if (!_participantsCtl.isClosed) await _participantsCtl.close();
     if (!_dataCtl.isClosed) await _dataCtl.close();
     if (!_connStateCtl.isClosed) await _connStateCtl.close();
@@ -1778,14 +1831,34 @@ class LiveKitCallService {
 
 // ── Riverpod provider ──────────────────────────────────────────────────────
 
-/// Scoped provider for [LiveKitCallService].
+/// The single owner of this client's LiveKit room.
 ///
 /// Override in tests or for a specific call session using
 /// `ProviderScope(overrides: [liveKitCallServiceProvider.overrideWithValue(...)])`.
-final liveKitCallServiceProvider =
-    Provider.autoDispose<LiveKitCallService>((ref) {
+///
+/// DELIBERATELY NOT autoDispose. Every consumer here reaches this service with
+/// `ref.read` (a call screen, the call session, the Spaces/conf screens, the
+/// in-call panels), and `ref.read` does not keep an autoDispose provider
+/// alive: Riverpod tore the element down again at the end of the same frame,
+/// so each read handed back a BRAND NEW LiveKitCallService. The instance that
+/// connected the Room was therefore not the instance any later caller got, and
+/// the consequences were not cosmetic:
+///
+///   * `hangUp()` / `leaveRoom()` on leaving a call ran against a fresh
+///     service whose `_room` was null, so it was a silent no-op while the
+///     orphaned instance kept its Room connected, kept its audio subscription,
+///     and kept playing the far end through the speakers on whatever screen
+///     the user had moved on to. That is the live defect this fixes: a call
+///     the user had left was still audible on the DM screen 42 minutes later.
+///   * the orphaned Room was unreachable from the UI, so nothing could ever
+///     stop it short of reloading the app, and it kept burning bandwidth.
+///
+/// The service is still rebuilt when the backend config changes (the
+/// `ref.watch` below), and the old instance is still fully disposed by the
+/// `ref.onDispose` hook, which is all the autoDispose modifier was there for.
+final liveKitCallServiceProvider = Provider<LiveKitCallService>((ref) {
   // Read the live backend config so the token-mint + SFU URLs follow the
-  // selected federation instance. autoDispose recreates the service when the
+  // selected federation instance. The watch rebuilds the service when the
   // config changes (a new call session then uses the new host).
   final cfg = ref.watch(backendConfigProvider);
   final svc = LiveKitCallService(
