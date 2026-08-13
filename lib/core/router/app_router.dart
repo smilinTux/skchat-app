@@ -39,6 +39,7 @@ import '../../features/skos/skos_files_screen.dart';
 import '../../features/skos/skos_control_screen.dart';
 import '../../features/join/join_screen.dart';
 import '../../features/guest/guest_landing_screen.dart';
+import '../../features/guest/guest_link.dart';
 import '../../features/join/mode_c_review_screen.dart';
 import '../../features/onboarding/onboarding_screen.dart';
 import '../../features/onboarding/onboarding_provider.dart';
@@ -598,9 +599,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.guestGroup,
         builder: (context, state) {
-          final token = state.pathParameters['token'] ?? '';
-          if (token.isEmpty) return const _InvalidJoinScreen();
-          return GuestLandingScreen(token: token);
+          // The raw path parameter may be `<token>&k=<fragment-secret>`: the
+          // server keeps every secret after the `#`, and that `&` sits INSIDE
+          // the fragment route, so GoRouter hands us the whole string. Passing
+          // it through unsplit appends `&k=...` to the JWT and every join fails
+          // as "invalid or expired invite". See GuestLink.
+          final link = GuestLink.parse(state.pathParameters['token'] ?? '');
+          if (link.isEmpty) return const _InvalidJoinScreen();
+          return GuestLandingScreen(
+            token: link.token,
+            fragmentSecret: link.fragmentSecret,
+          );
         },
       ),
 
