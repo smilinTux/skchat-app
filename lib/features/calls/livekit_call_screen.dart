@@ -473,6 +473,13 @@ class LiveKitCallArgs {
 ///
 /// The screen joins the room on first build, renders a live participant grid,
 /// and tears the service down when the user leaves.
+/// Height of the bottom control bar, excluding the device safe-area inset.
+///
+/// 20 top padding + a 56 control + 6 gap + ~14 label + 20 bottom padding. The
+/// panels FAB is lifted by this so it stops covering Leave; keep the two in
+/// step if the bar's padding or control size changes.
+const double _kCallControlBarHeight = 116;
+
 class LiveKitCallScreen extends ConsumerStatefulWidget {
   const LiveKitCallScreen({
     super.key,
@@ -526,11 +533,21 @@ class _LiveKitCallScreenState extends ConsumerState<LiveKitCallScreen> {
       // Collab lanes (chat / whiteboard / watch / terminal / screenshare) over
       // this room's LiveKit data channel, keyed by the room name. Same substrate
       // a Space room uses; mounted once media is connected.
+      // Lifted clear of the control bar. A Scaffold FAB parks bottom-right by
+      // default, which put this panels button directly ON TOP of Leave: the
+      // one control you need to be able to hit without thinking, covered by
+      // the one that opens a menu. Reported from real calls on a phone.
       floatingActionButton:
           (callState?.isConnected ?? false) && callState!.roomName.isNotEmpty
-              ? InCallPanelsFab(
-                  roomId: callState.roomName,
-                  identity: callState.identity,
+              ? Padding(
+                  padding: EdgeInsets.only(
+                    bottom: _kCallControlBarHeight +
+                        MediaQuery.of(context).padding.bottom,
+                  ),
+                  child: InCallPanelsFab(
+                    roomId: callState.roomName,
+                    identity: callState.identity,
+                  ),
                 )
               : null,
       body: callState == null
@@ -1238,9 +1255,20 @@ class _LiveKitControlBar extends ConsumerWidget {
           ],
         ),
       ),
+      // Leave is PINNED outside the scroller, and the other controls scroll.
+      // Eight 56px controls plus labels need ~450px, so on a phone (~340px of
+      // usable width here) the row overflowed and pushed the rightmost items
+      // off: the device picker's label truncated and Leave ended up jammed
+      // against the edge. Hanging up is the one action that must never be the
+      // thing that scrolls away.
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
           // Mic toggle.
           _LKControlButton(
             icon: callState.isMicEnabled
@@ -1316,8 +1344,14 @@ class _LiveKitControlBar extends ConsumerWidget {
 
           // Camera / mic device picker (self-contained control widget).
           const CallDevicePickerButton(size: 56),
+                ],
+              ),
+            ),
+          ),
 
-          // Leave / end call.
+          const SizedBox(width: 12),
+
+          // Leave / end call. Outside the scroller so it is always on screen.
           _LeaveButton(
             label: 'Leave',
             onTap: () => notifier.leave(context),
