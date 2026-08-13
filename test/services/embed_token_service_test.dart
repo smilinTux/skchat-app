@@ -189,4 +189,124 @@ void main() {
       expect(adapter.hitCount, 2);
     });
   });
+
+  group('EmbedTokenService.clearCache', () {
+    test('drops the cached token so the next mint hits the backend again',
+        () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'EMBED-TOKEN-1',
+          'module': 'skdashboard',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      await svc.mint('skdashboard');
+      expect(adapter.hitCount, 1);
+
+      // Still fresh: a second mint before clearCache is served from cache.
+      await svc.mint('skdashboard');
+      expect(adapter.hitCount, 1);
+
+      svc.clearCache('skdashboard');
+
+      // Cache dropped: the next mint re-hits the backend even though the
+      // previous token had not actually expired.
+      await svc.mint('skdashboard');
+      expect(adapter.hitCount, 2);
+    });
+
+    test('clears BOTH ro and rw entries for the module', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'TOKEN',
+          'module': 'skdashboard',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      await svc.mint('skdashboard'); // ro
+      await svc.mint('skdashboard', mode: 'rw'); // rw
+      expect(adapter.hitCount, 2);
+
+      svc.clearCache('skdashboard');
+
+      await svc.mint('skdashboard');
+      await svc.mint('skdashboard', mode: 'rw');
+      expect(adapter.hitCount, 4);
+    });
+
+    test('does not touch a DIFFERENT module\'s cache', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'TOKEN',
+          'module': 'skos',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      await svc.mint('skdashboard');
+      await svc.mint('skos');
+      expect(adapter.hitCount, 2);
+
+      svc.clearCache('skdashboard');
+
+      // skos is untouched: still served from cache.
+      await svc.mint('skos');
+      expect(adapter.hitCount, 2);
+
+      // skdashboard was cleared: re-mints.
+      await svc.mint('skdashboard');
+      expect(adapter.hitCount, 3);
+    });
+  });
+
+  group('EmbedTokenService.currentExpiry', () {
+    test('returns null when nothing has been minted for the module', () {
+      final svc = _wire(_EmbedTokenAdapter(body: const {}));
+      expect(svc.currentExpiry('skdashboard'), isNull);
+    });
+
+    test('returns the cached expiry after a mint, keyed by mode', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'TOKEN',
+          'module': 'skdashboard',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      expect(svc.currentExpiry('skdashboard'), isNull);
+      await svc.mint('skdashboard');
+      expect(svc.currentExpiry('skdashboard'), future);
+      // The rw slot is a separate cache key: still unminted.
+      expect(svc.currentExpiry('skdashboard', mode: 'rw'), isNull);
+    });
+
+    test('returns null again after clearCache', () async {
+      final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+      final adapter = _EmbedTokenAdapter(
+        body: {
+          'token': 'TOKEN',
+          'module': 'skdashboard',
+          'expires_at': future.toIso8601String(),
+        },
+      );
+      final svc = _wire(adapter);
+
+      await svc.mint('skdashboard');
+      expect(svc.currentExpiry('skdashboard'), isNotNull);
+
+      svc.clearCache('skdashboard');
+      expect(svc.currentExpiry('skdashboard'), isNull);
+    });
+  });
 }

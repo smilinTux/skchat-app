@@ -88,6 +88,22 @@ class EmbedTokenService {
     return token;
   }
 
+  /// Drop every cached token for [module] (both `ro` and `rw` modes), so the
+  /// next [mint] call for either mode re-mints from the backend instead of
+  /// returning a stale cache hit. Used by a pane's proactive-refresh timer,
+  /// paired with invalidating the module's `embedTokenForModuleProvider` so
+  /// the next watch actually re-runs [mint].
+  void clearCache(String module) {
+    final prefix = '$module:';
+    _cache.removeWhere((key, _) => key.startsWith(prefix));
+  }
+
+  /// The expiry of the currently cached token for [module] at [mode], or null
+  /// when no token is cached for that key or its expiry could not be parsed.
+  /// Read-only: never mints, never touches the cache.
+  DateTime? currentExpiry(String module, {String mode = 'ro'}) =>
+      _cache['$module:$mode']?.expiresAt;
+
   /// True when [cached] is still comfortably before its expiry. An unknown
   /// (null) expiry is treated as stale so the token is re-minted rather than
   /// reused past a moment the proxy may already reject.
