@@ -197,6 +197,66 @@ List<ScreenShare> resolveCameraShares(
 ) =>
     _resolveTracksBySource(room, participants, TrackSource.camera);
 
+/// Look up the live [TrackPublication] carrying [source] for [participant] in
+/// the [room]. Same identity-keyed room-graph walk as
+/// [_resolveTracksBySource], for the single-participant case a call tile
+/// needs. Returns null for a missing room, a participant who has left, or a
+/// participant with nothing published on that source.
+TrackPublication? _publicationFor(
+  Room? room,
+  LiveKitParticipantSnapshot participant,
+  TrackSource source,
+) {
+  if (room == null) return null;
+  if (participant.isLocal) {
+    return room.localParticipant?.getTrackPublicationBySource(source);
+  }
+  return room.remoteParticipants[participant.identity]
+      ?.getTrackPublicationBySource(source);
+}
+
+/// Resolve the one [VideoTrack] a CALL tile should draw for [participant], or
+/// null when there is no live video to show (the tile then keeps its existing
+/// avatar / audio-only presentation).
+///
+/// Screen share wins over camera, which is both [resolveStageVideos]' ordering
+/// and the call grid's own long-standing preference: someone sharing content
+/// wants the content seen.
+///
+/// Every input is read from the LIVE room, never from the participant
+/// snapshot, and that is the point. [LiveKitParticipantSnapshot] is a value
+/// captured when the service last emitted; a tile rebuilt from it later used
+/// to let the snapshot's `isCameraEnabled` copy veto a track that was already
+/// subscribed and decoding, so nothing was drawn even though frames were
+/// arriving. A remote publisher that never touches a local camera toggle (the
+/// Lumina call agent publishes her portrait server-side, after her audio
+/// track) is exactly the case that veto gets wrong. The Spaces resolvers above
+/// have never consulted that field, so this brings the call grid onto the same
+/// rule.
+///
+/// A publication whose `muted` flag is set is deliberately still treated as
+/// "no video": the SFU stops forwarding a muted track, so drawing it would
+/// pin the last decoded frame on screen instead of falling back. The flag is
+/// read off the live publication here rather than off the snapshot, so it can
+/// never be stale relative to what is being drawn.
+VideoTrack? resolveTileVideoTrack(
+  Room? room,
+  LiveKitParticipantSnapshot participant,
+) {
+  for (final source in const [
+    TrackSource.screenShareVideo,
+    TrackSource.camera,
+  ]) {
+    final pub = _publicationFor(room, participant, source);
+    if (pub == null || pub.muted) continue;
+    final track = pub.track;
+    // An unsubscribed or torn-down publication has a null track, which is how
+    // a track going away mid-call falls back cleanly instead of freezing.
+    if (track is VideoTrack) return track;
+  }
+  return null;
+}
+
 /// Resolve every live video source feeding the Space watch stage: screen
 /// shares first (kept in their existing priority position when both exist),
 /// then camera go-lives. Used by `_Stage` (space_room_screen.dart) INSTEAD
