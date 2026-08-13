@@ -18,6 +18,16 @@ import "skcode_ws_transport.dart";
 /// while mounted and pushes [SkcodeSessionScreen] full screen
 /// (`/code/s/:sid`) when a row is tapped.
 ///
+/// Card C-19: the sessions list itself renders one of three honest states
+/// (see [_SkcodeSessionsRailState._buildSessionsBody]) instead of collapsing
+/// every failure into one generic empty message -- "No access yet"
+/// (unauthorized: no token minted, or one rejected), "Could not reach host"
+/// (unreachable: skcode-hostd itself did not answer), or "No active
+/// sessions" (a poll that genuinely succeeded with zero rows). Mirrors
+/// [SkcodeJobsListStore]/`_JobsSection`'s "never fetched" vs "fetched, zero
+/// rows" split one level further, since unauthorized and unreachable point
+/// the operator at different next actions and used to render identically.
+///
 /// Beneath the sessions list sits the Jobs section (spec section 8, card
 /// C-8): a read-only, separately-polled view of `GET /jobs` (the cron
 /// ledger), rendered by [_JobsSection] below. Jobs are NOT sessions -- a
@@ -101,8 +111,8 @@ class SkcodeSessionsRail extends StatefulWidget {
 
 class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
   late final SkcodeSessionsListStore _store;
-  List<SkcodeSessionSummary> _sessions = const [];
-  StreamSubscription<List<SkcodeSessionSummary>>? _sub;
+  SkcodeSessionsPoll? _snapshot;
+  StreamSubscription<SkcodeSessionsPoll>? _sub;
 
   @override
   void initState() {
@@ -111,8 +121,8 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
       apiClient: widget.apiClient,
       mintToken: widget.mintToken,
     );
-    _sub = _store.sessions.listen((list) {
-      if (mounted) setState(() => _sessions = list);
+    _sub = _store.sessions.listen((poll) {
+      if (mounted) setState(() => _snapshot = poll);
     });
     _store.startPolling();
   }
@@ -169,6 +179,79 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
     );
   }
 
+  /// Renders one of five states (card C-19), each an explicit, honest
+  /// render rather than a blank area or a generic "nothing" that hides WHY:
+  ///
+  ///  * not yet polled: nothing (a beat before the first poll resolves) --
+  ///    same "guess nothing" rule as `_JobsSection`'s equivalent state.
+  ///  * never succeeded, most recent attempt unauthorized (no token minted,
+  ///    or skcode-hostd answered 401): "No access yet" -- an actionable
+  ///    message, not a bare error name, because BOTH causes point the
+  ///    operator at the same next step: sign in again.
+  ///  * never succeeded, most recent attempt unreachable (transport/DNS/
+  ///    timeout/funnel-down): "Could not reach host".
+  ///  * succeeded, zero rows: "No active sessions" -- a genuinely empty
+  ///    list, distinct from either failure above.
+  ///  * succeeded, N rows: the session tiles, exactly as before. A LATER
+  ///    failed poll (either kind) never falls back to one of the states
+  ///    above once [SkcodeSessionsPoll.everSucceeded] is true -- the last
+  ///    known-good list keeps rendering, matching the store's longstanding
+  ///    "one missed tick is not an error state" rule.
+  Widget _buildSessionsBody(BuildContext context) {
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      return const SizedBox.shrink();
+    }
+    if (!snapshot.everSucceeded) {
+      switch (snapshot.failureKind) {
+        case SkcodeSessionsFailureKind.unauthorized:
+          return const _SessionsMessage(
+            key: Key("skcodeSessionsUnauthorized"),
+            icon: Icons.lock_outline,
+            title: "No access yet",
+            detail:
+                "Your session token was not issued or was rejected. Sign in again to continue.",
+          );
+        case SkcodeSessionsFailureKind.unreachable:
+          return const _SessionsMessage(
+            key: Key("skcodeSessionsUnreachable"),
+            icon: Icons.cloud_off,
+            title: "Could not reach host",
+            detail: "skcode-hostd did not respond. Check the connection and try again.",
+          );
+        case SkcodeSessionsFailureKind.none:
+          // A poll resolved (everSucceeded stayed false to get here) but
+          // failureKind reads none only on a successful poll, which would
+          // have set everSucceeded true above -- unreachable in practice.
+          // Render the same "beat before we know" fallback as the null
+          // snapshot rather than assert, since asserting here would crash
+          // the rail over an inconsistency nobody outside this file causes.
+          return const SizedBox.shrink();
+      }
+    }
+    final sessions = snapshot.sessions;
+    if (sessions.isEmpty) {
+      return const _SessionsMessage(
+        key: Key("skcodeSessionsEmpty"),
+        icon: Icons.terminal,
+        title: "No active sessions",
+      );
+    }
+    return ListView.builder(
+      key: const Key("skcodeSessionsList"),
+      itemCount: sessions.length,
+      itemBuilder: (context, index) {
+        final session = sessions[index];
+        return _SessionTile(
+          session: session,
+          selected: widget.onSessionSelected != null &&
+              widget.selectedSid == session.sid,
+          onTap: () => _openSession(context, session),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -189,20 +272,7 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
           ),
         Expanded(
           flex: 3,
-          child: _sessions.isEmpty
-              ? const Center(child: Text("No sessions yet"))
-              : ListView.builder(
-                  itemCount: _sessions.length,
-                  itemBuilder: (context, index) {
-                    final session = _sessions[index];
-                    return _SessionTile(
-                      session: session,
-                      selected: widget.onSessionSelected != null &&
-                          widget.selectedSid == session.sid,
-                      onTap: () => _openSession(context, session),
-                    );
-                  },
-                ),
+          child: _buildSessionsBody(context),
         ),
         const Divider(height: 1),
         Padding(
@@ -223,6 +293,54 @@ class _SkcodeSessionsRailState extends State<SkcodeSessionsRail> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Renders one of card C-19's three honest sessions-list states: an icon, a
+/// bold title, and an optional [detail] line explaining what to do about it
+/// (the "empty" state passes no detail -- there is nothing to do about a
+/// genuinely empty list). Sizes come from [Theme.of(context).textTheme]
+/// throughout, never a literal `fontSize:`, matching every other message
+/// render in this package (`_JobsSection`, `skcode_digest_tab.dart`).
+class _SessionsMessage extends StatelessWidget {
+  const _SessionsMessage({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.detail,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final detailText = detail;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: 8),
+            Text(title, style: theme.textTheme.titleSmall, textAlign: TextAlign.center),
+            if (detailText != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                detailText,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

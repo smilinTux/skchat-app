@@ -24,7 +24,12 @@ class _FakeWsTransport implements SkcodeWsTransport {
 }
 
 class _FakeApiClient implements SkcodeApiClient {
-  _FakeApiClient({this.sessions = const [], this.jobs = const [], this.jobsError});
+  _FakeApiClient({
+    this.sessions = const [],
+    this.jobs = const [],
+    this.jobsError,
+    this.sessionsError,
+  });
 
   final List<SkcodeSessionSummary> sessions;
 
@@ -35,9 +40,16 @@ class _FakeApiClient implements SkcodeApiClient {
   /// "endpoint unavailable" degrade-state test seam).
   final Object? jobsError;
 
+  /// When set, [listSessions] throws this instead of returning [sessions]
+  /// (card C-19's unauthorized/unreachable degrade-state test seam).
+  final Object? sessionsError;
+
   @override
-  Future<List<SkcodeSessionSummary>> listSessions({required String token}) async =>
-      sessions;
+  Future<List<SkcodeSessionSummary>> listSessions({required String token}) async {
+    final err = sessionsError;
+    if (err != null) throw err;
+    return sessions;
+  }
 
   @override
   Future<List<SkcodeJobRun>> listJobs({required String token}) async {
@@ -135,7 +147,98 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text("No sessions yet"), findsOneWidget);
+    expect(find.byKey(const Key("skcodeSessionsEmpty")), findsOneWidget);
+    expect(find.text("No active sessions"), findsOneWidget);
+  });
+
+  group("card C-19: honest sessions failure states (not folded into 'No sessions yet')", () {
+    testWidgets(
+        "a null token (never minted) renders 'No access yet', not the empty state",
+        (tester) async {
+      final apiClient = _FakeApiClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => null,
+              onAuthRejected: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeSessionsUnauthorized")), findsOneWidget);
+      expect(find.text("No access yet"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeSessionsEmpty")), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        "a 401 (SkcodeUnauthorizedException) renders 'No access yet', the same "
+        "state as a never-minted token", (tester) async {
+      final apiClient = _FakeApiClient(
+        sessionsError: const SkcodeUnauthorizedException("rejected"),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeSessionsUnauthorized")), findsOneWidget);
+      expect(find.text("No access yet"), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        "a network/transport failure renders 'Could not reach host', distinct "
+        "from the unauthorized state", (tester) async {
+      final apiClient = _FakeApiClient(
+        sessionsError: const SkcodeApiException("connection refused"),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SkcodeSessionsRail(
+              apiClient: apiClient,
+              origin: "http://localhost:9384",
+              mintToken: () async => "T",
+              onAuthRejected: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key("skcodeSessionsUnreachable")), findsOneWidget);
+      expect(find.text("Could not reach host"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeSessionsUnauthorized")), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    // The transient-failure-after-success behavior (a later failed poll must
+    // never blank an already-populated list, regardless of which failure
+    // kind it is) is exercised at the store level in
+    // skcode_sessions_list_store_test.dart, where a short pollInterval can
+    // drive multiple real poll cycles without adding a pollInterval knob to
+    // this widget's public API just for test timing. SkcodeSessionsRail
+    // itself adds nothing on top of SkcodeSessionsPoll.sessions/everSucceeded
+    // beyond the render branch asserted above (everSucceeded == false is the
+    // only condition that swaps the list for a failure state).
   });
 
   testWidgets(
