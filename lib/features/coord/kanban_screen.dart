@@ -435,6 +435,12 @@ class _CardSheet extends StatelessWidget {
 /// `/api/change/{id}/*` routes on the same authenticated dashboard client
 /// [AiSuggestionsPanel] uses for `queue-ai`; the chips render straight from
 /// `card.chips` (no refetch), per the design doc.
+///
+/// CM P3.3 adds Verify: visible only once `itilStatus == 'deployed'`, it
+/// closes the lifecycle `deployed -> verified` via the post-implementation
+/// review (PIR). Unlike Schedule (which opens an empty sheet), Verify fetches
+/// the server's deterministic PIR draft FIRST and opens the sheet prefilled,
+/// so the operator edits rather than writes from scratch.
 class _ChangeManagementSection extends ConsumerStatefulWidget {
   const _ChangeManagementSection({required this.card, required this.onChanged});
 
@@ -483,6 +489,33 @@ class _ChangeManagementSectionState
     _report(result, 'Unscheduled');
   }
 
+  Future<void> _verify() async {
+    setState(() => _busy = true);
+    final draftResult =
+        await ref.read(skCapstoneClientProvider).pirDraft(widget.card.id);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!draftResult.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(draftResult.error ?? 'Failed to load PIR draft'),
+      ));
+      return;
+    }
+    final draft = draftResult.data?['draft'] as String? ?? '';
+    final note = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => _VerifySheet(initialNote: draft),
+    );
+    if (note == null || !mounted) return;
+    setState(() => _busy = true);
+    final result = await ref
+        .read(skCapstoneClientProvider)
+        .verifyChange(widget.card.id, note);
+    _report(result, 'Verified');
+  }
+
   Future<void> _schedule() async {
     final choice = await showModalBottomSheet<_ScheduleChoice>(
       context: context,
@@ -509,6 +542,7 @@ class _ChangeManagementSectionState
     final card = widget.card;
     final chips = card.chips;
     final scheduled = card.itilStatus == 'scheduled';
+    final deployed = card.itilStatus == 'deployed';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -526,6 +560,9 @@ class _ChangeManagementSectionState
             if (chips?.validation != null)
               _ValidationChipView(v: chips!.validation!),
             if (chips != null) _WindowChipView(w: chips.window),
+            if (card.itilStatus == 'verified' &&
+                (card.pirNote ?? '').trim().isNotEmpty)
+              _MiniChip(text: 'PIR: ${_pirSummary(card.pirNote!)}', color: cs.onSurfaceVariant),
           ],
         ),
         const SizedBox(height: 10),
@@ -551,6 +588,11 @@ class _ChangeManagementSectionState
                 onPressed: _busy ? null : _arm,
                 child: const Text('Arm deploy'),
               ),
+            if (deployed)
+              FilledButton(
+                onPressed: _busy ? null : _verify,
+                child: const Text('Verify'),
+              ),
           ],
         ),
         if (_busy) ...[
@@ -560,6 +602,15 @@ class _ChangeManagementSectionState
       ],
     );
   }
+}
+
+/// Shortens a PIR note for the header chip: single line, capped length, so a
+/// long draft doesn't blow out the chip row (the full text is in the sheet
+/// that produced it, not re-shown here).
+String _pirSummary(String note, {int maxLen = 40}) {
+  final oneLine = note.replaceAll('\n', ' ').trim();
+  if (oneLine.length <= maxLen) return oneLine;
+  return '${oneLine.substring(0, maxLen).trimRight()}...';
 }
 
 class _CabChip extends StatelessWidget {
@@ -737,6 +788,71 @@ class _ScheduleSheetState extends State<_ScheduleSheet> {
                         ))
                     : null,
                 child: const Text('Schedule'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// PIR-note editor for `POST /api/change/{id}/verify`, opened already
+/// prefilled with the deterministic draft from `GET /api/change/{id}/pir-draft`
+/// (edit before submitting). Style matches [_ScheduleSheet]. Submit is left
+/// enabled even on an empty note: the server's own 400 ("note required") is
+/// the source of truth here, and [_ChangeManagementSectionState._verify]
+/// surfaces it verbatim the same way it surfaces a 409 for a change that
+/// isn't `deployed` anymore.
+class _VerifySheet extends StatefulWidget {
+  const _VerifySheet({required this.initialNote});
+
+  final String initialNote;
+
+  @override
+  State<_VerifySheet> createState() => _VerifySheetState();
+}
+
+class _VerifySheetState extends State<_VerifySheet> {
+  late final TextEditingController _noteController =
+      TextEditingController(text: widget.initialNote);
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Post-implementation review', style: tt.titleMedium),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('verifyNoteField'),
+              controller: _noteController,
+              minLines: 4,
+              maxLines: 10,
+              decoration: const InputDecoration(
+                labelText: 'PIR note',
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                key: const Key('verifySubmitButton'),
+                onPressed: () =>
+                    Navigator.of(context).pop(_noteController.text),
+                child: const Text('Verify'),
               ),
             ),
           ],

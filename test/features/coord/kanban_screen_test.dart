@@ -187,6 +187,188 @@ void main() {
         )).called(1);
   });
 
+  testWidgets(
+      'Verify is hidden while the change is not deployed (reviewing/scheduled)',
+      (tester) async {
+    final client = MockSKCapstoneClient();
+    final card = _changeCard(itilStatus: 'scheduled');
+    await pumpBoard(
+      tester,
+      client,
+      KanbanBoard(columns: const ['backlog', 'ready', 'doing', 'review', 'done'], cards: [card]),
+    );
+
+    await tester.tap(find.text('Roll out the new gate'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Verify'), findsNothing);
+  });
+
+  testWidgets(
+      'Verify appears once deployed, fetches the PIR draft, and prefills the '
+      'sheet', (tester) async {
+    final client = MockSKCapstoneClient();
+    final card = _changeCard(itilStatus: 'deployed');
+    when(() => client.pirDraft('chg-42')).thenAnswer(
+      (_) async => const ChangeActionResult(
+        ok: true,
+        data: {
+          'id': 'chg-42',
+          'status': 'deployed',
+          'draft': 'Deployed on schedule, no incidents observed.',
+        },
+      ),
+    );
+    await pumpBoard(
+      tester,
+      client,
+      KanbanBoard(columns: const ['backlog', 'ready', 'doing', 'review', 'done'], cards: [card]),
+    );
+
+    await tester.tap(find.text('Roll out the new gate'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Verify'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+
+    verify(() => client.pirDraft('chg-42')).called(1);
+    expect(find.text('Post-implementation review'), findsOneWidget);
+    final field = tester
+        .widget<TextField>(find.byKey(const Key('verifyNoteField')));
+    expect(
+      field.controller?.text, 'Deployed on schedule, no incidents observed.');
+  });
+
+  testWidgets('submitting the Verify sheet posts the edited note and shows '
+      'verified', (tester) async {
+    final client = MockSKCapstoneClient();
+    final card = _changeCard(itilStatus: 'deployed');
+    when(() => client.pirDraft('chg-42')).thenAnswer(
+      (_) async => const ChangeActionResult(
+        ok: true,
+        data: {'id': 'chg-42', 'status': 'deployed', 'draft': 'draft text'},
+      ),
+    );
+    when(() => client.verifyChange('chg-42', any()))
+        .thenAnswer((_) async => const ChangeActionResult(
+              ok: true,
+              data: {
+                'verified': true,
+                'id': 'chg-42',
+                'status': 'verified',
+                'pir_note': 'draft text, edited',
+              },
+            ));
+    await pumpBoard(
+      tester,
+      client,
+      KanbanBoard(columns: const ['backlog', 'ready', 'doing', 'review', 'done'], cards: [card]),
+    );
+
+    await tester.tap(find.text('Roll out the new gate'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byKey(const Key('verifyNoteField')), 'draft text, edited');
+    await tester.tap(find.byKey(const Key('verifySubmitButton')));
+    await tester.pumpAndSettle();
+
+    verify(() => client.verifyChange('chg-42', 'draft text, edited')).called(1);
+    expect(find.text('Verified'), findsOneWidget);
+  });
+
+  testWidgets(
+      'an empty note / 409 not-deployed error from verify is surfaced verbatim',
+      (tester) async {
+    final client = MockSKCapstoneClient();
+    final card = _changeCard(itilStatus: 'deployed');
+    when(() => client.pirDraft('chg-42')).thenAnswer(
+      (_) async => const ChangeActionResult(
+        ok: true,
+        data: {'id': 'chg-42', 'status': 'deployed', 'draft': 'draft text'},
+      ),
+    );
+    when(() => client.verifyChange('chg-42', '')).thenAnswer(
+      (_) async => const ChangeActionResult(
+        ok: false,
+        error: 'note is required',
+        statusCode: 400,
+      ),
+    );
+    await pumpBoard(
+      tester,
+      client,
+      KanbanBoard(columns: const ['backlog', 'ready', 'doing', 'review', 'done'], cards: [card]),
+    );
+
+    await tester.tap(find.text('Roll out the new gate'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('verifyNoteField')), '');
+    await tester.tap(find.byKey(const Key('verifySubmitButton')));
+    await tester.pumpAndSettle();
+
+    verify(() => client.verifyChange('chg-42', '')).called(1);
+    expect(find.text('note is required'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a failed PIR-draft fetch surfaces the server error and never opens '
+      'the sheet', (tester) async {
+    final client = MockSKCapstoneClient();
+    final card = _changeCard(itilStatus: 'deployed');
+    when(() => client.pirDraft('chg-42')).thenAnswer(
+      (_) async => const ChangeActionResult(
+        ok: false,
+        error: 'change not found',
+        statusCode: 404,
+      ),
+    );
+    await pumpBoard(
+      tester,
+      client,
+      KanbanBoard(columns: const ['backlog', 'ready', 'doing', 'review', 'done'], cards: [card]),
+    );
+
+    await tester.tap(find.text('Roll out the new gate'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('change not found'), findsOneWidget);
+    expect(find.text('Post-implementation review'), findsNothing);
+  });
+
+  testWidgets('a verified change shows a PIR chip in the header',
+      (tester) async {
+    final client = MockSKCapstoneClient();
+    final card = KanbanCard.fromJson({
+      'id': 'chg-42',
+      'kind': 'change',
+      'title': 'Roll out the new gate',
+      'status': 'ready',
+      'swimlane': 'change',
+      'itil_status': 'verified',
+      'pir_note': 'Deployed clean, no rollback needed.',
+    });
+    await pumpBoard(
+      tester,
+      client,
+      KanbanBoard(columns: const ['backlog', 'ready', 'doing', 'review', 'done'], cards: [card]),
+    );
+
+    await tester.tap(find.text('Roll out the new gate'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('PIR:'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Verify'), findsNothing);
+  });
+
   testWidgets('non-change card is unaffected: no CHANGE MANAGEMENT section',
       (tester) async {
     final client = MockSKCapstoneClient();

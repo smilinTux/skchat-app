@@ -143,5 +143,31 @@ void main() {
       });
       expect(card.chips?.validation, isNull);
     });
+
+    test('parses pir_note once the change is verified (CM P3.3)', () {
+      final card = KanbanCard.fromJson({
+        'id': 'chg-42',
+        'kind': 'change',
+        'title': 'Roll out the new gate',
+        'status': 'done',
+        'swimlane': 'change',
+        'itil_status': 'verified',
+        'pir_note': 'Deployed clean, no rollback needed.',
+      });
+      expect(card.itilStatus, 'verified');
+      expect(card.pirNote, 'Deployed clean, no rollback needed.');
+    });
+
+    test('pir_note is null before the change is verified', () {
+      final card = KanbanCard.fromJson({
+        'id': 'chg-42',
+        'kind': 'change',
+        'title': 'Roll out the new gate',
+        'status': 'doing',
+        'swimlane': 'change',
+        'itil_status': 'deployed',
+      });
+      expect(card.pirNote, isNull);
+    });
   });
 }

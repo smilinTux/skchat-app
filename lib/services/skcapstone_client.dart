@@ -234,20 +234,49 @@ class SKCapstoneClient {
       );
       return ChangeActionResult(ok: true, data: resp.data ?? const {});
     } on DioException catch (e) {
-      final data = e.response?.data;
-      String? reason;
-      if (data is Map) {
-        final err = data['error'] ?? data['reason'];
-        if (err is String) reason = err;
-      }
-      return ChangeActionResult(
-        ok: false,
-        error: reason ?? e.message ?? 'request failed',
-        statusCode: e.response?.statusCode,
-      );
+      return _changeErrorResult(e);
     } catch (e) {
       return ChangeActionResult(ok: false, error: e.toString());
     }
+  }
+
+  /// Shared GET for a `/api/change/{id}/{action}` route (currently just
+  /// `pir-draft`). Same [ChangeActionResult] shape and error surfacing as
+  /// [_postChangeAction], so a failed fetch reports the same way a failed
+  /// mutation does.
+  Future<ChangeActionResult> _getChangeAction(
+    String changeId,
+    String action,
+  ) async {
+    try {
+      final resp = await _dashDio.get<Map<String, dynamic>>(
+        '/api/change/$changeId/$action',
+        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+      );
+      return ChangeActionResult(ok: true, data: resp.data ?? const {});
+    } on DioException catch (e) {
+      return _changeErrorResult(e);
+    } catch (e) {
+      return ChangeActionResult(ok: false, error: e.toString());
+    }
+  }
+
+  /// Maps a failed `/api/change/{id}/*` call to a [ChangeActionResult],
+  /// surfacing the server's `error`/`reason` string verbatim when present
+  /// (409 no prepared_pr, 409 not deployed, 400 empty note, 403 unauthorized)
+  /// instead of a generic message.
+  ChangeActionResult _changeErrorResult(DioException e) {
+    final data = e.response?.data;
+    String? reason;
+    if (data is Map) {
+      final err = data['error'] ?? data['reason'];
+      if (err is String) reason = err;
+    }
+    return ChangeActionResult(
+      ok: false,
+      error: reason ?? e.message ?? 'request failed',
+      statusCode: e.response?.statusCode,
+    );
   }
 
   /// POST /api/change/{id}/validate, run checks against the change's
@@ -292,6 +321,22 @@ class SKCapstoneClient {
   /// real enforcement, this call just surfaces its verdict.
   Future<ChangeActionResult> armChangeDeploy(String changeId) =>
       _postChangeAction(changeId, 'arm', const {});
+
+  /// GET /api/change/{id}/pir-draft, a deterministic draft post-implementation
+  /// review note assembled server-side from the change's deploy record
+  /// (`{"id","status","draft"}`). Used to prefill the Verify sheet; wrapped in
+  /// [ChangeActionResult] just like the POST actions above so a fetch failure
+  /// surfaces the same way (verbatim server error where the server gave one).
+  Future<ChangeActionResult> pirDraft(String changeId) =>
+      _getChangeAction(changeId, 'pir-draft');
+
+  /// POST /api/change/{id}/verify with `{note}`, the last step of the
+  /// lifecycle: `deployed -> verified`. Refuses 409 unless the change is
+  /// `deployed`, refuses 400 on an empty note; both surfaced via
+  /// [ChangeActionResult.error]. On success the response carries
+  /// `{"verified":true,"id","status":"verified","pir_note":note}`.
+  Future<ChangeActionResult> verifyChange(String changeId, String note) =>
+      _postChangeAction(changeId, 'verify', {'note': note});
 }
 
 /// Body for `POST /api/change/{id}/schedule`, a pure function so the
@@ -598,6 +643,7 @@ class KanbanCard {
     this.validation,
     this.scheduledWindow,
     this.chips,
+    this.pirNote,
   });
 
   final String id;
@@ -625,6 +671,11 @@ class KanbanCard {
   final Map<String, dynamic>? scheduledWindow;
   final ChangeChips? chips;
 
+  /// The post-implementation review note attached by `POST
+  /// /api/change/{id}/verify` (CM P3.3). Null until the change reaches
+  /// `itilStatus == 'verified'`.
+  final String? pirNote;
+
   /// True for change-management tickets: the popout's Prepare label, CAB
   /// tally/validation/window chips, and Validate/Schedule/Arm buttons apply
   /// ONLY to these cards (design doc section 8). Checked both ways (kind +
@@ -650,6 +701,7 @@ class KanbanCard {
         chips: j['chips'] is Map
             ? ChangeChips.fromJson((j['chips'] as Map).cast<String, dynamic>())
             : null,
+        pirNote: j['pir_note'] as String?,
       );
 }
 
