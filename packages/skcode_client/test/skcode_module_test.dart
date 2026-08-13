@@ -161,7 +161,9 @@ void main() {
       // No shell means no AuthContext, so mintToken resolves null and the
       // sessions poll never even calls listSessions: no fake apiClient is
       // required for this path to stay off the network (see
-      // SkcodeSessionsListStore._poll's null-token early return).
+      // SkcodeSessionsListStore._poll's null-token early return). Card
+      // C-19: a never-minted token renders the same "No access yet" state
+      // as a rejected one, not the empty-list state.
       const module = SkcodeModule();
       await tester.pumpWidget(
         MaterialApp(
@@ -171,10 +173,17 @@ void main() {
           ),
         ),
       );
+      // Card C-19: the rail renders nothing for the one beat before its
+      // first poll resolves (never guesses a state), same as
+      // `_JobsSection`'s null-snapshot beat -- so this needs an explicit
+      // pump to let that first (tokenless) poll settle before asserting on
+      // its result, unlike the old synchronous-default "No sessions yet"
+      // this replaced.
+      await tester.pump();
       expect(find.byType(SkcodeSurface), findsOneWidget);
       expect(find.byType(SkcodeSessionsRail), findsOneWidget);
       expect(find.text('Code'), findsOneWidget); // AppBar title.
-      expect(find.text('No sessions yet'), findsOneWidget);
+      expect(find.text('No access yet'), findsOneWidget);
     });
   });
 
@@ -225,7 +234,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('No sessions yet'), findsOneWidget);
+      expect(find.text('No access yet'), findsOneWidget);
       // A null-token poll must never reach the transport at all.
       expect(apiClient.listCalls, 0);
       expect(tester.takeException(), isNull);

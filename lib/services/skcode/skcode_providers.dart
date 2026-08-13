@@ -103,7 +103,7 @@ final skcodeSessionStoreProvider =
 class SkcodeSessionsListNotifier
     extends Notifier<AsyncValue<List<SkcodeSessionSummary>>> {
   SkcodeSessionsListStore? _store;
-  StreamSubscription<List<SkcodeSessionSummary>>? _sub;
+  StreamSubscription<SkcodeSessionsPoll>? _sub;
 
   @override
   AsyncValue<List<SkcodeSessionSummary>> build() {
@@ -115,7 +115,17 @@ class SkcodeSessionsListNotifier
       mintToken: () => tokenService.mint(kSkcodeAudience),
     );
     _store = store;
-    _sub = store.sessions.listen((list) => state = AsyncValue.data(list));
+    // This provider only serves `SkcodeSessionRouteScreen`'s "find the
+    // matching row by sid" lookup (a cold deep link resolving its own
+    // interactive/repo metadata), not any rendering of the rail's honest
+    // unauthorized/unreachable/empty states (card C-19) -- those live
+    // entirely inside `SkcodeSessionsRail`'s own store instance in
+    // `package:skcode_client`. So this unwraps straight to the last known
+    // list and drops [SkcodeSessionsPoll.failureKind] on the floor
+    // deliberately, same as it dropped a failed poll on the floor before
+    // C-19 (a failed poll here was already silently skipped, leaving
+    // `state` on its last emitted value).
+    _sub = store.sessions.listen((poll) => state = AsyncValue.data(poll.sessions));
 
     ref.onDispose(() {
       _sub?.cancel();

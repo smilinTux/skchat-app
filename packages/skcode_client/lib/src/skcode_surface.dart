@@ -28,11 +28,13 @@ const _kDefaultSkcodeOrigin = 'http://localhost:9384';
 ///   * STANDALONE (`shell == null`): there is no [AuthContext] to mint
 ///     against yet (`StandaloneLoginGate`'s login is still a placeholder
 ///     seam, `apps/skcode_standalone/lib/src/standalone_login.dart`), so
-///     `mintToken` resolves to `null`. [SkcodeSessionsListStore] already
-///     treats a null token as "skip this poll, render whatever the caller
-///     shows for an empty list" (spec 4.3), which degrades to an honest
-///     "No sessions yet" rather than a crash. Wiring a real standalone token
-///     mint is a follow-up on that same seam, not this card's job.
+///     `mintToken` resolves to `null`. [SkcodeSessionsListStore] treats a
+///     null token as "no usable token" (card C-19), which degrades to the
+///     rail's honest "No access yet" state rather than a crash -- the same
+///     state a rejected (401) token would render, since both mean the
+///     operator cannot see sessions yet for the same reason: no valid
+///     credential reached skcode-hostd. Wiring a real standalone token mint
+///     is a follow-up on that same seam, not this card's job.
 ///
 /// An app bar "Digest" action (card C-9) presents the artifact pane's swipe-up
 /// bottom sheet focused on data that is not session-scoped, so it is reached
