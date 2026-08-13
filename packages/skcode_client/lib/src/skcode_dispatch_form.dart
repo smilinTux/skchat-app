@@ -36,6 +36,24 @@ import "skcode_dispatch_targets.dart";
 /// or the real form. Each is an explicit, honest render, matching the
 /// pattern `SkcodeSessionsRail`'s own Jobs section already established for
 /// "endpoint unavailable" vs "empty" vs "populated".
+///
+/// DIRECT (REPO-LESS) SESSIONS (card C-16): `daemon.py::dispatch_route`
+/// reads `repo`/`branch`/`model` with `str(body.get(..., "") or "")` --
+/// every one of them is genuinely optional on the wire, and the old
+/// iframe's default entry point dispatches with none of them set at all
+/// (`SkcodeApiClient.dispatch`'s own doc comment). Before this card,
+/// [_canSubmit] required `_repo != null`, which made that repo-less path
+/// impossible here even though the server has always accepted it -- the
+/// fastest way to start a session in the client being replaced had no
+/// equivalent in the replacement. The [_directSession] checkbox is the
+/// fix: it is a SEPARATE control from the repo dropdown, not a value
+/// folded into it, specifically so `test/skcode_dispatch_form_test.dart`'s
+/// non-hardcoding proof (which asserts the repo dropdown's item list is
+/// EXACTLY what one targets response sent, nothing added) keeps holding.
+/// Checking it does not invent a repo -- it does the opposite: it makes
+/// [_submit] send `repo: ""` regardless of whatever the dropdown had
+/// auto-selected, so ticking the box always means "no repo", never "the
+/// repo I happened to have selected".
 class SkcodeDispatchForm extends StatefulWidget {
   const SkcodeDispatchForm({
     super.key,
@@ -68,6 +86,12 @@ class _SkcodeDispatchFormState extends State<SkcodeDispatchForm> {
   String? _harness;
   String? _profile;
   String? _model;
+
+  /// True when the operator explicitly chose "Direct session (no repo)"
+  /// (card C-16). Overrides [_repo] entirely at submit time -- see this
+  /// class's own doc comment for why that must be a separate flag rather
+  /// than a value stuffed into the repo dropdown itself.
+  bool _directSession = false;
   String _branch = "";
   String _mode = "interactive";
   String _permissionMode = "manual";
@@ -120,7 +144,7 @@ class _SkcodeDispatchFormState extends State<SkcodeDispatchForm> {
 
   bool get _canSubmit =>
       !_submitting &&
-      _repo != null &&
+      (_directSession || _repo != null) &&
       _harness != null &&
       _profile != null &&
       _promptController.text.trim().isNotEmpty;
@@ -142,7 +166,11 @@ class _SkcodeDispatchFormState extends State<SkcodeDispatchForm> {
     }
     try {
       final result = await widget.apiClient.dispatch(
-        repo: _repo ?? "",
+        // [_directSession] wins outright: even if the repo dropdown carries
+        // an auto-selected value from [_loadTargets], checking the box
+        // means "no repo" and this must send exactly "", never that
+        // leftover selection (card C-16: never a silent default).
+        repo: _directSession ? "" : (_repo ?? ""),
         branch: _branch.trim(),
         profile: _profile ?? "",
         permissionMode: _permissionMode,
@@ -233,13 +261,37 @@ class _SkcodeDispatchFormState extends State<SkcodeDispatchForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _targetsField(
-            key: "skcodeDispatchRepo",
-            label: "Repo",
-            emptyText: "No repos available for dispatch.",
-            options: _targets.repos,
-            value: _repo,
-            onChanged: (v) => setState(() => _repo = v),
+          // Card C-16: the server accepts a fully repo-less dispatch
+          // (`daemon.py::dispatch_route`, doc comment on
+          // `SkcodeApiClient.dispatch`) -- this is the honest "no repo" UI
+          // for it, separate from the dropdown below so checking it can
+          // never be confused with a value the dropdown offered.
+          CheckboxListTile(
+            key: const Key("skcodeDispatchDirectSession"),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+            value: _directSession,
+            title: const Text("Direct session (no repo)"),
+            subtitle: Text(
+              "Skip repo selection, same as the server's own optional repo field.",
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            onChanged: (v) => setState(() => _directSession = v ?? false),
+          ),
+          const SizedBox(height: 4),
+          IgnorePointer(
+            ignoring: _directSession,
+            child: Opacity(
+              opacity: _directSession ? 0.5 : 1.0,
+              child: _targetsField(
+                key: "skcodeDispatchRepo",
+                label: "Repo",
+                emptyText: "No repos available for dispatch.",
+                options: _targets.repos,
+                value: _repo,
+                onChanged: (v) => setState(() => _repo = v),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           TextField(

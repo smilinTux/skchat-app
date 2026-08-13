@@ -235,6 +235,119 @@ void main() {
     });
   });
 
+  group("direct (repo-less) session (card C-16: iframe parity gap)", () {
+    testWidgets(
+        "checking Direct session dispatches with repo empty, NOT the dropdown's "
+        "auto-selected value -- no silent default is substituted", (tester) async {
+      final apiClient = _FakeApiClient(
+        targetsResponse: const SkcodeDispatchTargets(
+          repos: ["/repos/skworld-app", "/repos/skchat"],
+          harnesses: ["claude-code"],
+          profiles: ["sandbox"],
+          models: ["ornith-big"],
+        ),
+      );
+
+      await tester.pumpWidget(_harness(apiClient));
+      await tester.pump();
+
+      // Sanity: the repo dropdown auto-selected the first server-provided
+      // repo, exactly like the existing hardcoding-proof test asserts. The
+      // point of this test is that checking the box below overrides that
+      // selection at submit time rather than sending it anyway.
+      expect(
+        tester.widget<DropdownButtonFormField<String>>(
+          find.byKey(const Key("skcodeDispatchRepo")),
+        ).initialValue,
+        "/repos/skworld-app",
+      );
+
+      await tester.tap(find.byKey(const Key("skcodeDispatchDirectSession")));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key("skcodeDispatchPrompt")), "start fresh");
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const Key("skcodeDispatchSubmit")));
+      await tester.tap(find.byKey(const Key("skcodeDispatchSubmit")));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.dispatchCalls, hasLength(1));
+      final call = apiClient.dispatchCalls.single;
+      expect(call.repo, "", reason: "checking the box must send repo empty, never the "
+          "dropdown's leftover auto-selected value");
+      // Everything else the operator picked still rides along unchanged --
+      // this is not a "wipe the form" toggle, only repo is overridden.
+      expect(call.harness, "claude-code");
+      expect(call.profile, "sandbox");
+      expect(call.model, "ornith-big");
+      expect(call.prompt, "start fresh");
+    });
+
+    testWidgets(
+        "a host with zero advertised repos can still dispatch a direct session -- the "
+        "server accepts a repo-less dispatch regardless of what /dispatch/targets offered",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        targetsResponse: const SkcodeDispatchTargets(
+          repos: [],
+          harnesses: ["claude-code"],
+          profiles: ["sandbox"],
+        ),
+      );
+
+      await tester.pumpWidget(_harness(apiClient));
+      await tester.pump();
+
+      // Same degrade state as before: no dropdown, no options to pick from.
+      expect(find.byKey(const Key("skcodeDispatchRepoEmpty")), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDispatchRepo")), findsNothing);
+
+      await tester.enterText(find.byKey(const Key("skcodeDispatchPrompt")), "anything");
+      await tester.pump();
+
+      // Still disabled with the box unchecked -- unchanged from before.
+      var submit = tester.widget<FilledButton>(find.byKey(const Key("skcodeDispatchSubmit")));
+      expect(submit.onPressed, isNull);
+
+      await tester.tap(find.byKey(const Key("skcodeDispatchDirectSession")));
+      await tester.pump();
+
+      submit = tester.widget<FilledButton>(find.byKey(const Key("skcodeDispatchSubmit")));
+      expect(submit.onPressed, isNotNull);
+
+      await tester.ensureVisible(find.byKey(const Key("skcodeDispatchSubmit")));
+      await tester.tap(find.byKey(const Key("skcodeDispatchSubmit")));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.dispatchCalls, hasLength(1));
+      expect(apiClient.dispatchCalls.single.repo, "");
+    });
+
+    testWidgets(
+        "unchecking Direct session after checking it restores the repo requirement",
+        (tester) async {
+      final apiClient = _FakeApiClient(
+        targetsResponse: const SkcodeDispatchTargets(
+          repos: [],
+          harnesses: ["claude-code"],
+          profiles: ["sandbox"],
+        ),
+      );
+
+      await tester.pumpWidget(_harness(apiClient));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key("skcodeDispatchPrompt")), "anything");
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key("skcodeDispatchDirectSession")));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key("skcodeDispatchDirectSession")));
+      await tester.pump();
+
+      final submit = tester.widget<FilledButton>(find.byKey(const Key("skcodeDispatchSubmit")));
+      expect(submit.onPressed, isNull);
+    });
+  });
+
   group("degrade states (card C-6: never a crash or a silent no-op)", () {
     testWidgets("an empty targets response renders a clear empty state, not a crash",
         (tester) async {
