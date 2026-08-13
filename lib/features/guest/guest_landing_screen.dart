@@ -17,10 +17,21 @@ import 'guest_room_screen.dart';
 /// On success it swaps itself for [GuestRoomScreen] (the full in-room view for
 /// the ONE invited group). It never exposes any other surface.
 class GuestLandingScreen extends ConsumerStatefulWidget {
-  const GuestLandingScreen({super.key, required this.token});
+  const GuestLandingScreen({
+    super.key,
+    required this.token,
+    this.fragmentSecret,
+  });
 
-  /// The invite token from the link (`/g/<token>`).
+  /// The invite token from the link (`/g/<token>`), already split from any
+  /// `&k=` suffix by [GuestLink] - it must be the bare JWT or every call
+  /// carrying it fails signature verification.
   final String token;
+
+  /// The `k` fragment secret when the link carried one. Not required to
+  /// preview or join (the server reads it on neither path); carried so it is
+  /// available rather than silently dropped at the router.
+  final String? fragmentSecret;
 
   @override
   ConsumerState<GuestLandingScreen> createState() => _GuestLandingScreenState();
