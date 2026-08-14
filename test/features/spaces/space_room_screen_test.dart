@@ -470,7 +470,11 @@ void main() {
     // rejoin, no new connectWithToken call, just a fresh snapshot.
     controller.add(<LiveKitParticipantSnapshot>[
       _snap("chef@dk.skworld", canPublish: true),
-      _snap("alice@dk.skworld", isLocal: true, canPublish: true),
+      // Just promoted and starts MUTED: their real mic track is not live yet,
+      // so the ground-truth snapshot is isMuted:true (HOTMIC reconcile reads
+      // this; a live-mic snapshot here would be an impossible "muted button,
+      // hot mic" state).
+      _snap("alice@dk.skworld", isLocal: true, canPublish: true, isMuted: true),
     ]);
     await tester.pump(const Duration(milliseconds: 50));
 
@@ -496,7 +500,10 @@ void main() {
     // Non-host speaker joining (or rejoining) with a pre-authorized publish
     // grant already on their snapshot.
     final live = <LiveKitParticipantSnapshot>[
-      _snap("dana@dk.skworld", isLocal: true, canPublish: true),
+      // Holds the publish grant but starts MUTED (connect-time auto-publish is
+      // host-only), so the ground-truth snapshot is isMuted:true. The HOTMIC
+      // reconcile reads this; a live-mic snapshot would wrongly render "Mute".
+      _snap("dana@dk.skworld", isLocal: true, canPublish: true, isMuted: true),
       _snap("chef@dk.skworld", canPublish: true),
     ];
     when(() => svc.participants).thenAnswer((_) => controller.stream);
@@ -604,6 +611,66 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(find.text("Mute"), findsOneWidget);
+      expect(find.text("Unmute"), findsNothing);
+    });
+  });
+
+  // ── HOTMIC: the control-bar label must track the REAL mic (ground truth) ──
+  //
+  // The bug (inc, sev2 privacy): SpaceRoomState.isMicEnabled (what the button
+  // renders) was driven ONLY by mic-enabled EVENTS. Those events flip the
+  // label DOWN to muted on any stray/transient local-mic signal and never
+  // re-sync it back up, so the button could read "Unmute" (muted) while the
+  // real LiveKit mic track was still LIVE and transmitting: a hot mic that
+  // shows muted, confirmed by Chef on both host and a promoted guest speaker.
+  // The LOCAL participant snapshot carries ground truth
+  // (isMuted == !p.isMicrophoneEnabled(), re-emitted on every participants
+  // change), so the control-bar label MUST reconcile to it: a live mic can
+  // never render muted, and a muted mic never renders live.
+  group("HOTMIC ground-truth mic label", () {
+    testWidgets(
+        "a stray mic-disabled event while the real mic is LIVE reconciles "
+        "the label back to Mute on the next participants emission (no hot mic)",
+        (tester) async {
+      final micCtl = StreamController<bool>.broadcast();
+      addTearDown(micCtl.close);
+      when(() => svc.micEnabledChanges).thenAnswer((_) => micCtl.stream);
+
+      final partCtl =
+          StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+      addTearDown(partCtl.close);
+      // Host, mic LIVE: isMuted:false is the ground truth here (the local
+      // participant's real LiveKit mic track is publishing).
+      final live = <LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isMuted: false),
+        _snap("alice"),
+      ];
+      when(() => svc.participants).thenAnswer((_) => partCtl.stream);
+      when(() => svc.currentParticipants).thenReturn(live);
+
+      await tester.pumpWidget(wrap()); // host join: mic live, label "Mute".
+      partCtl.add(live);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Mute"), findsOneWidget);
+      expect(find.text("Unmute"), findsNothing);
+
+      // A stray/erroneous mic-disabled event (a transient local-mic mute
+      // signal) flips the label to muted even though the real mic never
+      // stopped. This is the desync the bug leaves permanent.
+      micCtl.add(false);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // The next participants emission still reports the mic LIVE
+      // (isMuted:false). The label MUST reconcile to the real state: a live
+      // mic renders "Mute", never "Unmute".
+      partCtl.add(live);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Mute"), findsOneWidget,
+          reason: "a live mic must never render as muted (hot mic)");
       expect(find.text("Unmute"), findsNothing);
     });
   });
@@ -735,9 +802,14 @@ void main() {
       // plus the default-mute setMicEnabled(false)).
       clearInteractions(svc);
 
-      // Content share stops.
+      // Content share stops. The echo default already muted the REAL mic, so
+      // the ground-truth snapshot now reports isMuted:true (HOTMIC reconcile
+      // reads this; reusing the live-mic roster would wrongly re-render "Mute").
       when(() => svc.isSharingSystemAudio).thenReturn(false);
-      partCtl.add(roster);
+      partCtl.add(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld",
+            isLocal: true, canPublish: true, isSpeaking: true, isMuted: true),
+      ]);
       await tester.pump(const Duration(milliseconds: 50));
 
       // X model: nothing auto-unmutes. The mic is still muted (only the
@@ -1919,7 +1991,10 @@ void main() {
       addTearDown(controller.close);
       final live = <LiveKitParticipantSnapshot>[
         _snap("dana@dk.skworld",
-            isLocal: true, canPublish: true, isCameraEnabled: true),
+            isLocal: true,
+            canPublish: true,
+            isCameraEnabled: true,
+            isMuted: true), // mic muted while sharing video (ground truth)
         _snap("chef@dk.skworld", canPublish: true),
       ];
       when(() => svc.participants).thenAnswer((_) => controller.stream);
@@ -1942,7 +2017,8 @@ void main() {
             isLocal: true,
             canPublish: true,
             isCameraEnabled: true,
-            canPublishVideo: false),
+            canPublishVideo: false,
+            isMuted: true), // mic still muted (ground truth) as grant flips
         _snap("chef@dk.skworld", canPublish: true),
       ]);
       await tester.pump(const Duration(milliseconds: 50));
@@ -1968,7 +2044,10 @@ void main() {
       addTearDown(controller.close);
       final live = <LiveKitParticipantSnapshot>[
         _snap("dana@dk.skworld",
-            isLocal: true, canPublish: true, isScreenSharing: true),
+            isLocal: true,
+            canPublish: true,
+            isScreenSharing: true,
+            isMuted: true), // mic muted while sharing screen (ground truth)
         _snap("chef@dk.skworld", canPublish: true),
       ];
       when(() => svc.participants).thenAnswer((_) => controller.stream);
@@ -1986,7 +2065,8 @@ void main() {
             isLocal: true,
             canPublish: true,
             isScreenSharing: true,
-            canPublishVideo: false),
+            canPublishVideo: false,
+            isMuted: true), // mic still muted (ground truth) as grant flips
         _snap("chef@dk.skworld", canPublish: true),
       ]);
       await tester.pump(const Duration(milliseconds: 50));
