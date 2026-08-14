@@ -48,9 +48,10 @@ Duration _refreshDelay(DateTime? expiry, DateTime now) {
 /// Host pane for a DISCOVERED external subapp module (card e378d895).
 ///
 /// Resolves the manifest for [moduleId] from `externalModuleByIdProvider` and
-/// renders its Grade B web surface embedded over the 443 funnel (same pattern
-/// as `SkcodePane`). Grade A native panes are NOT built here (that is a later
-/// phase); every discovered subapp is embedded.
+/// renders its Grade B web surface embedded over the 443 funnel (same
+/// sandboxed-iframe pattern skcode's pane used before its Grade A native
+/// flip retired it). Grade A native panes are NOT built here (that is a
+/// later phase); every discovered subapp is embedded.
 ///
 /// EMBED AUTH (leak fix A1/A4). The `skdashboard` / `skos` panes ride GATED
 /// same-origin proxies that require operator auth, but an iframe cannot set an

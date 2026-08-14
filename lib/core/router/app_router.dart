@@ -30,7 +30,6 @@ import '../../features/coord/kanban_screen.dart';
 import '../../features/gtd/gtd_screen.dart';
 import '../../features/cluster/cluster_screen.dart';
 import '../../features/hub/hub_screen.dart';
-import '../../features/skcode/skcode_pane.dart';
 import '../../features/skcode/skcode_module_host_screen.dart';
 import '../../features/skcode/skcode_deeplink_routes.dart';
 import '../../features/shell/external_module_pane.dart';
@@ -78,13 +77,6 @@ class AppRoutes {
   /// `skworld://skcode/digest` resolves here. Mounted (card C-10) to
   /// `SkcodeDigestRouteScreen`, same as [codeSession].
   static const codeDigest = '/code/digest';
-
-  /// The Grade B iframe pane, held back (card C-10's own parity finding: see
-  /// `lib/features/skcode/skcode_pane.dart`'s doc comment for exactly which
-  /// iframe capability the native pane does not yet reproduce). Reachable
-  /// only via the native pane's "open classic" affordance
-  /// (`SkcodeModuleHostScreen`), never linked from nav/drawer.
-  static const codeLegacy = '/code/legacy';
 
   /// Operator hub ("Ops" tab), links the operator control surfaces: /hub
   static const hub = '/hub';
@@ -414,13 +406,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: 'digest',
                 builder: (context, state) => const SkcodeDigestRouteScreen(),
-              ),
-              // /code/legacy: the held-back Grade B iframe pane (card C-10's
-              // own parity finding). Reached only via the native pane's
-              // "open classic" affordance, never linked from nav/drawer.
-              GoRoute(
-                path: 'legacy',
-                builder: (context, state) => const SkcodePane(),
               ),
             ],
           ),

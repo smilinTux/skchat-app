@@ -50,11 +50,10 @@ const List<ModuleManifest> kBuiltinModules = [
   // "the Grade A registry flip"): `/code` mounts the native `skcode_client`
   // module (`SkcodeModuleHostScreen`, the same mount pattern
   // `module_host_screen.dart` established for skchat) over the WS/HTTP
-  // transport, no iframe. The old Grade B embed pane stays reachable at
-  // `/code/legacy` behind a visible "open classic" affordance (card C-10's
-  // own parity finding: the native dispatch form has no repo-less "direct"
-  // session mode yet, and the native transcript has no TUI chrome-filter for
-  // capture/attach-mode sessions, so the fallback is not yet retired). No
+  // transport, no iframe. The old Grade B embed pane and its `/code/legacy`
+  // fallback are removed (card C-10's deletion half): the parity gaps that
+  // held it back, a repo-less "direct" session mode and a TUI chrome-filter
+  // for capture/attach-mode sessions, are both closed (cards C-16, C-17). No
   // `requires` yet (there is no node-capability id for skcode), so it is
   // always placed; the pane itself shows a paired/unpaired state honestly
   // rather than greying the tab.

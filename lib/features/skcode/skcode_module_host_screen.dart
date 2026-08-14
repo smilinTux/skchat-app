@@ -41,11 +41,6 @@ import 'live_skcode_module.dart';
 /// instance each build is cheap and the underlying `SkcodeSurface` state
 /// (session store, api client) survives rebuilds normally through Flutter's
 /// element diffing.
-///
-/// A small "open classic" affordance floats above the mounted module and
-/// pushes `/code/legacy` (the iframe pane, still live per this card's own
-/// parity finding: see the C-10 handoff notes for exactly which iframe
-/// capability the native pane does not yet reproduce).
 class SkcodeModuleHostScreen extends ConsumerStatefulWidget {
   const SkcodeModuleHostScreen({super.key});
 
@@ -107,47 +102,6 @@ class _SkcodeModuleHostScreenState
     );
 
     final module = buildLiveSkcodeModule(ref);
-    final moduleWidget = module.build(context, shell);
-
-    return Stack(
-      children: [
-        moduleWidget,
-        Positioned(
-          right: 12,
-          bottom: 12,
-          child: SafeArea(
-            child: Material(
-              key: const Key('skcodeOpenClassicButton'),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              shape: const StadiumBorder(),
-              elevation: 2,
-              child: InkWell(
-                customBorder: const StadiumBorder(),
-                onTap: () => context.go('/code/legacy'),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.open_in_browser_outlined,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Open classic',
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
+    return module.build(context, shell);
   }
 }
