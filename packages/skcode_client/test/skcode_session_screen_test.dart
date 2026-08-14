@@ -35,6 +35,10 @@ class _FakeWsTransport implements SkcodeWsTransport {
 /// already covers) and record every inject/ratify call so a test can assert
 /// on the exact route + payload without a real Dio adapter.
 class _FakeApiClient implements SkcodeApiClient {
+  @override
+  Future<SkcodeDigest> fetchDigest({required String token}) async {
+    throw UnimplementedError("the digest route is not exercised by this file");
+  }
   _FakeApiClient({this.archive = const [], this.cancelResult, this.cancelError});
 
   final List<SkcodeEvent> archive;

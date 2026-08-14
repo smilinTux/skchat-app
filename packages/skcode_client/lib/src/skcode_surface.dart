@@ -3,7 +3,6 @@ import 'package:skworld_module_api/skworld_module_api.dart';
 
 import 'skcode_api_client.dart';
 import 'skcode_artifact_pane.dart';
-import 'skcode_digest.dart';
 import 'skcode_project_chat.dart';
 import 'skcode_responsive_body.dart';
 
@@ -38,9 +37,12 @@ const _kDefaultSkcodeOrigin = 'http://localhost:9384';
 ///
 /// An app bar "Digest" action (card C-9) presents the artifact pane's swipe-up
 /// bottom sheet focused on data that is not session-scoped, so it is reached
-/// from here rather than from a session screen: [SkcodeArtifactPane.digestUrl]
-/// / [SkcodeArtifactPane.onOpenLink] are forwarded straight from
-/// [SkcodeModule.digestUrl] / the resolved [_onOpenLink] default.
+/// from here rather than from a session screen. Card C-14a pointed that tab at
+/// skcode-hostd's own `GET /api/v1/watchdog/digest`, so it needs no data
+/// source of its own any more: it rides this surface's existing
+/// [SkcodeApiClient] / [_mintToken] / [SkcodeSurface.onAuthRejected], with
+/// only [SkcodeArtifactPane.onOpenLink] still supplied from the resolved
+/// [_onOpenLink] default.
 class SkcodeSurface extends StatefulWidget {
   const SkcodeSurface({
     super.key,
@@ -48,9 +50,7 @@ class SkcodeSurface extends StatefulWidget {
     this.origin,
     this.onAuthRejected,
     this.apiClient,
-    this.digestUrl,
     this.onOpenLink,
-    this.digestClient,
     this.projectChatBuilder,
     this.defaultRepo,
   });
@@ -71,17 +71,9 @@ class SkcodeSurface extends StatefulWidget {
   /// Dio-backed client built from [origin].
   final SkcodeApiClient? apiClient;
 
-  /// Forwarded from [SkcodeModule.digestUrl] (card C-9): the Digest action
-  /// below reaches it straight through to [SkcodeArtifactPane.digestUrl].
-  final String? digestUrl;
-
   /// Forwarded from [SkcodeModule.onOpenLink] (card C-9). See [_onOpenLink]
   /// for the default this surface supplies when a host omits it.
   final void Function(String uri)? onOpenLink;
-
-  /// Test seam: inject a fake [SkcodeDigestClient] so a widget test never
-  /// opens a real socket for the Digest action either.
-  final SkcodeDigestClient? digestClient;
 
   /// Forwarded from [SkcodeModule.projectChatBuilder] (card C-12, spec
   /// section 10). See `skcode_project_chat.dart`'s doc comment for the full
@@ -135,9 +127,13 @@ class _SkcodeSurfaceState extends State<SkcodeSurface> {
     SkcodeArtifactPane.showBottomSheet(
       context,
       events: const [],
-      digestUrl: widget.digestUrl,
+      // Card C-14a: the digest is a read on skcode-hostd, so the sheet gets
+      // the SAME client, the same token minter, and the same re-mint seam the
+      // rail below already uses. There is nothing extra to configure.
+      apiClient: _apiClient,
+      mintToken: _mintToken,
+      onAuthRejected: widget.onAuthRejected,
       onOpenLink: _onOpenLink,
-      digestClient: widget.digestClient,
     );
   }
 
@@ -169,9 +165,7 @@ class _SkcodeSurfaceState extends State<SkcodeSurface> {
         auth: widget.shell?.auth,
         projectChatBuilder: widget.projectChatBuilder,
         defaultRepo: widget.defaultRepo,
-        digestUrl: widget.digestUrl,
         onOpenLink: _onOpenLink,
-        digestClient: widget.digestClient,
       ),
     );
   }

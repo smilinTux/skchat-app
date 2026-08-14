@@ -3,9 +3,14 @@ import "package:flutter_test/flutter_test.dart";
 import "package:skcode_client/skcode_client.dart";
 
 /// Mirrors `skcode_api_client_test.dart`'s `_RecordingAdapter`: a canned
-/// response adapter that records every request so the tests below can assert
-/// on the exact URL fetched (no path-building here, unlike [SkcodeApiClient]:
-/// [SkcodeDigestClient] fetches the whole URL the caller hands it).
+/// response adapter that records every request, so these tests can assert on
+/// the exact path fetched AND on the `Authorization` header that rides it.
+///
+/// The header assertion is the point of card C-14a. Card C-9's digest client
+/// GET-ed a bare URL with no auth at all, against a host that never existed;
+/// the digest now rides [SkcodeApiClient] on the same Bearer-authenticated
+/// read plane as sessions and jobs, so a regression that drops the header is
+/// exactly the thing this file has to catch.
 class _RecordingAdapter implements HttpClientAdapter {
   int status = 200;
   String? body;
@@ -33,26 +38,30 @@ class _RecordingAdapter implements HttpClientAdapter {
 
 void main() {
   late _RecordingAdapter adapter;
-  late Dio dio;
-  late SkcodeDigestClient client;
-
-  const digestUrl = "https://atlas.skworld.io/watchdog/latest/digest.json";
+  late SkcodeApiClient client;
 
   setUp(() {
     adapter = _RecordingAdapter();
-    dio = Dio()..httpClientAdapter = adapter;
-    client = SkcodeDigestClient(dio: dio);
+    final dio = Dio()..httpClientAdapter = adapter;
+    client = SkcodeApiClient(dio: dio, baseUrl: "https://hostd.skworld.io");
   });
 
-  group("fetchLatest", () {
-    test("GETs exactly the URL handed to it, no base/path building",
+  group("fetchDigest", () {
+    test("GETs hostd's digest route on the origin, carrying the Bearer token",
         () async {
       adapter.body = "{}";
-      await client.fetchLatest(digestUrl);
+      await client.fetchDigest(token: "wire-token");
 
       final req = adapter.requests.single;
       expect(req.method, "GET");
-      expect(req.uri.toString(), digestUrl);
+      expect(
+        req.uri.toString(),
+        "https://hostd.skworld.io/skcode/api/v1/watchdog/digest",
+      );
+      expect(req.headers["Authorization"], "Bearer wire-token");
+      // Never in a query string: the whole point of the native client over
+      // the old iframe's `?token=` hack (see SkcodeApiClient's class doc).
+      expect(req.uri.query, isEmpty);
     });
 
     test("parses date, headline, problems, notable, and info_counts",
@@ -80,7 +89,7 @@ void main() {
       }
       ''';
 
-      final digest = await client.fetchLatest(digestUrl);
+      final digest = await client.fetchDigest(token: "t");
 
       expect(digest.date, "2026-08-11");
       expect(digest.headline, "Quiet day.");
@@ -99,7 +108,7 @@ void main() {
         () async {
       adapter.body = '{"date": "2026-08-11", "headline": "All quiet."}';
 
-      final digest = await client.fetchLatest(digestUrl);
+      final digest = await client.fetchDigest(token: "t");
 
       expect(digest.problems, isEmpty);
       expect(digest.notable, isEmpty);
@@ -117,37 +126,55 @@ void main() {
       expect(withUri.isEmpty, isFalse);
     });
 
-    test("a 404 throws SkcodeDigestNotFoundException (no digest published)",
+    test("a 404 throws SkcodeDigestNotFoundException (nothing published yet)",
         () async {
       adapter
         ..status = 404
-        ..body = "not found";
+        ..body = '{"detail": "no digest has been published yet"}';
 
-      expect(
-        () => client.fetchLatest(digestUrl),
+      await expectLater(
+        client.fetchDigest(token: "t"),
         throwsA(isA<SkcodeDigestNotFoundException>()),
       );
     });
 
-    test("a 500 throws SkcodeDigestFetchException (not NotFound)", () async {
+    test("a 401 throws SkcodeUnauthorizedException, NOT a not-found",
+        () async {
+      // The two must never collapse: "no digest exists" and "you are not
+      // allowed to read it" have different fixes.
+      adapter
+        ..status = 401
+        ..body = "unauthorized";
+
+      await expectLater(
+        client.fetchDigest(token: "stale"),
+        throwsA(isA<SkcodeUnauthorizedException>()),
+      );
+    });
+
+    test("a 500 throws SkcodeApiException (not NotFound, not Parse)",
+        () async {
       adapter
         ..status = 500
         ..body = "boom";
 
-      expect(
-        () => client.fetchLatest(digestUrl),
-        throwsA(isA<SkcodeDigestFetchException>()),
+      await expectLater(
+        client.fetchDigest(token: "t"),
+        throwsA(isA<SkcodeApiException>()),
       );
     });
 
-    test("non-JSON body throws SkcodeDigestParseException, not a crash",
-        () async {
+    test(
+        "a 200 with corrupt bytes throws SkcodeDigestParseException, the "
+        "state hostd deliberately leaves to this client", () async {
+      // hostd serves the artifact's raw bytes unexamined, so a corrupt file
+      // arrives as a 200 with an unparseable body rather than a 500.
       adapter
         ..status = 200
         ..body = "<html>not json</html>";
 
-      expect(
-        () => client.fetchLatest(digestUrl),
+      await expectLater(
+        client.fetchDigest(token: "t"),
         throwsA(isA<SkcodeDigestParseException>()),
       );
     });
@@ -158,8 +185,8 @@ void main() {
         ..status = 200
         ..body = "[1, 2, 3]";
 
-      expect(
-        () => client.fetchLatest(digestUrl),
+      await expectLater(
+        client.fetchDigest(token: "t"),
         throwsA(isA<SkcodeDigestParseException>()),
       );
     });
@@ -169,8 +196,8 @@ void main() {
         ..status = 200
         ..body = "";
 
-      expect(
-        () => client.fetchLatest(digestUrl),
+      await expectLater(
+        client.fetchDigest(token: "t"),
         throwsA(isA<SkcodeDigestParseException>()),
       );
     });

@@ -4,7 +4,6 @@ import "package:skworld_module_api/skworld_module_api.dart";
 import "skcode_api_client.dart";
 import "skcode_artifact_pane.dart";
 import "skcode_chat_chip.dart";
-import "skcode_digest.dart";
 import "skcode_event.dart";
 import "skcode_pane_tier.dart";
 import "skcode_project_chat.dart";
@@ -35,9 +34,7 @@ class SkcodeResponsiveBody extends StatefulWidget {
     this.auth,
     this.projectChatBuilder,
     this.defaultRepo,
-    this.digestUrl,
     this.onOpenLink,
-    this.digestClient,
   });
 
   final SkcodeApiClient apiClient;
@@ -59,9 +56,11 @@ class SkcodeResponsiveBody extends StatefulWidget {
   /// unaffected -- it always uses that session's own concrete repo).
   final String? defaultRepo;
 
-  final String? digestUrl;
+  /// The Digest tab's deep-link seam (card C-9), forwarded to the artifact
+  /// pane. The digest's own transport needs no extra field here (card C-14a):
+  /// it rides [apiClient] / [mintToken] / [onAuthRejected], the very same
+  /// three this body already threads into the rail and the transcript.
   final void Function(String uri)? onOpenLink;
-  final SkcodeDigestClient? digestClient;
 
   @override
   State<SkcodeResponsiveBody> createState() => _SkcodeResponsiveBodyState();
@@ -182,9 +181,10 @@ class _SkcodeResponsiveBodyState extends State<SkcodeResponsiveBody> {
       events: _events,
       showChatTab: showChatTab,
       chatSlot: showChatTab ? Builder(builder: _buildChatColumn) : null,
-      digestUrl: widget.digestUrl,
+      apiClient: widget.apiClient,
+      mintToken: widget.mintToken,
+      onAuthRejected: widget.onAuthRejected,
       onOpenLink: widget.onOpenLink,
-      digestClient: widget.digestClient,
     );
   }
 

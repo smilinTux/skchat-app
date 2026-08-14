@@ -1,35 +1,86 @@
 import "package:flutter/material.dart";
 
+import "skcode_api_client.dart";
 import "skcode_digest.dart";
 
-/// The Digest tab's load state (card C-9). Distinct honest states, never a
-/// crash and never a blank pane (card constraint: "degrade honestly: no
-/// digest published yet, fetch fails, or malformed content must render a
-/// clear empty or error state").
-enum _DigestPhase { loading, notConfigured, notFound, error, loaded }
+/// The Digest tab's load state (cards C-9, C-14a). Four distinct failure
+/// states plus the loaded one, never a crash and never a blank pane.
+///
+/// The whole point of the split (card C-14a, mirroring what card C-19 did for
+/// the sessions rail): "no digest exists", "you are not authorized", "the
+/// published digest is corrupt", and "the host did not answer" are four
+/// different problems with four different fixes, and a real digest with
+/// nothing firing is a fifth thing again -- a genuinely quiet day, rendered by
+/// [_DigestContent], not by any state here. Collapsing any of them into one
+/// generic empty pane is the bug this enum exists to prevent.
+enum _DigestPhase {
+  loading,
 
-/// The Digest tab (card C-9, spec section 9): fetches the skwatchdog
-/// published `latest/` artifact over https and renders it natively, with
-/// every `skworld://`/`https://` link tappable through [onOpenLink].
+  /// hostd answered 404: nothing has been published (the watchdog may simply
+  /// not have run). NEVER the same render as a real digest with no events.
+  notFound,
+
+  /// No usable token reached hostd: never minted, or minted and rejected with
+  /// a 401 even after one re-mint retry. Both point at the same next action
+  /// (sign in again), so they share one state, exactly as the rail's own
+  /// `SkcodeSessionsFailureKind.unauthorized` does.
+  unauthorized,
+
+  /// hostd answered 200 with bytes that will not parse: the published artifact
+  /// is corrupt. hostd serves it unexamined by design, so this is a real,
+  /// reachable state and not a defensive branch.
+  corrupt,
+
+  /// hostd did not answer at all: connection refused, DNS, timeout, funnel
+  /// down, or any other non-401 transport/HTTP failure.
+  unreachable,
+
+  loaded,
+}
+
+/// The Digest tab (cards C-9, C-14a; spec section 9): fetches the skwatchdog
+/// published digest from skcode-hostd and renders it natively, with every
+/// `skworld://`/`https://` link tappable through [onOpenLink].
+///
+/// Card C-9 built the renderer against a bare, unauthenticated `digestUrl`
+/// that nothing ever served, so this tab was inert from the day it shipped.
+/// Card C-14a points it at hostd's `GET /api/v1/watchdog/digest` instead
+/// ([SkcodeApiClient.fetchDigest]), carried by the same
+/// `Authorization: Bearer` header and the same [onAuthRejected] re-mint seam that
+/// sessions and jobs already use. There is no second HTTP path and no second
+/// re-mint mechanism.
 ///
 /// This widget owns NO state beyond what one fetch returns: no disk cache, no
 /// re-derived counts, nothing recomputed from the events it renders (the
 /// division-of-labor rule: "the watchdog collects, narrates, and files ...
-/// neither owns the other's data"). A pull-to-refresh / retry re-fetches the
-/// same URL; it never remembers the previous result once a new fetch starts.
+/// neither owns the other's data"). Retry re-fetches; it never remembers the
+/// previous result once a new fetch starts.
 class SkcodeDigestTab extends StatefulWidget {
   const SkcodeDigestTab({
     super.key,
-    this.digestUrl,
+    required this.apiClient,
+    required this.mintToken,
+    this.onAuthRejected,
     this.onOpenLink,
-    this.client,
   });
 
-  /// The full `latest/` digest artifact URL (watchdog spec section 5: "the
-  /// digest publishes next to the Atlas brief"). Null means no digest host is
-  /// configured yet, which renders the same honest empty state as a 404 would
-  /// (see [_DigestPhase.notConfigured]), never a crash.
-  final String? digestUrl;
+  /// The shared skcode-hostd client (card C-3b), the SAME instance the
+  /// sessions rail and jobs list use. The digest is one more read on that
+  /// plane, not a host of its own.
+  final SkcodeApiClient apiClient;
+
+  /// Mints the `skcode.stream`-scoped wire token, exactly as the sessions
+  /// rail's own `mintToken` does. Resolving null means no token exists at all
+  /// (standalone, or a host that never wired a minter), which renders
+  /// [_DigestPhase.unauthorized]: the same operator-facing fact as a rejected
+  /// token, and the same next action.
+  final Future<String?> Function() mintToken;
+
+  /// Invoked on a 401 so the host can drop its cached audience token and let
+  /// the next [mintToken] genuinely re-mint (card C-3b). This tab re-mints at
+  /// most ONCE per load and then stops: a fresh token that is rejected too is
+  /// an honest [_DigestPhase.unauthorized], never a retry loop.
+  final VoidCallback? onAuthRejected;
 
   /// Invoked with a link's resolved target (`link.uri` when the event
   /// carries a shell-resolvable `skworld://` uri, else its `https://`
@@ -42,16 +93,11 @@ class SkcodeDigestTab extends StatefulWidget {
   /// 8). Null renders every link inert rather than crashing.
   final void Function(String uri)? onOpenLink;
 
-  /// Test seam: inject a fake [SkcodeDigestClient] so a widget test never
-  /// opens a real socket. Production always omits this.
-  final SkcodeDigestClient? client;
-
   @override
   State<SkcodeDigestTab> createState() => _SkcodeDigestTabState();
 }
 
 class _SkcodeDigestTabState extends State<SkcodeDigestTab> {
-  late final SkcodeDigestClient _client;
   _DigestPhase _phase = _DigestPhase.loading;
   SkcodeDigest? _digest;
   String? _errorMessage;
@@ -59,45 +105,70 @@ class _SkcodeDigestTabState extends State<SkcodeDigestTab> {
   @override
   void initState() {
     super.initState();
-    _client = widget.client ?? SkcodeDigestClient();
     _load();
   }
 
   @override
   void didUpdateWidget(covariant SkcodeDigestTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.digestUrl != widget.digestUrl) _load();
+    if (!identical(oldWidget.apiClient, widget.apiClient)) _load();
   }
 
+  /// One load attempt, with at most one re-mint retry on a 401 (the same
+  /// budget `SkcodeSessionStore` gives its own auth path: re-mint once, and if
+  /// the fresh token is rejected too, surface it rather than loop).
   Future<void> _load() async {
-    final url = widget.digestUrl;
-    if (url == null || url.isEmpty) {
-      if (!mounted) return;
+    if (mounted) {
       setState(() {
-        _phase = _DigestPhase.notConfigured;
-        _digest = null;
+        _phase = _DigestPhase.loading;
         _errorMessage = null;
       });
-      return;
     }
-    setState(() => _phase = _DigestPhase.loading);
-    try {
-      final digest = await _client.fetchLatest(url);
-      if (!mounted) return;
-      setState(() {
-        _digest = digest;
-        _phase = _DigestPhase.loaded;
-      });
-    } on SkcodeDigestNotFoundException {
-      if (!mounted) return;
-      setState(() => _phase = _DigestPhase.notFound);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _phase = _DigestPhase.error;
-        _errorMessage = e.toString();
-      });
+    var reminted = false;
+    while (true) {
+      final token = await widget.mintToken();
+      if (token == null) {
+        // Tokenless: nothing to send. Same operator message as a 401 below.
+        _settle(_DigestPhase.unauthorized);
+        return;
+      }
+      try {
+        final digest = await widget.apiClient.fetchDigest(token: token);
+        if (!mounted) return;
+        setState(() {
+          _digest = digest;
+          _phase = _DigestPhase.loaded;
+          _errorMessage = null;
+        });
+        return;
+      } on SkcodeUnauthorizedException {
+        if (reminted) {
+          _settle(_DigestPhase.unauthorized);
+          return;
+        }
+        reminted = true;
+        widget.onAuthRejected?.call();
+        continue;
+      } on SkcodeDigestNotFoundException {
+        _settle(_DigestPhase.notFound);
+        return;
+      } on SkcodeDigestParseException catch (e) {
+        _settle(_DigestPhase.corrupt, detail: e.message);
+        return;
+      } catch (e) {
+        _settle(_DigestPhase.unreachable, detail: e.toString());
+        return;
+      }
     }
+  }
+
+  void _settle(_DigestPhase phase, {String? detail}) {
+    if (!mounted) return;
+    setState(() {
+      _phase = phase;
+      _digest = null;
+      _errorMessage = detail;
+    });
   }
 
   void _openLink(SkcodeDigestLink link) {
@@ -110,21 +181,39 @@ class _SkcodeDigestTabState extends State<SkcodeDigestTab> {
     switch (_phase) {
       case _DigestPhase.loading:
         return const Center(child: CircularProgressIndicator());
-      case _DigestPhase.notConfigured:
-        return const _DigestState(
-          icon: Icons.summarize_outlined,
-          message: "Digest not configured",
-        );
       case _DigestPhase.notFound:
-        return const _DigestState(
+        return _DigestState(
+          key: const Key("skcodeDigestNotFound"),
           icon: Icons.summarize_outlined,
           message: "No digest published yet",
+          detail: "The watchdog has not published a digest for this fleet yet.",
+          onRetry: _load,
         );
-      case _DigestPhase.error:
+      case _DigestPhase.unauthorized:
         return _DigestState(
-          icon: Icons.error_outline,
-          message: "Could not load the digest",
-          detail: _errorMessage,
+          key: const Key("skcodeDigestUnauthorized"),
+          icon: Icons.lock_outline,
+          message: "Not authorized to read the digest",
+          detail:
+              "Your session token was not issued or was rejected. Sign in again to continue.",
+          onRetry: _load,
+        );
+      case _DigestPhase.corrupt:
+        return _DigestState(
+          key: const Key("skcodeDigestCorrupt"),
+          icon: Icons.broken_image_outlined,
+          message: "The published digest could not be read",
+          detail: _errorMessage == null
+              ? "A digest was published, but its content is not valid JSON."
+              : "A digest was published, but its content is not valid JSON. ${_errorMessage!}",
+          onRetry: _load,
+        );
+      case _DigestPhase.unreachable:
+        return _DigestState(
+          key: const Key("skcodeDigestUnreachable"),
+          icon: Icons.cloud_off,
+          message: "Could not reach the digest",
+          detail: "skcode-hostd did not respond. Check the connection and try again.",
           onRetry: _load,
         );
       case _DigestPhase.loaded:
@@ -140,6 +229,7 @@ class _SkcodeDigestTabState extends State<SkcodeDigestTab> {
 /// since only this tab needs the Retry action.
 class _DigestState extends StatelessWidget {
   const _DigestState({
+    super.key,
     required this.icon,
     required this.message,
     this.detail,
@@ -232,10 +322,18 @@ class _DigestContent extends StatelessWidget {
       );
     }
     if (digest.problems.isEmpty && digest.notable.isEmpty) {
+      // A REAL digest that happens to carry no problems and nothing notable:
+      // a genuinely quiet day. Deliberately worded so it can never be read as
+      // "no digest exists" (which is _DigestPhase.notFound, a different state
+      // with a different icon, a different message, and a different fix).
       rows.add(
         Padding(
+          key: const Key("skcodeDigestQuietDay"),
           padding: const EdgeInsets.all(16),
-          child: Text("Nothing firing or notable.", style: textTheme.bodySmall),
+          child: Text(
+            "Nothing firing or notable in this digest.",
+            style: textTheme.bodySmall,
+          ),
         ),
       );
     }

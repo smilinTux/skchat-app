@@ -1,5 +1,6 @@
 import "package:dio/dio.dart";
 
+import "skcode_digest.dart";
 import "skcode_dispatch_targets.dart";
 import "skcode_event.dart";
 import "skcode_job_run.dart";
@@ -140,8 +141,10 @@ class SkcodeApiClient {
     return out;
   }
 
-  Options _bearer(String token) =>
-      Options(headers: {"Authorization": "Bearer $token"});
+  Options _bearer(String token, {ResponseType? responseType}) => Options(
+    headers: {"Authorization": "Bearer $token"},
+    responseType: responseType,
+  );
 
   /// `GET /skcode/api/v1/sessions`.
   Future<List<SkcodeSessionSummary>> listSessions({
@@ -203,6 +206,51 @@ class SkcodeApiClient {
     } on DioException catch (e) {
       throw _wrap(e);
     }
+  }
+
+  /// `GET /skcode/api/v1/watchdog/digest` (card C-14a): the read-only view
+  /// over the skwatchdog's published `latest/digest.json`, scope
+  /// `skcode.stream`, the SAME read scope as [listSessions] / [listJobs]. It
+  /// is a view, never a store: there is no publish/regenerate/delete route
+  /// anywhere on this surface, and this method never writes, caches, or
+  /// recomputes anything from what it parses.
+  ///
+  /// Three server states, kept as three distinct outcomes here because they
+  /// mean three different things to an operator:
+  ///
+  ///  * **404** -> [SkcodeDigestNotFoundException]: nothing has been published
+  ///    yet (the watchdog may simply not have run). hostd never answers a
+  ///    fabricated empty 200 for this, so it can never be mistaken for a
+  ///    genuinely quiet day.
+  ///  * **401** -> [SkcodeUnauthorizedException] (via [_wrap]): the caller is
+  ///    not authorized. Callers re-mint once through `onAuthRejected` and
+  ///    retry, exactly as they do for sessions and jobs.
+  ///  * **200 with a body that will not parse** ->
+  ///    [SkcodeDigestParseException]: hostd serves the artifact's raw bytes
+  ///    unexamined, so a corrupt file lands here rather than as a 500.
+  ///
+  /// Requested as [ResponseType.plain] on purpose: Dio's own JSON decoding
+  /// would surface a corrupt body as a generic transport failure, which would
+  /// collapse "the artifact is corrupt" into "the host is unreachable". The
+  /// body is parsed by [parseSkcodeDigestBody] instead, which raises the
+  /// precise exception. The digest JSON shape itself is untouched (this reads
+  /// exactly what skos `assemble_digest()` wrote).
+  Future<SkcodeDigest> fetchDigest({required String token}) async {
+    final Response<String> resp;
+    try {
+      resp = await _dio.get<String>(
+        "/skcode/api/v1/watchdog/digest",
+        options: _bearer(token, responseType: ResponseType.plain),
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        throw SkcodeDigestNotFoundException(
+          _detail(e) ?? "no digest has been published yet",
+        );
+      }
+      throw _wrap(e);
+    }
+    return parseSkcodeDigestBody(resp.data);
   }
 
   /// `POST /skcode/api/v1/sessions/{sid}/inject`, body `{"text": text}`

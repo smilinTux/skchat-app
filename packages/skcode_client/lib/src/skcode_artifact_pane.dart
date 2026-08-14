@@ -1,9 +1,16 @@
 import "package:flutter/material.dart";
 
-import "skcode_digest.dart";
+import "skcode_api_client.dart";
 import "skcode_digest_tab.dart";
 import "skcode_event.dart";
 import "skcode_raw_rail.dart";
+
+/// The fallback token minter for a pane built with no [SkcodeArtifactPane.mintToken]
+/// (a bare pane in a test, or a host that has not wired the transport layer).
+/// Resolving null is the honest answer -- there is no token source -- and the
+/// Digest tab renders its "not authorized" state from it rather than pretending
+/// a digest is merely missing.
+Future<String?> _noSkcodeToken() => Future<String?>.value(null);
 
 /// The artifact pane (card C-7, spec section 7 rev 2): "the pane formerly
 /// called the preview pane is now the artifact pane and holds only
@@ -55,9 +62,10 @@ class SkcodeArtifactPane extends StatefulWidget {
     this.showChatTab = false,
     this.chatSlot,
     this.chatUnreadCount = 0,
-    this.digestUrl,
+    this.apiClient,
+    this.mintToken,
+    this.onAuthRejected,
     this.onOpenLink,
-    this.digestClient,
   });
 
   /// The session's merged, ordered event window (exactly
@@ -78,10 +86,23 @@ class SkcodeArtifactPane extends StatefulWidget {
   /// tier, "with an unread badge"). 0 renders no badge.
   final int chatUnreadCount;
 
-  /// The Digest tab's data source (card C-9): forwarded straight to
-  /// [SkcodeDigestTab.digestUrl]. Null renders that tab's honest
-  /// "not configured" state, never a crash.
-  final String? digestUrl;
+  /// The Digest tab's data source (card C-14a): the shared skcode-hostd
+  /// client, forwarded to [SkcodeDigestTab.apiClient]. The digest is a read on
+  /// the same authenticated plane as sessions and jobs
+  /// (`GET /api/v1/watchdog/digest`, scope `skcode.stream`), so it reuses the
+  /// same client rather than opening a second HTTP path of its own. Null (a
+  /// bare pane with no transport wired) degrades to the Digest tab's honest
+  /// "not authorized" state via [_noSkcodeToken], never a crash.
+  final SkcodeApiClient? apiClient;
+
+  /// Mints the `skcode.stream` wire token for the Digest tab (card C-14a),
+  /// the same minter the sessions rail uses. Null falls back to
+  /// [_noSkcodeToken].
+  final Future<String?> Function()? mintToken;
+
+  /// Forwarded to [SkcodeDigestTab.onAuthRejected] (card C-3b's seam): lets a
+  /// 401 on the digest re-mint the audience token exactly once and retry.
+  final VoidCallback? onAuthRejected;
 
   /// The Digest tab's deep-link seam (card C-9): forwarded straight to
   /// [SkcodeDigestTab.onOpenLink]. This is how a `skworld://` uri tapped
@@ -89,10 +110,6 @@ class SkcodeArtifactPane extends StatefulWidget {
   /// package cannot import host routing (see [SkcodeDigestTab]'s doc
   /// comment for the full contract).
   final void Function(String uri)? onOpenLink;
-
-  /// Test seam: forwarded to [SkcodeDigestTab.client] so a widget test never
-  /// opens a real socket for the Digest tab either.
-  final SkcodeDigestClient? digestClient;
 
   /// Presents this pane as a swipe-up bottom sheet (spec section 7,
   /// "PHONE ... artifact tabs via a swipe-up bottom sheet (the app's
@@ -105,9 +122,10 @@ class SkcodeArtifactPane extends StatefulWidget {
     bool showChatTab = false,
     Widget? chatSlot,
     int chatUnreadCount = 0,
-    String? digestUrl,
+    SkcodeApiClient? apiClient,
+    Future<String?> Function()? mintToken,
+    VoidCallback? onAuthRejected,
     void Function(String uri)? onOpenLink,
-    SkcodeDigestClient? digestClient,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -118,9 +136,10 @@ class SkcodeArtifactPane extends StatefulWidget {
         showChatTab: showChatTab,
         chatSlot: chatSlot,
         chatUnreadCount: chatUnreadCount,
-        digestUrl: digestUrl,
+        apiClient: apiClient,
+        mintToken: mintToken,
+        onAuthRejected: onAuthRejected,
         onOpenLink: onOpenLink,
-        digestClient: digestClient,
       ),
     );
   }
@@ -151,6 +170,14 @@ class _SkcodeArtifactPaneState extends State<SkcodeArtifactPane>
     with SingleTickerProviderStateMixin {
   late TabController _controller;
   late List<_ArtifactTabSpec> _tabs;
+
+  /// Stand-in for a pane built with no [SkcodeArtifactPane.apiClient]. It is
+  /// never actually reached: the matching [_noSkcodeToken] fallback resolves
+  /// null first, so the Digest tab settles on "not authorized" before any
+  /// request is built. It exists only so the tab's [SkcodeDigestTab.apiClient]
+  /// can stay non-nullable, which is what keeps a second, optional,
+  /// unauthenticated fetch path from creeping back in.
+  late final SkcodeApiClient _fallbackApiClient = SkcodeApiClient();
 
   @override
   void initState() {
@@ -210,9 +237,10 @@ class _SkcodeArtifactPaneState extends State<SkcodeArtifactPane>
         label: "Digest",
         icon: Icons.summarize_outlined,
         builder: (context) => SkcodeDigestTab(
-          digestUrl: widget.digestUrl,
+          apiClient: widget.apiClient ?? _fallbackApiClient,
+          mintToken: widget.mintToken ?? _noSkcodeToken,
+          onAuthRejected: widget.onAuthRejected,
           onOpenLink: widget.onOpenLink,
-          client: widget.digestClient,
         ),
       ),
       _ArtifactTabSpec(
@@ -504,18 +532,20 @@ class _SkcodeArtifactBottomSheet extends StatelessWidget {
     required this.showChatTab,
     required this.chatSlot,
     required this.chatUnreadCount,
-    this.digestUrl,
+    this.apiClient,
+    this.mintToken,
+    this.onAuthRejected,
     this.onOpenLink,
-    this.digestClient,
   });
 
   final List<SkcodeEvent> events;
   final bool showChatTab;
   final Widget? chatSlot;
   final int chatUnreadCount;
-  final String? digestUrl;
+  final SkcodeApiClient? apiClient;
+  final Future<String?> Function()? mintToken;
+  final VoidCallback? onAuthRejected;
   final void Function(String uri)? onOpenLink;
-  final SkcodeDigestClient? digestClient;
 
   @override
   Widget build(BuildContext context) {
@@ -539,9 +569,10 @@ class _SkcodeArtifactBottomSheet extends StatelessWidget {
                   showChatTab: showChatTab,
                   chatSlot: chatSlot,
                   chatUnreadCount: chatUnreadCount,
-                  digestUrl: digestUrl,
+                  apiClient: apiClient,
+                  mintToken: mintToken,
+                  onAuthRejected: onAuthRejected,
                   onOpenLink: onOpenLink,
-                  digestClient: digestClient,
                 ),
               ),
             ],

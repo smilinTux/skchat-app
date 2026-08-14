@@ -108,21 +108,32 @@ class _SkcodeSessionRouteScreenState
 /// full-screen phone/deep-link target) rather than only as a tab inside the
 /// artifact pane's own bottom sheet (`SkcodeSurface._openDigest`).
 ///
-/// No digest publish URL is wired into the host app yet (card C-9 built the
-/// tab and its `digestUrl` injection seam; sourcing the real skwatchdog
-/// `latest/` artifact URL was never in either C-9's or this card's scope).
-/// [SkcodeDigestTab] already renders the honest "Digest not configured"
-/// empty state for a null URL, so this screen mounts correctly today and
-/// will start showing real content the moment a host wires a real URL in,
-/// with no further route change needed.
+/// Card C-14a made this screen live. Card C-9 built the renderer against a
+/// bare, unauthenticated `digestUrl` that no host could ever fill in (the
+/// digest artifact is a 0600 owner-only file with no HTTP exposure), so this
+/// route rendered "Digest not configured" permanently. skcode-hostd now serves
+/// the same artifact at `GET /api/v1/watchdog/digest` on the `skcode.stream`
+/// read scope, so the tab needs exactly the three things every other skcode
+/// screen in this file already wires: the shared [SkcodeApiClient], a token
+/// minter, and the `onAuthRejected` invalidation pair that lets a 401 re-mint
+/// once instead of replaying a rejected token.
 class SkcodeDigestRouteScreen extends ConsumerWidget {
   const SkcodeDigestRouteScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final audienceTokens = ref.watch(audienceTokenServiceProvider);
+    final apiClient = ref.watch(skcodeApiClientProvider);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Digest')),
       body: SkcodeDigestTab(
+        apiClient: apiClient,
+        mintToken: () => audienceTokens.mint(kSkcodeAudience),
+        onAuthRejected: () {
+          audienceTokens.invalidate(kSkcodeAudience);
+          ref.invalidate(audienceTokenForAudienceProvider(kSkcodeAudience));
+        },
         onOpenLink: (uri) {
           final route = mapSkcodeDeeplink(uri) ?? mapSkchatDeeplink(uri);
           if (route != null) context.go(route);
