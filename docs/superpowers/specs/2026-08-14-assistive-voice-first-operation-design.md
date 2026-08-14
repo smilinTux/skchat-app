@@ -592,11 +592,19 @@ redaction is whitelist-by-construction.
 
 ## 9. Open items (left for a human on purpose)
 
-1. **Family-facing name and voice for the parents' agents.** The engineering
-   identity is decided (separate Atlas-template agents, decision 1); whether they
-   PRESENT to the parents as "Lumina" with her cloned voice, as "Atlas", or with
-   their own names and voices is a family decision (Chef asks his parents), not
-   an engineering one.
+1. ~~**Family-facing name and voice for the parents' agents.**~~ **DECIDED
+   2026-08-14 by Chef: the family-facing name is Atlas**, matching the
+   engineering identity (separate Atlas-template agents, decision 1), and
+   per-user memory scoping is confirmed. So there is no split between what the
+   agent IS and what it is called, which removes a whole class of confusion:
+   the ledger, the guardian channel and anything Chef reads all name the same
+   thing the parent says out loud.
+
+   Still open, and genuinely a family question rather than an engineering one:
+   the VOICE. Atlas should not inherit Lumina's cloned voice, because that
+   voice is Chef's companion and carries her manner. Picking a distinct voice
+   per parent (or one shared Atlas voice) is a preference to settle with them,
+   not something to decide here.
 2. **Open mic vs tap-to-talk default** per parent (dexterity vs privacy
    trade-off), and whether the call is long-lived (always connected during the
    day) or per-interaction. Needs a real trial with the actual users.
