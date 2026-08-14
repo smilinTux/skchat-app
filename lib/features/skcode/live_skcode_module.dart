@@ -36,9 +36,9 @@ const _kSkcodePrimaryRepo = "skworld-app";
 ///     `audienceTokens.mint` pattern, which bypasses the Riverpod
 ///     FutureProvider entirely) AND invalidates
 ///     `audienceTokenForAudienceProvider(kSkcodeAudience)` for any other
-///     watcher (e.g. the legacy `SkcodePane`). Only doing the second half
-///     would leave a mounted `AuthContext.token()` call replaying the exact
-///     stale token that was just rejected.
+///     watcher. Only doing the second half would leave a mounted
+///     `AuthContext.token()` call replaying the exact stale token that was
+///     just rejected.
 ///
 /// Call it from a `WidgetRef`-bearing `build` (a `ConsumerWidget` /
 /// `ConsumerState`), not once in `initState`, so it stays reactive to a

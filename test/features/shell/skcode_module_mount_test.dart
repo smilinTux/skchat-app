@@ -9,7 +9,6 @@ import 'package:skchat/features/chats/chats_provider.dart';
 import 'package:skchat/features/shell/app_shell.dart';
 import 'package:skchat/features/skcode/skcode_deeplink_routes.dart';
 import 'package:skchat/features/skcode/skcode_module_host_screen.dart';
-import 'package:skchat/features/skcode/skcode_pane.dart';
 import 'package:skchat/models/conversation.dart';
 import 'package:skchat/services/audience_token_service.dart';
 import 'package:skchat/services/capabilities_service.dart';
@@ -20,18 +19,17 @@ import 'package:skchat/services/skcomms_client.dart';
 import 'package:skchat/services/skcomms_sync.dart';
 
 /// Card C-10 (the Grade A registry flip): proves the app's OWN route table
-/// (`AppRoutes.code` / `.codeSession` / `.codeDigest` / `.codeLegacy`, wired
-/// through the real `ShellRoute` + [AppShell], the exact production shell
-/// wrapper `appRouterProvider` uses) mounts the REAL native screens, not a
-/// throwaway spy destination the way `app_shell_nav_test.dart`'s deep-link
-/// coverage (`skcode_deeplink_test.dart`, card C-9) does. That test proves
+/// (`AppRoutes.code` / `.codeSession` / `.codeDigest`, wired through the real
+/// `ShellRoute` + [AppShell], the exact production shell wrapper
+/// `appRouterProvider` uses) mounts the REAL native screens, not a throwaway
+/// spy destination the way `app_shell_nav_test.dart`'s deep-link coverage
+/// (`skcode_deeplink_test.dart`, card C-9) does. That test proves
 /// `mapSkcodeDeeplink` produces the right STRING and that a bus drives SOME
 /// router to SOME spy screen at that string; this test proves the app's own
 /// `/code`, `/code/s/:sid`, and `/code/digest` paths resolve, in a router
 /// built from the exact same [AppRoutes] path constants and [AppShell]
 /// wrapper production uses, to [SkcodeModuleHostScreen] /
-/// [SkcodeSessionRouteScreen] / [SkcodeDigestRouteScreen] -- and that `/code`
-/// does NOT render the iframe [SkcodePane].
+/// [SkcodeSessionRouteScreen] / [SkcodeDigestRouteScreen].
 ///
 /// This does not pump `appRouterProvider` itself: that provider hardcodes
 /// `initialLocation: AppRoutes.chats` and bridges the onboarding/backend-config
@@ -69,9 +67,8 @@ class _StubPrefs extends ModulePrefsNotifier {
 
 /// Stub the daemon-URL notifier to a closed loopback port: any HTTP/WS call
 /// the mounted skcode module attempts fails fast (connection refused) rather
-/// than hanging on DNS resolution, matching `skcode_pane_test.dart`'s own
-/// `_StubDaemonConfig` reasoning one step further (that pane never opens a
-/// live socket; the native module does, so the stub target must fail fast).
+/// than hanging on DNS resolution, since the native module opens a live
+/// socket and the stub target must fail fast.
 class _StubDaemonConfig extends DaemonConfigNotifier {
   @override
   String build() => 'http://127.0.0.1:9';
@@ -126,10 +123,6 @@ GoRouter _buildRouter() {
                 path: 'digest',
                 builder: (_, _) => const SkcodeDigestRouteScreen(),
               ),
-              GoRoute(
-                path: 'legacy',
-                builder: (_, _) => const SkcodePane(),
-              ),
             ],
           ),
           // A second primary tab so the shell nav has something to render
@@ -175,17 +168,11 @@ Future<GoRouter> _pump(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets(
-      '/code mounts the native SkcodeModuleHostScreen, never the iframe SkcodePane',
+  testWidgets('/code mounts the native SkcodeModuleHostScreen',
       (tester) async {
     await _pump(tester);
 
     expect(find.byType(SkcodeModuleHostScreen), findsOneWidget);
-    expect(
-      find.byType(SkcodePane),
-      findsNothing,
-      reason: 'the Grade A flip must not render the Grade B iframe at /code',
-    );
   });
 
   testWidgets(
@@ -213,17 +200,5 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.byType(SkcodeDigestRouteScreen), findsOneWidget);
-  });
-
-  testWidgets(
-      '/code/legacy still reaches the held-back iframe pane (parity gap: '
-      'the classic view is not deleted)', (tester) async {
-    final router = await _pump(tester);
-
-    router.go(AppRoutes.codeLegacy);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(find.byType(SkcodePane), findsOneWidget);
   });
 }

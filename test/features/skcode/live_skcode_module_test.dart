@@ -142,8 +142,8 @@ void main() {
       // "onAuthRejected", proven directly here, independent of the session
       // store's own reconnect test in packages/skcode_client). Both halves
       // fire: AudienceTokenService's own cache (what a mounted
-      // AuthContext.token() reads) AND the Riverpod future (what this test,
-      // and the legacy SkcodePane, watch).
+      // AuthContext.token() reads) AND the Riverpod future (what this test
+      // watches).
       module.onAuthRejected!();
 
       final tokenAfter = await capturedRef

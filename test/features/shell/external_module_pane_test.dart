@@ -43,7 +43,7 @@ class _EmbedTokenAdapter implements HttpClientAdapter {
 }
 
 /// Stub the daemon-URL notifier so the pane resolves an origin without opening
-/// Hive in a widget test (mirrors `skcode_pane_test.dart`'s own stub).
+/// Hive in a widget test.
 class _StubDaemonConfig extends DaemonConfigNotifier {
   @override
   String build() => 'https://test.local';
