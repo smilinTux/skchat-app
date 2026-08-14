@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:skworld_module_api/skworld_module_api.dart';
 
 import 'skcode_api_client.dart';
-import 'skcode_digest.dart';
 import 'skcode_project_chat.dart';
 import 'skcode_surface.dart';
 
@@ -34,8 +33,9 @@ import 'skcode_surface.dart';
 /// siblings and added [origin] / [onAuthRejected] as the injection seam;
 /// card C-4 wired that transport into a real render layer (the sessions
 /// rail, the activity taxonomy, the transcript, the raw rail) inside
-/// [SkcodeSurface]; card C-9 added [digestUrl] / [onOpenLink] as the same
-/// kind of injection seam for the artifact pane's Digest tab. The existing
+/// [SkcodeSurface]; card C-9 added the artifact pane's Digest tab, whose data
+/// source card C-14a folded back onto [origin] / [onAuthRejected] (leaving
+/// only [onOpenLink] as its own seam). The existing
 /// iframe at `lib/features/skcode/` stays the LIVE `/code` surface until the
 /// registry flip (card C-10, deliberately last); this module is fully built
 /// but not yet the one the app actually mounts.
@@ -44,9 +44,7 @@ class SkcodeModule implements SkworldModule {
     this.origin,
     this.onAuthRejected,
     this.apiClient,
-    this.digestUrl,
     this.onOpenLink,
-    this.digestClient,
     this.projectChatBuilder,
     this.defaultRepo,
   });
@@ -76,14 +74,15 @@ class SkcodeModule implements SkworldModule {
   /// Production always constructs with this omitted.
   final SkcodeApiClient? apiClient;
 
-  /// The skwatchdog published `latest/` digest artifact's full URL (card
-  /// C-9, spec section 9), forwarded to the Digest tab in the artifact pane.
-  /// Nothing in [ShellContext] says where the watchdog publishes (the
-  /// watchdog is an skos capability, not a subapp with a manifest of its
-  /// own), so this follows [origin]'s precedent exactly: the one thing
-  /// missing from the shell contract, supplied here instead. Null renders
-  /// the Digest tab's honest "not configured" state rather than a crash.
-  final String? digestUrl;
+  // NOTE (card C-14a): the old `digestUrl` param is GONE, not deprecated.
+  // Card C-9 added it on the assumption that the watchdog published its digest
+  // to some public https artifact a host would point this at. No such URL ever
+  // existed: the artifact is a 0600 owner-only file, so every host left this
+  // null and the Digest tab rendered "not configured" forever. hostd now
+  // serves the same file at `GET /api/v1/watchdog/digest` under the
+  // `skcode.stream` read scope, which means the digest needs exactly what
+  // sessions and jobs already need and nothing more: [origin] and
+  // [onAuthRejected]. A host wires nothing extra to make the Digest tab work.
 
   /// Deep-link resolution seam (card C-9): invoked with a digest line's link
   /// (its `skworld://` uri, or its `https://` fallback) when tapped. This
@@ -101,11 +100,6 @@ class SkcodeModule implements SkworldModule {
   /// handling. Standalone mode (no shell) has no router to resolve against,
   /// so links stay inert there unless a standalone runner supplies its own.
   final void Function(String uri)? onOpenLink;
-
-  /// Test seam only (see [SkcodeSurface.digestClient]): lets a widget test
-  /// inject a fake [SkcodeDigestClient] so the Digest action never opens a
-  /// real socket. Production always constructs with this omitted.
-  final SkcodeDigestClient? digestClient;
 
   /// The project-chat injection seam (card C-12, spec section 10). See
   /// `skcode_project_chat.dart`'s doc comment: this package cannot import
@@ -147,9 +141,7 @@ class SkcodeModule implements SkworldModule {
       origin: origin,
       onAuthRejected: onAuthRejected,
       apiClient: apiClient,
-      digestUrl: digestUrl,
       onOpenLink: onOpenLink,
-      digestClient: digestClient,
       projectChatBuilder: projectChatBuilder,
       defaultRepo: defaultRepo,
     );

@@ -37,12 +37,17 @@
 ///    reserved slot), the two-layer negative-x panel-left shadow ported from
 ///    Buzz with attribution, and [SkcodeArtifactPane.showBottomSheet] for the
 ///    phone swipe-up presentation.
-///  * [SkcodeDigestTab] / [SkcodeDigest] / [SkcodeDigestEvent] /
-///    [SkcodeDigestClient] - card C-9, spec section 9: fetches and renders
-///    the skwatchdog published `latest/` digest artifact over https, with
-///    every line's link tappable through an injected `onOpenLink` (the
-///    module boundary seam this package cannot resolve itself, since it
-///    cannot import host routing). No digest data is stored or recomputed
+///  * [SkcodeDigestTab] / [SkcodeDigest] / [SkcodeDigestEvent] - card C-9
+///    (renderer) and card C-14a (data source): renders the skwatchdog
+///    published digest fetched from skcode-hostd's own
+///    `GET /api/v1/watchdog/digest` through [SkcodeApiClient.fetchDigest],
+///    Bearer-authenticated on the `skcode.stream` read scope like every other
+///    read here, with every line's link tappable through an injected
+///    `onOpenLink` (the module boundary seam this package cannot resolve
+///    itself, since it cannot import host routing). Four failure states stay
+///    distinct on purpose (no digest published, not authorized, corrupt
+///    artifact, host unreachable) and none of them is ever rendered as a real
+///    digest that happened to be quiet. No digest data is stored or recomputed
 ///    here; the artifact stays the single narrative surface.
 ///  * [SkcodeApiClient] / [SkcodeSessionStore] / [SkcodeSessionsListStore] /
 ///                      [SkcodeWsTransport] / [SkcodeEvent] - the transport

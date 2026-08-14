@@ -2,6 +2,10 @@ import "package:flutter_test/flutter_test.dart";
 import "package:skcode_client/skcode_client.dart";
 
 class _FakeApiClient implements SkcodeApiClient {
+  @override
+  Future<SkcodeDigest> fetchDigest({required String token}) async {
+    throw UnimplementedError("the digest route is not exercised by this file");
+  }
   int calls = 0;
   final List<SkcodeSessionSummary> Function() onListSessions;
   _FakeApiClient(this.onListSessions);

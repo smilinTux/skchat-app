@@ -26,6 +26,10 @@ class _FakeWsTransport implements SkcodeWsTransport {
 }
 
 class _FakeApiClient implements SkcodeApiClient {
+  @override
+  Future<SkcodeDigest> fetchDigest({required String token}) async {
+    throw UnimplementedError("the digest route is not exercised by this file");
+  }
   _FakeApiClient({this.sessions = const []});
 
   final List<SkcodeSessionSummary> sessions;

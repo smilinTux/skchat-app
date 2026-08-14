@@ -1,7 +1,5 @@
 import "dart:convert";
 
-import "package:dio/dio.dart";
-
 /// The Dart mirror of one `WatchdogEvent` (skos watchdog spec 2026-08-10,
 /// section 6.2): `{ts, source, kind, object, severity, summary, link: {uri,
 /// http}, ref, meta}`. Every field defaults to an empty/neutral value rather
@@ -136,10 +134,16 @@ class SkcodeDigest {
   }
 }
 
-/// Thrown when the digest host answers 404: no `latest/` artifact has been
-/// published yet (a normal, expected state before the watchdog's first run,
-/// or if it has never run on this environment). [SkcodeDigestTab] renders
-/// this as an honest "no digest published yet" state, never an error.
+/// Thrown when skcode-hostd answers 404 on `GET /api/v1/watchdog/digest`: no
+/// `latest/` artifact has been published yet (a normal, expected state before
+/// the watchdog's first run, or if it has never run on this environment).
+///
+/// hostd is deliberate about this (skharness `digest.py` / `daemon.py`): a
+/// missing file, a missing directory, and a permission error all answer 404,
+/// and it NEVER fabricates a 200 with an empty digest, because "nothing has
+/// been published" and "today was quiet" are different facts. [SkcodeDigestTab]
+/// keeps them different on this side too, rendering this as its own honest
+/// "no digest published yet" state rather than an error or an empty digest.
 class SkcodeDigestNotFoundException implements Exception {
   const SkcodeDigestNotFoundException([this.message = "no digest published"]);
   final String message;
@@ -148,19 +152,16 @@ class SkcodeDigestNotFoundException implements Exception {
   String toString() => "SkcodeDigestNotFoundException: $message";
 }
 
-/// Any other non-2xx response or transport failure reaching the digest host.
-class SkcodeDigestFetchException implements Exception {
-  const SkcodeDigestFetchException(this.message);
-  final String message;
-
-  @override
-  String toString() => "SkcodeDigestFetchException: $message";
-}
-
-/// The response body was not parseable JSON, or not a JSON object at all.
-/// Kept distinct from [SkcodeDigestFetchException] so the tab can render a
-/// different, more precise honest message ("digest content could not be
-/// read" vs "could not reach the digest").
+/// The response body was not parseable JSON, or not a JSON object at all: the
+/// published artifact is corrupt.
+///
+/// This is a reachable state by design, not a defensive branch. hostd serves
+/// the digest file's raw bytes unexamined (it never parses them, so it can
+/// never "fix" or fabricate a digest), which means a corrupt artifact arrives
+/// here as a 200 with an unparseable body rather than as a 500. Kept distinct
+/// from [SkcodeUnauthorizedException] / [SkcodeApiException] /
+/// [SkcodeDigestNotFoundException] so the tab renders "the published digest is
+/// corrupt" rather than folding it into "could not reach the host".
 class SkcodeDigestParseException implements Exception {
   const SkcodeDigestParseException(this.message);
   final String message;
@@ -169,68 +170,38 @@ class SkcodeDigestParseException implements Exception {
   String toString() => "SkcodeDigestParseException: $message";
 }
 
-/// Fetches the skwatchdog published `latest/` digest artifact over plain
-/// https (watchdog spec section 9: "the artifact pane's Digest tab fetches
-/// the published digest (the latest/ artifact over https, the load-bearing
-/// link form the watchdog spec already mandates) and renders it").
+/// Parses a digest response body into a [SkcodeDigest], throwing
+/// [SkcodeDigestParseException] for anything that is not a JSON object.
 ///
-/// Deliberately its own small client, NOT [SkcodeApiClient]: the digest lives
-/// on the watchdog's publish host (beside the Atlas brief, watchdog spec
-/// section 5), a different origin than skcode-hostd, and it is a published
-/// static artifact with no capauth audience of its own, so no Bearer header
-/// dance applies here. This client does exactly one thing: GET a full URL,
-/// parse it as the digest JSON shape, never write anything, never cache
-/// anything (division of labor: "no digest data is stored or recomputed
-/// client-side; the artifact remains the single narrative surface").
-class SkcodeDigestClient {
-  SkcodeDigestClient({Dio? dio})
-    : _dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              connectTimeout: const Duration(seconds: 5),
-              receiveTimeout: const Duration(seconds: 10),
-            ),
-          );
-
-  final Dio _dio;
-
-  /// Fetches and parses the digest at [url] (the full `latest/` artifact
-  /// URL; this client never builds a URL from a base + path, since the
-  /// caller already knows the whole thing, matching how flexible/uncertain
-  /// the watchdog's actual publish path still is at this stage).
-  Future<SkcodeDigest> fetchLatest(String url) async {
-    Response<String> response;
-    try {
-      response = await _dio.get<String>(
-        url,
-        options: Options(responseType: ResponseType.plain),
-      );
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) {
-        throw const SkcodeDigestNotFoundException();
-      }
-      throw SkcodeDigestFetchException(
-        e.message ?? "digest fetch failed",
-      );
-    }
-
-    final body = response.data;
-    if (body == null || body.trim().isEmpty) {
-      throw const SkcodeDigestParseException("empty digest response");
-    }
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is! Map<String, dynamic>) {
-        throw const SkcodeDigestParseException(
-          "digest response was not a JSON object",
-        );
-      }
-      return SkcodeDigest.fromJson(decoded);
-    } on SkcodeDigestParseException {
-      rethrow;
-    } catch (e) {
-      throw SkcodeDigestParseException("could not parse digest JSON: $e");
-    }
+/// Lives here rather than in [SkcodeApiClient] so the digest's whole shape
+/// (envelope, events, links, and what "unreadable" means) stays in one file;
+/// the API client owns only the HTTP call and the Bearer header.
+SkcodeDigest parseSkcodeDigestBody(String? body) {
+  if (body == null || body.trim().isEmpty) {
+    throw const SkcodeDigestParseException("empty digest response");
   }
+  final dynamic decoded;
+  try {
+    decoded = jsonDecode(body);
+  } catch (e) {
+    throw SkcodeDigestParseException("could not parse digest JSON: $e");
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw const SkcodeDigestParseException(
+      "digest response was not a JSON object",
+    );
+  }
+  return SkcodeDigest.fromJson(decoded);
 }
+
+// NOTE (card C-14a): there is deliberately NO digest-specific HTTP client in
+// this file any more. Card C-9 shipped one (`SkcodeDigestClient`) that GET-ed
+// a bare `digestUrl` with no Authorization header, on the assumption that the
+// digest was a public static artifact published beside the Atlas brief.
+// Nothing ever served that URL: the artifact is a 0600 owner-only file with no
+// HTTP exposure at all, so the Digest tab was inert from the day it shipped.
+// hostd now serves the same file at `GET /api/v1/watchdog/digest` under the
+// `skcode.stream` read scope, so the digest rides [SkcodeApiClient] with the
+// same Bearer token and the same re-mint-once seam as sessions and jobs.
+// See [SkcodeApiClient.fetchDigest]. Do not reintroduce an unauthenticated
+// second HTTP path here.

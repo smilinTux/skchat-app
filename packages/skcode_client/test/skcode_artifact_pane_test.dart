@@ -2,21 +2,38 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:skcode_client/skcode_client.dart";
 
-/// Fakes [SkcodeDigestClient] the same way the rest of this package's test
-/// suite fakes [SkcodeApiClient] (`implements`, not a mocking framework): a
-/// widget test must never open a real socket, per the transport-layer test
-/// convention already established for the other tabs in this pane.
-class _FakeDigestClient implements SkcodeDigestClient {
-  _FakeDigestClient(this._result);
-  final Future<SkcodeDigest> Function(String url) _result;
+/// Fakes [SkcodeApiClient] the same way the rest of this package's test suite
+/// does (`implements`, not a mocking framework): a widget test must never open
+/// a real socket, per the transport-layer test convention already established
+/// for the other tabs in this pane.
+///
+/// Only [fetchDigest] is implemented; every other route forwards to
+/// [noSuchMethod] and throws, which keeps this fake honest about what this
+/// file actually exercises. Card C-14a moved the digest onto this client, so
+/// there is no digest-specific client left to fake.
+class _FakeApiClient implements SkcodeApiClient {
+  _FakeApiClient(this._result);
+  final Future<SkcodeDigest> Function(String token) _result;
   int calls = 0;
+  final List<String> tokens = [];
 
   @override
-  Future<SkcodeDigest> fetchLatest(String url) {
+  Future<SkcodeDigest> fetchDigest({required String token}) {
     calls++;
-    return _result(url);
+    tokens.add(token);
+    return _result(token);
   }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError(
+        "${invocation.memberName} is not exercised by this file",
+      );
 }
+
+/// The token minter the Digest tab is handed in these tests: a real token,
+/// resolved once per load, so the tab reaches [_FakeApiClient.fetchDigest]
+/// instead of settling on its "not authorized" state.
+Future<String?> _token() async => "wire-token";
 
 SkcodeEvent _ev({
   String type = "diff",
@@ -205,14 +222,18 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets("no digestUrl renders the not-configured state honestly",
-        (tester) async {
-      await openDigestTab(
-        tester,
-        const SkcodeArtifactPane(events: []),
-      );
+    testWidgets(
+        "with no transport wired the tab says it is not authorized, never "
+        "that no digest exists", (tester) async {
+      // A bare pane has no client and no token minter, so nothing can be
+      // asked for. That is an access fact, not a publish fact: rendering it
+      // as "no digest published yet" would be a claim about the watchdog
+      // this pane has no evidence for.
+      await openDigestTab(tester, const SkcodeArtifactPane(events: []));
 
-      expect(find.text("Digest not configured"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDigestUnauthorized")), findsOneWidget);
+      expect(find.text("Not authorized to read the digest"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDigestNotFound")), findsNothing);
     });
 
     testWidgets(
@@ -220,8 +241,7 @@ void main() {
         "tapped link with a uri calls onOpenLink with that uri",
         (tester) async {
       final opened = <String>[];
-      final client = _FakeDigestClient((url) async {
-        expect(url, "https://atlas.skworld.io/watchdog/latest/digest.json");
+      final client = _FakeApiClient((token) async {
         return SkcodeDigest.fromJson({
           "date": "2026-08-11",
           "headline": "One incident, three merges.",
@@ -251,12 +271,15 @@ void main() {
         tester,
         SkcodeArtifactPane(
           events: const [],
-          digestUrl: "https://atlas.skworld.io/watchdog/latest/digest.json",
-          digestClient: client,
+          apiClient: client,
+          mintToken: _token,
           onOpenLink: opened.add,
         ),
       );
 
+      // The minted token actually reached the client: the digest is an
+      // authenticated read now, not the anonymous GET card C-9 shipped.
+      expect(client.tokens, ["wire-token"]);
       expect(find.text("One incident, three merges."), findsOneWidget);
       expect(find.textContaining("Problems"), findsOneWidget);
       expect(find.text("skchat daemon crash-looped on .41"), findsOneWidget);
@@ -273,8 +296,8 @@ void main() {
     });
 
     testWidgets("a row with no link is not tappable", (tester) async {
-      final client = _FakeDigestClient(
-        (url) async => SkcodeDigest.fromJson({
+      final client = _FakeApiClient(
+        (token) async => SkcodeDigest.fromJson({
           "notable": [
             {"summary": "no link on this one", "severity": "notable"},
           ],
@@ -285,8 +308,8 @@ void main() {
         tester,
         SkcodeArtifactPane(
           events: const [],
-          digestUrl: "https://x/digest.json",
-          digestClient: client,
+          apiClient: client,
+          mintToken: _token,
         ),
       );
 
@@ -299,41 +322,122 @@ void main() {
       expect(tile.onTap, isNull);
     });
 
-    testWidgets("no digest published yet (404) renders that exact message",
-        (tester) async {
-      final client = _FakeDigestClient(
-        (url) async => throw const SkcodeDigestNotFoundException(),
+    testWidgets(
+        "a real digest with nothing firing reads as a quiet day, not as a "
+        "missing digest", (tester) async {
+      // The whole point of card C-14a: these two must never render alike.
+      final client = _FakeApiClient(
+        (token) async => SkcodeDigest.fromJson({
+          "date": "2026-08-11",
+          "headline": "All quiet.",
+          "problems": <dynamic>[],
+          "notable": <dynamic>[],
+        }),
       );
 
       await openDigestTab(
         tester,
         SkcodeArtifactPane(
           events: const [],
-          digestUrl: "https://x/digest.json",
-          digestClient: client,
+          apiClient: client,
+          mintToken: _token,
         ),
       );
 
+      expect(find.byKey(const Key("skcodeDigestQuietDay")), findsOneWidget);
+      expect(find.text("All quiet."), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDigestNotFound")), findsNothing);
+    });
+
+    testWidgets("no digest published yet (404) renders that exact message",
+        (tester) async {
+      final client = _FakeApiClient(
+        (token) async => throw const SkcodeDigestNotFoundException(),
+      );
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          apiClient: client,
+          mintToken: _token,
+        ),
+      );
+
+      expect(find.byKey(const Key("skcodeDigestNotFound")), findsOneWidget);
       expect(find.text("No digest published yet"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDigestQuietDay")), findsNothing);
     });
 
     testWidgets(
-        "a fetch failure degrades to an error state with Retry, never a "
-        "crash", (tester) async {
-      final client = _FakeDigestClient(
-        (url) async => throw const SkcodeDigestFetchException("boom"),
+        "a 401 re-mints exactly once and then settles on not-authorized",
+        (tester) async {
+      var reminted = 0;
+      final client = _FakeApiClient(
+        (token) async => throw const SkcodeUnauthorizedException(),
       );
 
       await openDigestTab(
         tester,
         SkcodeArtifactPane(
           events: const [],
-          digestUrl: "https://x/digest.json",
-          digestClient: client,
+          apiClient: client,
+          mintToken: _token,
+          onAuthRejected: () => reminted++,
         ),
       );
 
-      expect(find.text("Could not load the digest"), findsOneWidget);
+      // One re-mint, one retry, then stop: never a retry loop against a host
+      // that keeps saying no.
+      expect(reminted, 1);
+      expect(client.calls, 2);
+      expect(find.byKey(const Key("skcodeDigestUnauthorized")), findsOneWidget);
+      expect(
+        find.text("Not authorized to read the digest"),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets("a 401 that clears on the re-minted token renders the digest",
+        (tester) async {
+      var attempts = 0;
+      final client = _FakeApiClient((token) async {
+        attempts++;
+        if (attempts == 1) throw const SkcodeUnauthorizedException();
+        return SkcodeDigest.fromJson({"headline": "After the re-mint."});
+      });
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          apiClient: client,
+          mintToken: _token,
+          onAuthRejected: () {},
+        ),
+      );
+
+      expect(find.text("After the re-mint."), findsOneWidget);
+    });
+
+    testWidgets(
+        "an unreachable host degrades to its own state with Retry, never a "
+        "crash", (tester) async {
+      final client = _FakeApiClient(
+        (token) async => throw const SkcodeApiException("boom"),
+      );
+
+      await openDigestTab(
+        tester,
+        SkcodeArtifactPane(
+          events: const [],
+          apiClient: client,
+          mintToken: _token,
+        ),
+      );
+
+      expect(find.byKey(const Key("skcodeDigestUnreachable")), findsOneWidget);
+      expect(find.text("Could not reach the digest"), findsOneWidget);
       expect(find.widgetWithText(OutlinedButton, "Retry"), findsOneWidget);
       expect(client.calls, 1);
 
@@ -343,22 +447,26 @@ void main() {
       expect(client.calls, 2);
     });
 
-    testWidgets("malformed digest content degrades to an error, not a crash",
-        (tester) async {
-      final client = _FakeDigestClient(
-        (url) async => throw const SkcodeDigestParseException("not json"),
+    testWidgets(
+        "a corrupt published artifact reads as corrupt, not as unreachable "
+        "and not as missing", (tester) async {
+      final client = _FakeApiClient(
+        (token) async => throw const SkcodeDigestParseException("not json"),
       );
 
       await openDigestTab(
         tester,
         SkcodeArtifactPane(
           events: const [],
-          digestUrl: "https://x/digest.json",
-          digestClient: client,
+          apiClient: client,
+          mintToken: _token,
         ),
       );
 
-      expect(find.text("Could not load the digest"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDigestCorrupt")), findsOneWidget);
+      expect(find.text("The published digest could not be read"), findsOneWidget);
+      expect(find.byKey(const Key("skcodeDigestNotFound")), findsNothing);
+      expect(find.byKey(const Key("skcodeDigestUnreachable")), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });

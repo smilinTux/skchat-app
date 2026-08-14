@@ -66,10 +66,27 @@ class _FakeShell implements ShellContext {
 /// module now polls `GET /sessions` on mount whenever `mintToken` resolves
 /// non-null, which it does in every mounted test here).
 class _FakeApiClient implements SkcodeApiClient {
-  _FakeApiClient({this.sessions = const []});
+  _FakeApiClient({this.sessions = const [], this.digest});
 
   final List<SkcodeSessionSummary> sessions;
+
+  /// Card C-14a: the digest is a read on THIS client now, not on a separate
+  /// unauthenticated one, so the module's Digest action is faked here too.
+  /// Null means the module under test never opens the Digest tab.
+  final Future<SkcodeDigest> Function(String token)? digest;
+
   int listCalls = 0;
+  final List<String> digestTokens = [];
+
+  @override
+  Future<SkcodeDigest> fetchDigest({required String token}) {
+    final result = digest;
+    if (result == null) {
+      throw UnimplementedError('this test does not open the Digest tab');
+    }
+    digestTokens.add(token);
+    return result(token);
+  }
 
   @override
   Future<List<SkcodeSessionSummary>> listSessions({required String token}) async {
@@ -126,16 +143,6 @@ class _FakeApiClient implements SkcodeApiClient {
   Future<SkcodeCancelResult> cancelSession(String sid, {required String token}) async {
     throw UnimplementedError('not exercised by SkcodeModule/SkcodeSurface tests');
   }
-}
-
-/// Fakes [SkcodeDigestClient] (see `skcode_artifact_pane_test.dart`'s
-/// identical fake for the same rationale: never open a real socket).
-class _FakeDigestClient implements SkcodeDigestClient {
-  _FakeDigestClient(this._result);
-  final Future<SkcodeDigest> Function(String url) _result;
-
-  @override
-  Future<SkcodeDigest> fetchLatest(String url) => _result(url);
 }
 
 void main() {
@@ -246,10 +253,8 @@ void main() {
         (tester) async {
       final bus = _RecordingBus();
       final shell = _FakeShell(bus: bus);
-      final apiClient = _FakeApiClient();
-      final digestClient = _FakeDigestClient((url) async {
-        expect(url, 'https://atlas.skworld.io/watchdog/latest/digest.json');
-        return SkcodeDigest.fromJson({
+      final apiClient = _FakeApiClient(
+        digest: (token) async => SkcodeDigest.fromJson({
           'headline': 'One thing happened.',
           'problems': [
             {
@@ -258,13 +263,12 @@ void main() {
               'link': {'uri': 'skworld://skcode/session/s-9'},
             },
           ],
-        });
-      });
-      final module = SkcodeModule(
-        apiClient: apiClient,
-        digestUrl: 'https://atlas.skworld.io/watchdog/latest/digest.json',
-        digestClient: digestClient,
+        }),
       );
+      // Card C-14a: no digest URL and no digest client to wire. The module
+      // already knows where skcode-hostd is, and the digest is one more read
+      // on that same authenticated plane.
+      final module = SkcodeModule(apiClient: apiClient);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -295,9 +299,8 @@ void main() {
         (tester) async {
       final bus = _RecordingBus();
       final shell = _FakeShell(bus: bus);
-      final apiClient = _FakeApiClient();
-      final digestClient = _FakeDigestClient(
-        (url) async => SkcodeDigest.fromJson({
+      final apiClient = _FakeApiClient(
+        digest: (token) async => SkcodeDigest.fromJson({
           'notable': [
             {
               'summary': 'merged',
@@ -310,8 +313,6 @@ void main() {
       final opened = <String>[];
       final module = SkcodeModule(
         apiClient: apiClient,
-        digestUrl: 'https://x/digest.json',
-        digestClient: digestClient,
         onOpenLink: opened.add,
       );
 
@@ -337,23 +338,18 @@ void main() {
     });
 
     testWidgets(
-        'standalone (no shell) leaves a tapped digest link inert, never a '
-        'crash', (tester) async {
-      final digestClient = _FakeDigestClient(
-        (url) async => SkcodeDigest.fromJson({
-          'notable': [
-            {
-              'summary': 'no router here',
-              'severity': 'notable',
-              'link': {'uri': 'skworld://skcode/session/s-1'},
-            },
-          ],
-        }),
+        'standalone (no shell) says the digest is not authorized rather than '
+        'claiming none was published, and never crashes', (tester) async {
+      // No shell means no AuthContext, so mintToken resolves null and no
+      // request is ever built (card C-19's rule, applied to the digest by
+      // card C-14a). That is an access fact. Rendering it as "no digest
+      // published yet" would assert something about the watchdog that this
+      // client has no evidence for.
+      final apiClient = _FakeApiClient(
+        digest: (token) async =>
+            fail('a tokenless standalone build must never reach the wire'),
       );
-      final module = SkcodeModule(
-        digestUrl: 'https://x/digest.json',
-        digestClient: digestClient,
-      );
+      final module = SkcodeModule(apiClient: apiClient);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -365,9 +361,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(Tab, 'Digest'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('no router here'));
-      await tester.pumpAndSettle();
 
+      expect(find.text('Not authorized to read the digest'), findsOneWidget);
+      expect(find.text('No digest published yet'), findsNothing);
+      expect(apiClient.digestTokens, isEmpty);
       expect(tester.takeException(), isNull);
     });
   });

@@ -7,6 +7,10 @@ import "package:skcode_client/skcode_client.dart";
 /// [UnimplementedError], matching the "not exercised by this file's tests"
 /// convention every other fake in this package already uses.
 class _FakeApiClient implements SkcodeApiClient {
+  @override
+  Future<SkcodeDigest> fetchDigest({required String token}) async {
+    throw UnimplementedError("the digest route is not exercised by this file");
+  }
   _FakeApiClient({this.targetsResponse, this.targetsError, this.dispatchResult, this.dispatchError});
 
   /// [fetchDispatchTargets] resolves with this when [targetsError] is null.
