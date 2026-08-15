@@ -39,6 +39,27 @@ class MockSpacesService extends Mock implements SpacesService {}
 /// swallowing catch; that is an accident of the test environment, not a
 /// seam. This fake answers instantly and does nothing, so every room test
 /// stays deterministic regardless of that URL.
+/// A lane whose inbound stream a test drives directly, so a peer's message can
+/// arrive mid-test. [_NoopLane] answers instantly and never emits, which is
+/// right for every test that does not care about chat.
+class _DrivableLane implements LaneLike {
+  _DrivableLane(this._ctl);
+
+  final StreamController<Map<String, dynamic>> _ctl;
+
+  @override
+  Stream<Map<String, dynamic>> get inbound => _ctl.stream;
+
+  @override
+  Future<void> publish(Map<String, dynamic> payload) async {}
+
+  @override
+  Future<void> publishEphemeral(Map<String, dynamic> payload) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> catchUp(String lane) async => const [];
+}
+
 class _NoopLane implements LaneLike {
   @override
   Stream<Map<String, dynamic>> get inbound => const Stream.empty();
@@ -2622,6 +2643,127 @@ void main() {
       await tester.pump();
 
       expect(find.text("Casting"), findsOneWidget);
+    });
+  });
+
+  group("chat is noticeable without opening Tools to look", () {
+    // Chef: "if there is a new chat in a session, make a message button pop up
+    // indicating there is a new message [...] i dont think anyone will even
+    // know to look at the tools submenu - [...] at least put an indicator or
+    // number ticker showing how many unread messages you have."
+    late StreamController<Map<String, dynamic>> lane;
+
+    /// A lane whose inbound stream this test drives, so a message can arrive
+    /// mid-test the way a real peer's data-channel send does.
+    LaneLike liveLane() => _DrivableLane(lane);
+
+    // A bare find.text("2") would also match the section-count labels
+    // ("SPEAKERS 2"), so every badge assertion is scoped to the badge itself.
+    Finder badge() => find.byKey(const Key("controlUnreadBadge"));
+    String badgeText(WidgetTester tester) => tester
+        .widget<Text>(find.descendant(of: badge(), matching: find.byType(Text)))
+        .data!;
+
+    setUp(() => lane = StreamController<Map<String, dynamic>>.broadcast());
+    tearDown(() => lane.close());
+
+    Future<void> pumpRoom(WidgetTester tester) async {
+      await tester.pumpWidget(wrapFor(join, extraOverrides: [
+        laneServiceFactoryProvider.overrideWithValue((_) => liveLane()),
+      ]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets("an unread count appears on Tools, no new control needed",
+        (tester) async {
+      // Drawn on the EXISTING control because the bar already had to wrap to
+      // keep Leave on screen; a ninth control would undo that.
+      await pumpRoom(tester);
+      expect(badge(), findsNothing);
+
+      lane.add({"lane": "chat", "from": "casey", "text": "starting"});
+      lane.add({"lane": "chat", "from": "casey", "text": "you there?"});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(badgeText(tester), "2");
+      // And still exactly one Tools control, not a second chat button.
+      expect(find.byIcon(Icons.dashboard_customize_outlined), findsOneWidget);
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+    });
+
+    testWidgets("a peek names the sender AND shows the text when nothing is "
+        "mirroring the screen", (tester) async {
+      await pumpRoom(tester);
+
+      lane.add({"lane": "chat", "from": "casey", "text": "pause it"});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining("casey"), findsWidgets);
+      expect(find.textContaining("pause it"), findsOneWidget);
+      // One tap to the chat, rather than a second hunt through Tools.
+      expect(find.text("Open"), findsOneWidget);
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+    });
+
+    testWidgets("while casting, the peek names the sender and NOTHING else",
+        (tester) async {
+      // Chef: "if you are broadcasting on a tv, you may not want the group
+      // messages being displayed to everyone."
+      await pumpRoom(tester);
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(SpaceRoomScreen)));
+      container.read(activeCastSessionProvider.notifier).state =
+          const HlsCastSession(egressId: "eg-1", hlsUrl: "https://x/y.m3u8");
+      await tester.pump();
+
+      lane.add({"lane": "chat", "from": "casey", "text": "the cake is a lie"});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining("casey"), findsWidgets);
+      expect(find.textContaining("cake"), findsNothing,
+          reason: "message text must never reach a screen a room is watching");
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+    });
+
+    testWidgets("opening chat clears the badge, and closing it counts again",
+        (tester) async {
+      await pumpRoom(tester);
+      lane.add({"lane": "chat", "from": "casey", "text": "hi"});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(badgeText(tester), "1");
+
+      await tester.tap(find.byIcon(Icons.dashboard_customize_outlined));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Chat"));
+      await tester.pumpAndSettle();
+      expect(find.byType(SpaceChatPanel), findsOneWidget);
+      expect(badge(), findsNothing, reason: "they are reading it");
+
+      // Close the panel: messages from here on are unread again.
+      Navigator.of(tester.element(find.byType(SpaceChatPanel))).pop();
+      await tester.pumpAndSettle();
+
+      lane.add({"lane": "chat", "from": "casey", "text": "still there?"});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(badgeText(tester), "1");
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+    });
+
+    testWidgets("our own send never badges us", (tester) async {
+      await pumpRoom(tester);
+
+      lane.add({"lane": "chat", "from": "chef@dk.skworld", "text": "mine"});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(badge(), findsNothing);
+      await tester.pumpAndSettle(const Duration(seconds: 5));
     });
   });
 
