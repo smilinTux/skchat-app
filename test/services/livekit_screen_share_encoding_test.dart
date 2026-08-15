@@ -167,6 +167,40 @@ void main() {
           reason: 'camera tracks must not be named "screenshare"');
     });
 
+    test('muting the mic must NOT stop the native audio capture', () {
+      // Chef, on a phone in a Space: "when it switches between mute/unmute the
+      // audio cuts out for 2-3 secs", and the room is audibly louder while
+      // muted than while unmounted.
+      //
+      // livekit_client 2.5.0 defaults AudioCaptureOptions.stopAudioCaptureOnMute
+      // to TRUE, and setSourceEnabled reads it on every toggle:
+      //     TrackSource.microphone =>
+      //         audioCaptureOptions?.stopAudioCaptureOnMute ?? true
+      // so a mute did not merely mute, it RELEASED the microphone, and an
+      // unmute re-acquired it. On a phone, acquiring and releasing the mic
+      // rebuilds the platform audio unit and moves the OS audio session
+      // between a playback-only and a record-capable mode. That teardown is
+      // the 2-3 second silence, and the mode change is the volume difference:
+      // louder with the mic released, quieter with echo cancellation and
+      // automatic gain control live.
+      //
+      // Pinned on the ROOM default rather than at the call site because
+      // LocalParticipant.setMicrophoneEnabled falls back to
+      // `room.roomOptions.defaultAudioCaptureOptions` when no options are
+      // passed, so this one value covers every mic toggle in the app (Spaces,
+      // 1:1 calls, conf) instead of only the one that got remembered.
+      final audio = LiveKitCallService.buildRoomOptions()
+          .defaultAudioCaptureOptions;
+
+      expect(audio.stopAudioCaptureOnMute, isFalse,
+          reason: 'a mute must flip the track flag, not release the mic');
+      // The processing chain is what makes an open mic survivable in a room
+      // playing audio out loud; leaving it on is the whole reason holding the
+      // mic open is safe.
+      expect(audio.echoCancellation, isTrue);
+      expect(audio.noiseSuppression, isTrue);
+    });
+
     test('screen-share capture default stays pinned to the standard tier '
         '(explicit non-null maxFrameRate double, ee933f5 guard)', () {
       final opts = LiveKitCallService.buildRoomOptions();

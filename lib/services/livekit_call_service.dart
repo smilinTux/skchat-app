@@ -636,6 +636,32 @@ class LiveKitCallService {
           name: "mic",
           stream: "mic_audio",
         ),
+        // A mute must flip the track's flag, NOT release the microphone.
+        //
+        // The SDK default for stopAudioCaptureOnMute is true, and
+        // setSourceEnabled consults it on EVERY toggle, so muting used to tear
+        // the native capture down and unmuting used to build it back up. On a
+        // phone that rebuilds the platform audio unit and moves the OS audio
+        // session between a playback-only and a record-capable mode, which is
+        // both the 2-3 second silence Chef heard on every toggle and the
+        // reason the room was louder while muted (no echo cancellation or
+        // automatic gain control in the path) than while live.
+        //
+        // Set as the ROOM default, not at the call site: setMicrophoneEnabled
+        // falls back to `room.roomOptions.defaultAudioCaptureOptions` when no
+        // options are passed, so this one value covers every mic toggle in the
+        // app (Spaces, 1:1 calls, conf) rather than only the path that
+        // remembered to pass it.
+        //
+        // The trade is that the OS "microphone in use" indicator now stays lit
+        // while muted, and the output level stays at the quieter, echo-
+        // cancelled one instead of jumping between the two. Nothing is
+        // transmitted while muted: the publication is muted at the SDK level,
+        // which is the same guarantee every other conferencing client makes
+        // for the same reason.
+        defaultAudioCaptureOptions: const AudioCaptureOptions(
+          stopAudioCaptureOnMute: false,
+        ),
         defaultScreenShareCaptureOptions:
             screenShareCaptureOptionsFor(ScreenShareFrameRate.standard),
       );

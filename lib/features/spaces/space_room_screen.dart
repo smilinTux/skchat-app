@@ -6,6 +6,7 @@ import "package:go_router/go_router.dart";
 import "package:livekit_client/livekit_client.dart";
 
 import "../../core/theme/theme.dart";
+import "../../core/widgets/tap_feedback.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/peer_trust_store.dart";
 import "../identity/widgets/trust_badge.dart";
@@ -1297,6 +1298,49 @@ class _Stage extends ConsumerWidget {
   ///
   /// Only reachable by the host on someone ELSE's tile (the onTap wiring
   /// above gates on `join.isHost && !p.isLocal`).
+  /// Run a host moderation action with feedback at both ends.
+  ///
+  /// Chef: "when I click to accept a speaker, it hangs like 5 secs before it
+  /// moves them into speaker position so you cant tell if you hit the button
+  /// or if it registered."
+  ///
+  /// Nothing here can make that wait shorter. Promotion is an HTTP call, then
+  /// a LiveKit permission update, then that permission propagating back to
+  /// every client before the tile moves, and the tile moving is the ONLY
+  /// signal the host had. So the wait gets narrated instead: [pending] goes up
+  /// the moment the tap is handled, which is the answer to "did it register",
+  /// and the real result replaces it when it lands.
+  ///
+  /// The failure half matters just as much and was missing entirely: every one
+  /// of these was called without an await, so a rejected invite (not the host
+  /// any more, space ended, network gone) threw into a dropped future and the
+  /// host saw *exactly* what a slow success looks like, forever.
+  Future<void> _runHostAction(
+    BuildContext context,
+    String pending,
+    String failed,
+    Future<void> Function() action,
+  ) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(pending),
+        // Comfortably longer than the round trip usually takes, so the
+        // acknowledgement does not vanish while the user is still waiting on
+        // it, and short enough that it does not linger once the tile moves.
+        duration: const Duration(seconds: 4),
+      ));
+    try {
+      await action();
+    } on Object catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text("$failed: $e")));
+    }
+  }
+
   Future<void> _hostActions(
     BuildContext context,
     WidgetRef ref,
@@ -1336,7 +1380,12 @@ class _Stage extends ConsumerWidget {
                 title: const Text("Invite to speak"),
                 onTap: () {
                   Navigator.of(sheetCtx).pop();
-                  notifier.invite(join.identity, identity);
+                  _runHostAction(
+                    context,
+                    "Inviting $identity to speak...",
+                    "Could not invite $identity",
+                    () => notifier.invite(join.identity, identity),
+                  );
                 },
               ),
             if (onStage) ...[
@@ -1376,11 +1425,16 @@ class _Stage extends ConsumerWidget {
                     ? "Disable sharing"
                     : "Allow sharing"),
                 onTap: () {
+                  final allow = !target.canPublishVideo;
                   Navigator.of(sheetCtx).pop();
-                  notifier.setSharing(
-                    join.identity,
-                    identity,
-                    allow: !target.canPublishVideo,
+                  _runHostAction(
+                    context,
+                    allow
+                        ? "Allowing $identity to share..."
+                        : "Turning off $identity's sharing...",
+                    "Could not change $identity's sharing",
+                    () => notifier.setSharing(join.identity, identity,
+                        allow: allow),
                   );
                 },
               ),
@@ -1390,7 +1444,12 @@ class _Stage extends ConsumerWidget {
                 title: const Text("Remove from stage"),
                 onTap: () {
                   Navigator.of(sheetCtx).pop();
-                  notifier.removeFromStage(join.identity, identity);
+                  _runHostAction(
+                    context,
+                    "Removing $identity from stage...",
+                    "Could not remove $identity from stage",
+                    () => notifier.removeFromStage(join.identity, identity),
+                  );
                 },
               ),
             ],
@@ -1400,7 +1459,12 @@ class _Stage extends ConsumerWidget {
               title: const Text("Remove from Space"),
               onTap: () {
                 Navigator.of(sheetCtx).pop();
-                notifier.kick(join.identity, identity);
+                _runHostAction(
+                  context,
+                  "Removing $identity from the Space...",
+                  "Could not remove $identity",
+                  () => notifier.kick(join.identity, identity),
+                );
               },
             ),
             const SizedBox(height: 8),
@@ -1740,7 +1804,7 @@ class _SpeakerRing extends ConsumerWidget {
           "${speaking ? ", speaking" : ""}"
           "${snapshot.isMuted ? ", muted" : ""}",
       button: onTap != null,
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: onTap,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1846,7 +1910,7 @@ class _ListenerDot extends StatelessWidget {
     return Semantics(
       label: "${snapshot.identity}, listener",
       button: onTap != null,
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: onTap,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1906,7 +1970,7 @@ class _RaisedHand extends StatelessWidget {
     return Semantics(
       label: "${snapshot.identity}, raised hand. Tap to invite to speak.",
       button: true,
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: onTap,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2403,7 +2467,7 @@ class _RoundButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: onTap,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2446,7 +2510,7 @@ class _LeaveButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: "Leave Space",
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: onTap,
         child: Column(
           mainAxisSize: MainAxisSize.min,
