@@ -14,7 +14,7 @@ class _MockRemoteParticipant extends Mock implements RemoteParticipant {}
 // V1: "who is speaking, and how loudly" needs to be a real, event-driven
 // signal. Before this change LiveKitParticipantSnapshot only carried the
 // bool isSpeaking, LiveKit's own threshold on a continuous level, and
-// _bindRoomListeners never bound ActiveSpeakersChangedEvent, so the flag
+// _bindRoomListeners does not bind ActiveSpeakersChangedEvent, deliberately
 // only ever refreshed when some UNRELATED room event happened to trigger a
 // re-snapshot. See the doc comments on LiveKitParticipantSnapshot.audioLevel
 // and on the ActiveSpeakersChangedEvent binding in _bindRoomListeners
@@ -97,19 +97,19 @@ void main() {
     });
   });
 
-  group(
-      'ActiveSpeakersChangedEvent binding (makes speaking state '
-      'event-driven, not incidental)', () {
+  group('ActiveSpeakersChangedEvent must NOT get its own explicit binding',
+      () {
     test(
-        'binding fires an EXTRA participants emission beyond the generic '
-        "Room ChangeNotifier relay: Room's own constructor calls "
-        'notifyListeners() on every RoomEvent with no filtering (verified '
-        'against the installed SDK source), so a bare "did an emission '
-        'happen" assertion cannot tell this specific binding apart from '
-        'that always-present fallback path. Only an exact emission count '
-        'can: one from the fallback, plus one more from '
-        '..on<ActiveSpeakersChangedEvent>(_emitParticipants). Delete just '
-        'that binding line and this drops back to 1 and fails.', () async {
+        'an active-speaker change emits participants EXACTLY once. Room\'s own '
+        'constructor does events.listen((e) => notifyListeners()) for every '
+        'RoomEvent unconditionally (installed livekit_client 2.5.0+hotfix.3, '
+        'src/core/room.dart:165-168) and _bindRoomListeners already registers '
+        'addListener(_onRoomChanged), which calls _emitParticipants. So the '
+        'roster already refreshes on this event and an explicit '
+        '..on<ActiveSpeakersChangedEvent>(_emitParticipants) would not add the '
+        'refresh, it would add a SECOND one, on the highest-frequency event in '
+        'a call. Add that binding back and this test goes to 2 and fails, '
+        'which is the point.', () async {
       final svc = LiveKitCallService();
       final room = Room();
       svc.debugRoom = room;
@@ -122,7 +122,9 @@ void main() {
           .add(const ActiveSpeakersChangedEvent(speakers: []));
       await Future<void>.delayed(Duration.zero);
 
-      expect(emissions.length, 2);
+      // Exactly one: the generic ChangeNotifier relay. Not zero (the event
+      // really does refresh the roster) and not two (nothing double-emits).
+      expect(emissions.length, 1);
 
       await sub.cancel();
       await svc.dispose();

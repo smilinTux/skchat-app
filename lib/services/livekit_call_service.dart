@@ -1356,18 +1356,29 @@ class LiveKitCallService {
       ..on<TrackUnmutedEvent>((event) {
         _emitParticipants();
       })
-      // V1: active-speaker signal. Before this binding, isSpeaking/audioLevel
-      // only ever refreshed on the snapshot when some UNRELATED event (a
-      // mute toggle, a join/leave, a track publish) happened to trigger
-      // _emitParticipants; there was no listener for ActiveSpeakersChangedEvent
-      // at all (confirmed zero hits for ActiveSpeakers/dominant across lib/
-      // before this change), so the speaking indicator updated by luck, not
-      // by design. Binding it here makes the roster refresh EXACTLY when the
-      // SFU says who is talking and how loud, which is also what makes
-      // audioLevel usable for a future dominant-speaker layout or tunable
-      // speaking hysteresis: neither can work off a signal that only updates
-      // incidentally.
-      ..on<ActiveSpeakersChangedEvent>((_) => _emitParticipants())
+      // DELIBERATELY NOT BOUND: ActiveSpeakersChangedEvent.
+      //
+      // The obvious change here is an explicit
+      // `..on<ActiveSpeakersChangedEvent>((_) => _emitParticipants())`, and it
+      // was written and then removed on measurement. Room's own constructor
+      // does `events.listen((event) => notifyListeners())` for EVERY RoomEvent
+      // unconditionally (installed livekit_client 2.5.0+hotfix.3,
+      // src/core/room.dart:165-168), and _bindRoomListeners already registers
+      // `_room!.addListener(_onRoomChanged)` above, with _onRoomChanged
+      // calling _emitParticipants. So the roster ALREADY refreshes on every
+      // active-speaker change; an explicit binding does not add the refresh,
+      // it adds a SECOND one.
+      //
+      // That matters here more than anywhere else in this cascade. Active
+      // speakers change continuously while people are talking, which makes it
+      // the highest-frequency event in a call, and every extra emit rebuilds
+      // the whole participant list plus every widget watching it. The other
+      // explicit bindings below have the same redundancy but fire rarely
+      // enough that it does not show; this one would.
+      //
+      // A test asserting "an emit happens after ActiveSpeakersChangedEvent"
+      // therefore passes with NO binding at all. If you are here to add one,
+      // measure the emit COUNT first.
       // Metadata: hand-raise / stage-invite changes written by the Space
       // moderation layer drive the handRaised/invitedToStage flags on the
       // snapshot, AND accepting an invite (X1) flips the participant's
