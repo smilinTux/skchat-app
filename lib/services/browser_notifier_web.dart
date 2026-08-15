@@ -1,5 +1,3 @@
-import "dart:html" as html;
-
 /// Web half of the browser-notification seam (see `browser_notifier.dart`).
 ///
 /// Deliberately the PAGE Notification API and nothing else: no service worker,
@@ -20,6 +18,9 @@ import "dart:html" as html;
 /// the room's WebRTC connection drops with them), so on mobile this is close to
 /// useless. Mobile background notification is the tier that needs Web Push.
 library;
+
+import "dart:html" as html;
+
 
 /// Whether the page is currently backgrounded, i.e. the user is looking at
 /// something else. The gate for notifying at all: a visible tab shows its own
@@ -76,13 +77,11 @@ void showBrowserNotification({
     final n = html.Notification(title, body: body, tag: tag);
     if (onClick != null) {
       n.onClick.listen((_) {
-        // Bring the tab forward first: a notification the user clicked that
-        // leaves them on the page they were already on has done nothing.
-        try {
-          html.window.focus();
-        } on Object {
-          // Popup-blocked or otherwise refused; the callback still runs.
-        }
+        // No explicit window focus call here: dart:html puts focus() on
+        // Element, not on Window, so html.window.focus() does not compile.
+        // It is not needed anyway. Clicking a notification created by a page
+        // is what browsers already treat as the signal to surface that page,
+        // so the tab comes forward without us asking.
         onClick();
         n.close();
       });
