@@ -230,6 +230,23 @@ class SpaceRoomNotifier
       final isSpeaker = _localCanPublish(list);
       final isInvited = _localInvited(list);
       final currentLocal = _localSnapshot(list);
+      // HOTMIC: the control-bar label (state.isMicEnabled) is otherwise driven
+      // only by mic-enabled EVENTS, which flip it DOWN to muted on any stray/
+      // transient local-mic signal and never re-sync it back up. That left a
+      // LIVE mic rendering as muted (a hot mic that transmits while showing
+      // muted, on host and promoted speakers alike). The local participant
+      // snapshot carries ground truth (isMuted == !p.isMicrophoneEnabled()),
+      // re-emitted on every participants change, so reconcile the label to it
+      // on every emission. Scoped to canPublish (only a publisher has a mic
+      // control to sync). Placed BEFORE the demotion / echo-default-mute blocks
+      // below, which still win by calling svc.setMicEnabled(false) themselves
+      // (that flip re-emits here as isMuted:true on the next pass).
+      if (currentLocal != null && currentLocal.canPublish) {
+        final realMicEnabled = !currentLocal.isMuted;
+        if (realMicEnabled != state.isMicEnabled) {
+          state = state.copyWith(isMicEnabled: realMicEnabled);
+        }
+      }
       if (isInvited && !wasInvited) {
         // X1: a fresh invite (false -> true). Clear any earlier dismissal
         // so the "invited to speak" banner (re)appears for THIS invite,
