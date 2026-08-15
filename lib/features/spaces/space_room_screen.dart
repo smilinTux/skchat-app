@@ -1121,11 +1121,17 @@ class _Stage extends ConsumerWidget {
     // for what it means, not what it is.
     final watchMounted = watchActive;
 
-    return ListView(
+    // LayoutBuilder HERE, not inside the video widgets: this sits directly in
+    // the Expanded above the control bar, so its constraints are the real
+    // stage height. Inside the ListView the height is unbounded by
+    // construction, so a cap measured there would have nothing to cap against.
+    return LayoutBuilder(builder: (context, stage) {
+      final stageHeight = stage.maxHeight;
+      return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         if (liveVideoOnTop) ...[
-          _WatchStage(videos: videos),
+          _WatchStage(videos: videos, availableHeight: stageHeight),
           const SizedBox(height: 24),
         ],
         if (watchMounted) ...[
@@ -1141,7 +1147,8 @@ class _Stage extends ConsumerWidget {
           Offstage(
             key: ValueKey("watch-together-${join.spaceId}"),
             offstage: liveVideoOnTop,
-            child: _WatchTogetherStage(join: join),
+            child: _WatchTogetherStage(
+                join: join, availableHeight: stageHeight),
           ),
           if (!liveVideoOnTop) const SizedBox(height: 24),
         ],
@@ -1197,6 +1204,7 @@ class _Stage extends ConsumerWidget {
         ],
       ],
     );
+    });
   }
 
   /// Host tapped a raised hand, invite them straight to the stage.
@@ -1365,10 +1373,71 @@ class _Stage extends ConsumerWidget {
 /// the host's mic ride normal LiveKit tracks that autoplay for every
 /// subscribed listener. Nothing here mutes or gates them, so the fight is
 /// heard as well as seen.
+/// Caps a 16:9 stage video so the room below it stays on screen.
+///
+/// Chef, with the browser maximised: "when i do full screen, the stage is not
+/// viewable and i can't scroll it up or down [...] when i shrink the browser
+/// horizontally, it squishes the video up and i'm able to see the stage below."
+///
+/// A bare `AspectRatio(16 / 9)` in a full-width list is sized entirely by
+/// WIDTH, so a wide window makes a TALL video: at ~1400px of content that is
+/// ~790px of height, more than the whole stage area, which pushed the Speakers
+/// row below the fold. Narrowing the window shrank the width, so the video got
+/// shorter and the room reappeared. That is the entire bug, and it is why it
+/// looked backwards (a bigger window showing less).
+///
+/// Scrolling to it was not an escape either. On web the watch surface is a
+/// platform view, a REAL DOM element, and the browser routes a wheel over it
+/// to that element rather than to Flutter's list, so the one gesture that
+/// would reach the hidden content is swallowed by the thing hiding it. Making
+/// the content fit is therefore the fix, not a workaround for one.
+///
+class _CappedStageVideo extends StatelessWidget {
+  const _CappedStageVideo({
+    required this.availableHeight,
+    required this.child,
+  });
+
+  /// Share of the stage's own height the video may take. The remainder is
+  /// what guarantees the section label plus a row of speaker rings stays
+  /// visible, which is the property being fixed, so this is a constant rather
+  /// than a knob: a caller that could pass 1.0 could reintroduce the bug.
+  static const double maxStageFraction = 0.66;
+
+  /// Height of the stage area itself (from the Expanded above the control
+  /// bar), NOT the whole window: the header and control bar are already
+  /// excluded, so the fraction below means what it says.
+  final double availableHeight;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final maxWidth = constraints.maxWidth;
+      // Unbounded or nonsensical stage height (a test surface, a very short
+      // window): fall back to the old width-driven behavior rather than
+      // computing a garbage cap.
+      if (!availableHeight.isFinite || availableHeight <= 0) {
+        return child;
+      }
+      final capHeight = availableHeight * maxStageFraction;
+      // Width the video would need to hit that height at 16:9; whichever of
+      // the two limits binds first wins, so the video is never taller than
+      // the cap and never wider than the column.
+      final widthForCap = capHeight * 16 / 9;
+      final width = widthForCap < maxWidth ? widthForCap : maxWidth;
+      return Center(child: SizedBox(width: width, child: child));
+    });
+  }
+}
+
 class _WatchStage extends StatelessWidget {
-  const _WatchStage({required this.videos});
+  const _WatchStage({required this.videos, required this.availableHeight});
 
   final List<StageVideo> videos;
+
+  /// Stage height to cap against; see [_CappedStageVideo].
+  final double availableHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1389,7 +1458,9 @@ class _WatchStage extends StatelessWidget {
         // also wraps this video (screen-share or camera go-live alike) in a
         // ZoomableVideo internally, so the viewer can pinch-to-zoom and pan
         // it both here inline and in fullscreen.
-        FullscreenableVideo(
+        _CappedStageVideo(
+          availableHeight: availableHeight,
+          child: FullscreenableVideo(
           aspectRatio: 16 / 9,
           borderRadius: 14,
           semanticsLabel: "$who $verb. Pinch to zoom, double-tap for fullscreen.",
@@ -1429,6 +1500,7 @@ class _WatchStage extends StatelessWidget {
               ),
             ),
           ),
+        ),
         ),
         if (others > 0) ...[
           const SizedBox(height: 8),
@@ -1488,9 +1560,13 @@ class _WatchStage extends StatelessWidget {
 /// (`isFilePlayerReady`, `fileController`, `url`) that [WatchController]
 /// deliberately does not expose.
 class _WatchTogetherStage extends ConsumerWidget {
-  const _WatchTogetherStage({required this.join});
+  const _WatchTogetherStage(
+      {required this.join, required this.availableHeight});
 
   final SpaceJoin join;
+
+  /// Stage height to cap against; see [_CappedStageVideo].
+  final double availableHeight;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1498,7 +1574,9 @@ class _WatchTogetherStage extends ConsumerWidget {
         WatchSessionArgs(spaceId: join.spaceId, identity: join.identity);
     final session = ref.watch(watchSessionProvider(args).notifier);
 
-    return ClipRRect(
+    return _CappedStageVideo(
+      availableHeight: availableHeight,
+      child: ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: AspectRatio(
         aspectRatio: 16 / 9,
@@ -1566,6 +1644,7 @@ class _WatchTogetherStage extends ConsumerWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }

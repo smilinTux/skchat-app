@@ -2219,6 +2219,110 @@ void main() {
     }
   });
 
+  group("the room below the video stays on screen", () {
+    // Chef, browser maximised: "when i do full screen, the stage is not
+    // viewable and i can't scroll it up or down [...] when i shrink the
+    // browser horizontally, it squishes the video up and i'm able to see the
+    // stage below."
+    //
+    // A bare AspectRatio(16 / 9) in a full-width list is sized entirely by
+    // WIDTH, so a WIDER window produced a TALLER video. At a 1400px stage that
+    // is ~790px of height, more than the whole stage area, so the Speakers row
+    // sat below the fold; narrowing the window shrank the width, so the video
+    // got shorter and the room came back. Hence the backwards-looking symptom:
+    // a bigger window showing less.
+    //
+    // Scrolling was no escape either. On web the watch surface is a platform
+    // view (a real DOM element) and the browser routes a wheel over it to that
+    // element rather than to Flutter's list, so the one gesture that would
+    // reach the hidden content is swallowed by the thing hiding it.
+    Future<void> loadWatchVideo(WidgetTester tester) async {
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(SpaceRoomScreen)));
+      const watchArgs =
+          WatchSessionArgs(spaceId: "s1", identity: "chef@dk.skworld");
+      container
+          .read(watchSessionProvider(watchArgs).notifier)
+          .loadUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets("a wide window does not push Speakers off the bottom",
+        (tester) async {
+      // Chef's actual case: a maximised browser on a 1440p-class screen.
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await loadWatchVideo(tester);
+
+      final video = find.byType(WatchVideo, skipOffstage: false);
+      expect(video, findsOneWidget);
+      final videoRect = tester.getRect(video);
+      final speakers = find.text("SPEAKERS");
+      expect(speakers, findsOneWidget);
+      final speakersRect = tester.getRect(speakers);
+
+      expect(speakersRect.top, lessThan(900.0),
+          reason: "SPEAKERS at $speakersRect is off the bottom of the window");
+      expect(videoRect.height, lessThan(900.0 * 0.8),
+          reason: "the video at $videoRect ate the whole stage");
+    });
+
+    testWidgets("the video is capped by HEIGHT, not grown by width",
+        (tester) async {
+      // The direct statement of the bug: widening the window must not make the
+      // video taller once the cap binds. Before the fix these two heights
+      // differed by the full width ratio.
+      double heightAt(double w) => w;
+
+      final heights = <double, double>{};
+      for (final width in [1000.0, 1600.0]) {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(wrap());
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        await loadWatchVideo(tester);
+
+        heights[width] = tester
+            .getRect(find.byType(WatchVideo, skipOffstage: false))
+            .height;
+      }
+      tester.view.reset();
+      heightAt(0);
+
+      expect(heights[1600], closeTo(heights[1000]!, 1.0),
+          reason: "widening the window from 1000 to 1600 changed the video "
+              "height from ${heights[1000]} to ${heights[1600]}, which is the "
+              "bug: width driving height");
+    });
+
+    testWidgets("a narrow window still fills the width (cap does not bind)",
+        (tester) async {
+      // The cap must not shrink a phone-width video, where width is already
+      // the binding limit and the old behavior was correct.
+      tester.view.physicalSize = const Size(375, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await loadWatchVideo(tester);
+
+      final videoRect =
+          tester.getRect(find.byType(WatchVideo, skipOffstage: false));
+      // 375 wide minus the list's 16px padding a side.
+      expect(videoRect.width, closeTo(343.0, 1.0));
+    });
+  });
+
   group("setup controls live in Tools, not on the control bar", () {
     // Devices and Cast are "set once at the start" controls, not live-moment
     // ones, so they are the right two to give up bar width: at 320pt the row
