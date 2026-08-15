@@ -71,6 +71,7 @@ class LiveKitParticipantSnapshot {
     this.handRaised = false,
     this.invitedToStage = false,
     this.isSpeaking = false,
+    this.audioLevel = 0,
     this.connectionQuality = ConnectionQuality.unknown,
     this.metadata,
     this.soulFingerprint,
@@ -130,8 +131,27 @@ class LiveKitParticipantSnapshot {
   /// complete the gate). Defaults to false on missing / malformed metadata.
   final bool invitedToStage;
 
-  /// True when LiveKit detects active audio from this participant.
+  /// True when LiveKit detects active audio from this participant. This is
+  /// a THRESHOLD LiveKit itself applies to [audioLevel], not an independent
+  /// measurement, so it can only ever answer "is this person speaking right
+  /// now", never "who among several speakers is loudest". Kept alongside
+  /// [audioLevel] rather than replaced by it: a simple mute/speaking dot on
+  /// a tile wants the cheap bool, a dominant-speaker layout wants the
+  /// continuous number.
   final bool isSpeaking;
+
+  /// Continuous LiveKit audio level for this participant, in [0, 1]. This is
+  /// the signal [isSpeaking] is only a threshold OF: sourced from
+  /// `Participant.audioLevel` (installed livekit_client 2.5.0+hotfix.3,
+  /// src/participant/participant.dart:52, `double audioLevel = 0`), which
+  /// the SDK updates from the SFU's `ActiveSpeakersChangedEvent`. The SDK
+  /// already keeps `Room.activeSpeakers` sorted by this value descending
+  /// (src/core/room.dart:760), so this is also what any future
+  /// dominant-speaker layout or speaking-hysteresis logic needs to read;
+  /// a bool cannot express "who is loudest" no matter how it is wired.
+  /// Defaults to 0 (silent) until the first ActiveSpeakersChangedEvent
+  /// arrives for this participant.
+  final double audioLevel;
 
   /// LiveKit's connection-quality estimate for this participant (the link
   /// between them and the SFU). Sourced from `Participant.connectionQuality`
@@ -1336,6 +1356,18 @@ class LiveKitCallService {
       ..on<TrackUnmutedEvent>((event) {
         _emitParticipants();
       })
+      // V1: active-speaker signal. Before this binding, isSpeaking/audioLevel
+      // only ever refreshed on the snapshot when some UNRELATED event (a
+      // mute toggle, a join/leave, a track publish) happened to trigger
+      // _emitParticipants; there was no listener for ActiveSpeakersChangedEvent
+      // at all (confirmed zero hits for ActiveSpeakers/dominant across lib/
+      // before this change), so the speaking indicator updated by luck, not
+      // by design. Binding it here makes the roster refresh EXACTLY when the
+      // SFU says who is talking and how loud, which is also what makes
+      // audioLevel usable for a future dominant-speaker layout or tunable
+      // speaking hysteresis: neither can work off a signal that only updates
+      // incidentally.
+      ..on<ActiveSpeakersChangedEvent>((_) => _emitParticipants())
       // Metadata: hand-raise / stage-invite changes written by the Space
       // moderation layer drive the handRaised/invitedToStage flags on the
       // snapshot, AND accepting an invite (X1) flips the participant's
@@ -1474,6 +1506,7 @@ class LiveKitCallService {
       invitedToStage:
           LiveKitParticipantSnapshot.parseInvitedToStage(p.metadata),
       isSpeaking: p.isSpeaking,
+      audioLevel: p.audioLevel,
       connectionQuality: p.connectionQuality,
       metadata: p.metadata,
       soulFingerprint: LiveKitParticipantSnapshot.parseSoulFingerprint(p.metadata),
@@ -1495,6 +1528,7 @@ class LiveKitCallService {
       invitedToStage:
           LiveKitParticipantSnapshot.parseInvitedToStage(p.metadata),
       isSpeaking: p.isSpeaking,
+      audioLevel: p.audioLevel,
       connectionQuality: p.connectionQuality,
       metadata: p.metadata,
       soulFingerprint: LiveKitParticipantSnapshot.parseSoulFingerprint(p.metadata),
@@ -1731,6 +1765,28 @@ class LiveKitCallService {
   /// field a room join sets.
   @visibleForTesting
   set debugLocalParticipant(LocalParticipant? lp) => _localParticipant = lp;
+
+  /// Test seam: attach [room] as the service's live room WITHOUT wiring
+  /// listeners, so a test can drive [currentParticipants] straight off a
+  /// mocked Room + Participant pair (e.g. asserting a mapped field like
+  /// audioLevel) without also having to satisfy every stub
+  /// [_bindRoomListeners] would otherwise touch on the mock.
+  @visibleForTesting
+  set debugRoom(Room? room) => _room = room;
+
+  /// Test seam: run the real [_bindRoomListeners] wiring against whatever
+  /// [Room] was attached via [debugRoom]. Kept separate from [debugRoom]
+  /// itself (rather than folded into one setter) so a mocked Room can be
+  /// used for field-mapping assertions without also having to stub
+  /// `createListener()` / `addListener()`, while a real (unconnected) `Room`
+  /// can still be bound here to drive genuine livekit_client RoomEvents
+  /// through the SDK's own broadcast stream and prove a SPECIFIC binding
+  /// exists, rather than asserting on the always-present generic
+  /// ChangeNotifier relay (Room's own constructor calls notifyListeners()
+  /// on every RoomEvent with no filtering) that would pass even if the
+  /// binding under test were deleted.
+  @visibleForTesting
+  void debugBindRoomListeners() => _bindRoomListeners();
 
   /// React to the local participant losing a published track.
   ///
