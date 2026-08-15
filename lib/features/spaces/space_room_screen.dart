@@ -253,6 +253,39 @@ class SpaceRoomNotifier
         // even if the local participant dismissed a previous one.
         state = state.copyWith(invitePromptDismissed: false);
       }
+      // Promoted onto the stage: land MUTED, and mute the REAL track, not
+      // just the label.
+      //
+      // Chef: "unmuted by default when brought to speaker position - change it
+      // to be muted by default." Nothing in this app ever calls
+      // setMicEnabled(true) for a promotion, which is why this read as correct
+      // for so long. The mic went live anyway: when can_publish flips true the
+      // SDK can publish (or republish) the microphone track, and a fresh
+      // publication is UNMUTED. Before the HOTMIC reconcile above, the label
+      // kept saying "Unmute" over that live track, so the room heard someone
+      // who believed they were off. Fixing the label exposed the truth; this
+      // fixes the truth.
+      //
+      // The mirror of the demotion branch below, which has force-muted on a
+      // revoked grant since M5. Both directions now agree: a change in publish
+      // grant never leaves the mic live by default.
+      //
+      // Gated on previousLocal != null, which is what separates a real
+      // promotion from simply LEARNING our own grant for the first time. The
+      // roster starts empty, so a host's very first emission is also a
+      // false -> true transition on canPublish, and without this guard the
+      // host would be muted the instant they joined, immediately after
+      // connect() deliberately took them live.
+      //
+      // The server-side backstop (skchat Moderator.stage_action) force-mutes a
+      // track that already exists at promotion time; it cannot stop a client
+      // that publishes AFTER the grant lands, which is this case. The two
+      // together cover both orderings.
+      if (previousLocal != null && !wasSpeaker && isSpeaker) {
+        await svc.setMicEnabled(false);
+        if (_disposed) return;
+        state = state.copyWith(isMicEnabled: false);
+      }
       if (wasSpeaker && !isSpeaker && state.isMicEnabled) {
         // Demoted mid-session: the publish grant was revoked. Stop
         // publishing and drop back to the listener control (X Spaces model,

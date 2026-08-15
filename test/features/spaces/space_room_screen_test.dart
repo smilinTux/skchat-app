@@ -498,6 +498,78 @@ void main() {
   });
 
   testWidgets(
+      "a listener promoted to the stage lands MUTED even if the track comes "
+      "up live", (tester) async {
+    // Chef, watching someone come up: "unmuted by default when brought to
+    // speaker position - change it to be muted by default."
+    //
+    // Nothing in the app ever called setMicEnabled(true) for them, which is
+    // why this looked correct in code review for so long. The mic went live
+    // anyway: when can_publish flips true the SDK can publish (or republish)
+    // the microphone track, and a fresh publication is UNMUTED. Until the
+    // HOTMIC reconcile landed, the label kept saying "Unmute" over that live
+    // track, so the room heard someone who believed they were off.
+    //
+    // The demotion side of this has been handled since M5 (grant revoked ->
+    // force mute). This is the missing mirror image.
+    final controller =
+        StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+    addTearDown(controller.close);
+    when(() => svc.participants).thenAnswer((_) => controller.stream);
+    when(() => svc.currentParticipants).thenReturn(const []);
+
+    await tester.pumpWidget(wrapFor(listenerJoin));
+    await tester.pump();
+
+    // In the room as a plain listener: no grant, no mic control.
+    controller.add(<LiveKitParticipantSnapshot>[
+      _snap("alice@dk.skworld", isLocal: true, canPublish: false),
+      _snap("chef@dk.skworld", canPublish: true),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+    verifyNever(() => svc.setMicEnabled(any()));
+
+    // The host promotes them. The grant arrives WITH a live mic track, which
+    // is the case that actually happens on the wire.
+    controller.add(<LiveKitParticipantSnapshot>[
+      _snap("alice@dk.skworld",
+          isLocal: true, canPublish: true, isMuted: false),
+      _snap("chef@dk.skworld", canPublish: true),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // The REAL track is muted, not merely the label: a label-only fix would
+    // reintroduce exactly the hot mic #72 just removed.
+    verify(() => svc.setMicEnabled(false)).called(1);
+    verifyNever(() => svc.setMicEnabled(true));
+  });
+
+  testWidgets(
+      "the host is NOT muted by their own connect-time grant appearing",
+      (tester) async {
+    // The host deliberately goes live at connect (connect()'s goLive =
+    // isHost). Their first participants emission is also a false -> true
+    // transition on canPublish, purely because the roster starts empty, so a
+    // naive promotion rule would mute the host the instant they joined.
+    final controller =
+        StreamController<List<LiveKitParticipantSnapshot>>.broadcast();
+    addTearDown(controller.close);
+    when(() => svc.participants).thenAnswer((_) => controller.stream);
+    when(() => svc.currentParticipants).thenReturn(const []);
+
+    await tester.pumpWidget(wrapFor(join)); // join is the HOST
+    await tester.pump();
+
+    controller.add(<LiveKitParticipantSnapshot>[
+      _snap("chef@dk.skworld", isLocal: true, canPublish: true, isMuted: false),
+      _snap("alice"),
+    ]);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    verifyNever(() => svc.setMicEnabled(false));
+  });
+
+  testWidgets(
       "demotion (grant revoked) stops publishing and reverts to raise hand; "
       "connect-time auto-publish is HOST-ONLY (a granted speaker starts muted)",
       (tester) async {
