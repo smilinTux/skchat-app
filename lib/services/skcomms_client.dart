@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'daemon_config.dart';
+import 'diag/diag_error_sink.dart';
+import 'diag/diag_interceptor.dart';
 import 'operator_auth_interceptor.dart';
 import 'operator_session_service.dart';
 
@@ -43,6 +45,11 @@ class SKCommsClient {
     _dio.interceptors.add(
       buildOperatorAuthInterceptor(_sessionService, () => _dio),
     );
+    // Network breadcrumbs (card 0a5b8e07): attached immediately AFTER the
+    // auth interceptor above, same placement diag_interceptor.dart's own
+    // doc specifies, so an auth-retried request still records exactly one
+    // net.request_failed event.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   }
 
   final Dio _dio;

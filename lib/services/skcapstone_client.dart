@@ -4,6 +4,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
+import 'diag/diag_error_sink.dart';
+import 'diag/diag_interceptor.dart';
 import 'operator_auth_interceptor.dart';
 import 'operator_session_service.dart';
 
@@ -26,31 +28,43 @@ class SKCapstoneClient {
   /// `/api/board` (and other routes) pass the webui dataplane auth gate instead
   /// of 401ing to a false "Dashboard offline". The interceptor no-ops
   /// gracefully on unenrolled devices, so guest/native flows do not regress.
+  /// [dio] / [dashDio] may be injected (tests) to supply a canned
+  /// [HttpClientAdapter], mirroring the pattern [SKCommsClient] and
+  /// [DeviceListService] already use; when omitted (every real call site
+  /// today) this builds its own, exactly as before this parameter existed.
   SKCapstoneClient({
     String? baseUrl,
     String? dashboardUrl,
+    Dio? dio,
+    Dio? dashDio,
     OperatorSessionService? sessionService,
-  })  : _dio = Dio(
-          BaseOptions(
-            baseUrl: baseUrl ?? _kSKCapstoneBaseUrl,
-            connectTimeout: const Duration(seconds: 5),
-            receiveTimeout: const Duration(seconds: 10),
-          ),
-        ),
-        _dashDio = Dio(
-          BaseOptions(
-            baseUrl: dashboardUrl ?? _kSKDashboardBaseUrl,
-            connectTimeout: const Duration(seconds: 5),
-            receiveTimeout: const Duration(seconds: 10),
-          ),
-        ),
+  })  : _dio = dio ??
+            Dio(
+              BaseOptions(
+                baseUrl: baseUrl ?? _kSKCapstoneBaseUrl,
+                connectTimeout: const Duration(seconds: 5),
+                receiveTimeout: const Duration(seconds: 10),
+              ),
+            ),
+        _dashDio = dashDio ??
+            Dio(
+              BaseOptions(
+                baseUrl: dashboardUrl ?? _kSKDashboardBaseUrl,
+                connectTimeout: const Duration(seconds: 5),
+                receiveTimeout: const Duration(seconds: 10),
+              ),
+            ),
         _sessionService = sessionService {
     _dio.interceptors.add(
       buildOperatorAuthInterceptor(_sessionService, () => _dio),
     );
+    // Network breadcrumbs (card 0a5b8e07): immediately after the auth
+    // interceptor, on both the daemon and dashboard Dios.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
     _dashDio.interceptors.add(
       buildOperatorAuthInterceptor(_sessionService, () => _dashDio),
     );
+    _dashDio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   }
 
   final Dio _dio;
