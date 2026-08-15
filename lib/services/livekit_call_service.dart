@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import 'backend_config.dart';
+import 'screen_awake.dart';
 import 'system_audio_sources.dart';
 
 /// Compile-time default for the skchat web-UI LiveKit token-mint endpoint.
@@ -292,7 +293,9 @@ class LiveKitCallService {
   LiveKitCallService({
     String? webuiBaseUrl,
     String? livekitUrl,
-  })  : _webuiBaseUrl = webuiBaseUrl ?? _kDefaultWebuiUrl,
+    ScreenAwake? screenAwake,
+  })  : _screenAwake = screenAwake ?? ScreenAwake(),
+        _webuiBaseUrl = webuiBaseUrl ?? _kDefaultWebuiUrl,
         _defaultLivekitUrl = livekitUrl ?? _kDefaultLiveKitUrl,
         _dio = Dio(
           BaseOptions(
@@ -304,6 +307,11 @@ class LiveKitCallService {
   final String _webuiBaseUrl;
   final String _defaultLivekitUrl;
   final Dio _dio;
+
+  /// Keeps the device screen from blanking while a room is connected. See
+  /// [ScreenAwake]; injectable so a test can observe it without a platform
+  /// channel.
+  final ScreenAwake _screenAwake;
 
   /// Set when a local capture device could not be published on join (missing,
   /// busy, or virtual-only). Non-fatal: the call still connects. The UI may
@@ -679,6 +687,12 @@ class LiveKitCallService {
       ),
     );
     _localParticipant = _room!.localParticipant;
+    // Hold the screen awake for as long as this room is connected. Wired HERE
+    // rather than in a screen, because this is the one place every room type
+    // funnels through (Spaces, 1:1 calls, conf), so one hook covers all of
+    // them and none of them can forget. Refcounted for the overlapping case
+    // (a call answered from inside a Space); see ScreenAwake.
+    await _screenAwake.acquire();
   }
 
   // ── Sovereign ICE (STUN / TURN) ─────────────────────────────────────────────
@@ -779,6 +793,16 @@ class LiveKitCallService {
   /// Room state is cleared BEFORE the awaits so a concurrent second call sees
   /// an already-empty service rather than racing on the same [Room].
   Future<void> leaveRoom() async {
+    // Paired with the acquire in _connectRoom. Released FIRST, before any of
+    // the teardown below, because every one of those steps is individually
+    // wrapped in a swallowing catch: letting the screen keep itself awake past
+    // the end of the room would be silent and effectively permanent.
+    //
+    // Only released when there was actually a room to leave: leaveRoom is
+    // reachable on a path that never connected (a failed join still tears
+    // down), and an unpaired release there would drop the lock out from under
+    // a DIFFERENT room that is still running.
+    if (_room != null) await _screenAwake.release();
     final room = _room;
     final events = _roomEvents;
     final systemAudio = _systemAudioTrack;
