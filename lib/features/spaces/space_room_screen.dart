@@ -21,6 +21,8 @@ import "watch_panel.dart";
 import "screen_share_panel.dart";
 import "screen_share_helper.dart";
 import "stage_content.dart";
+import "../../services/browser_notifier.dart";
+import "space_chat_session.dart";
 import "watch_session.dart";
 import "watch_video_stub.dart" if (dart.library.html) "watch_video_web.dart";
 import "fullscreen_video_stage.dart";
@@ -624,6 +626,73 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
       }
     });
 
+    // Chat arrived while the panel is closed. Two surfaces, ONE policy.
+    //
+    // Chef: "if there is a new chat in a session, make a message button pop up
+    // indicating there is a new message [...] i dont think anyone will even
+    // know to look at the tools submenu", and then: "can you detect if you are
+    // airplaying or casting, if you are, then it only shows sender."
+    //
+    // Which surface fires is purely about where the user is looking:
+    //   * looking at the app -> an in-app peek, since an OS toast for a window
+    //     already in front of you is noise;
+    //   * on another tab / minimized -> a browser notification, since an
+    //     in-app peek nobody can see is not a notification at all.
+    // Never both, so a message is announced exactly once.
+    //
+    // WHAT it may say is a separate question with a single answer for both:
+    // chatNotificationContent, fed by the same cast / screen-share detection,
+    // so the two surfaces cannot disagree about what is safe to show.
+    final chatArgs =
+        SpaceChatArgs(spaceId: join.spaceId, identity: join.identity);
+    ref.listen<int>(
+      spaceChatProvider(chatArgs).select((c) => c.unread),
+      (prev, next) {
+        // Only a RISE is news. The count also moves on markOpen (to zero),
+        // and announcing that would mean toasting the user for reading.
+        if (prev == null || next <= prev) return;
+        final chat = ref.read(spaceChatProvider(chatArgs));
+        final latest = chat.latest;
+        if (latest == null) return;
+
+        // Screen-share is read from the LOCAL participant here because this is
+        // the only place holding the participant snapshot; the cast half is
+        // read inside the provider. See mayShowMessageText.
+        final local = _localSnapshot(st.participants);
+        final mayShowText = ref.read(chatPreviewMayShowTextProvider(
+            local?.isScreenSharing ?? false));
+        final content = chatNotificationContent(
+          sender: "${latest["from"] ?? ""}",
+          text: "${latest["text"] ?? ""}",
+          mayShowText: mayShowText,
+          otherUnread: next - 1,
+        );
+
+        if (documentHidden && notificationsGranted) {
+          showBrowserNotification(
+            title: content.title,
+            body: content.body,
+            // Collapse per Space: a chatty room replaces its own notification
+            // instead of burying the desktop one toast per message.
+            tag: "sk-space-${join.spaceId}",
+            onClick: () => _openLanes(context, join, st),
+          );
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text("${content.title}: ${content.body}"),
+          duration: const Duration(seconds: 4),
+          // The one-tap route to the chat Chef asked for, so noticing a
+          // message and reading it are not two separate hunts.
+          action: SnackBarAction(
+            label: "Open",
+            onPressed: () => _openLanes(context, join, st),
+          ),
+        ));
+      },
+    );
+
     return Scaffold(
       backgroundColor: SovereignColors.surfaceCard,
       // The multitool used to be a floatingActionButton. A FAB floats ABOVE
@@ -743,7 +812,30 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                     ),
                   ),
                 ),
-                _laneTile(sheetCtx, context, Icons.chat_bubble_outline_rounded, "Chat", SpaceChatPanel(spaceId: join.spaceId, identity: join.identity)),
+                // Chat is bracketed rather than opened blind: the session's
+                // unread count has to know when the user is actually looking.
+                // Done HERE, not in the panel's own initState/dispose, because
+                // a write from dispose() resurrects the autoDispose provider
+                // (see the note in space_chat_panel.dart). This screen outlives
+                // the sheet, so it can safely write on both sides.
+                _actionTile(
+                  sheetCtx,
+                  Icons.chat_bubble_outline_rounded,
+                  "Chat",
+                  () {
+                    final chat = ref.read(spaceChatProvider(SpaceChatArgs(
+                            spaceId: join.spaceId, identity: join.identity))
+                        .notifier);
+                    chat.markOpen();
+                    _openLane(
+                      context,
+                      SpaceChatPanel(
+                          spaceId: join.spaceId, identity: join.identity),
+                    ).whenComplete(() {
+                      if (mounted) chat.markClosed();
+                    });
+                  },
+                ),
                 _laneTile(sheetCtx, context, Icons.smart_display_outlined, "Watch together", WatchPanel(spaceId: join.spaceId, identity: join.identity)),
                 _laneTile(sheetCtx, context, Icons.draw_outlined, "Whiteboard", WhiteboardPanel(spaceId: join.spaceId, identity: join.identity)),
                 _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
@@ -816,8 +908,8 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
     );
   }
 
-  void _openLane(BuildContext context, Widget panel) {
-    showModalBottomSheet(
+  Future<void> _openLane(BuildContext context, Widget panel) {
+    return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -2428,6 +2520,9 @@ class _ControlBar extends ConsumerWidget {
             _RoundButton(
               icon: Icons.dashboard_customize_outlined,
               label: "Tools",
+              badgeCount: ref.watch(spaceChatProvider(SpaceChatArgs(
+                      spaceId: join.spaceId, identity: join.identity))
+                  .select((c) => c.unread)),
               onTap: onOpenLanes,
             ),
             _LeaveButton(onTap: onLeave),
@@ -2446,6 +2541,7 @@ class _RoundButton extends StatelessWidget {
     required this.onTap,
     this.active = false,
     this.activeColor,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
@@ -2453,6 +2549,10 @@ class _RoundButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool active;
   final Color? activeColor;
+
+  /// Unread items behind this control. Zero draws nothing at all, so a quiet
+  /// room looks exactly as it always did.
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
@@ -2472,19 +2572,64 @@ class _RoundButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: bg,
-                border: Border.all(color: border, width: 1.5),
-              ),
-              child: Icon(
-                icon,
-                color: active ? accent : SovereignColors.textPrimary,
-                size: 24,
-              ),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: bg,
+                    border: Border.all(color: border, width: 1.5),
+                  ),
+                  child: Icon(
+                    icon,
+                    color: active ? accent : SovereignColors.textPrimary,
+                    size: 24,
+                  ),
+                ),
+                // Chef: "i dont think anyone will even know to look at the
+                // tools submenu [...] at least put an indicator or number
+                // ticker showing how many unread messages you have." Drawn on
+                // the EXISTING control rather than adding a new one, because
+                // this bar already had to wrap to keep Leave on screen.
+                if (badgeCount > 0)
+                  Positioned(
+                    key: const Key("controlUnreadBadge"),
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      constraints:
+                          const BoxConstraints(minWidth: 18, minHeight: 18),
+                      decoration: BoxDecoration(
+                        color: SovereignColors.accentDanger,
+                        borderRadius: BorderRadius.circular(9),
+                        // Against the dark bar the badge would otherwise blur
+                        // into the control's own border.
+                        border: Border.all(
+                            color: SovereignColors.surfaceCard, width: 1.5),
+                      ),
+                      child: Center(
+                        child: Text(
+                          // Capped so a long-running room cannot widen the
+                          // badge until it covers the icon it annotates.
+                          badgeCount > 99 ? "99+" : "$badgeCount",
+                          // The theme's badge role rather than a literal size:
+                          // font_literal_guard_test enforces this, and the
+                          // role is what keeps the count legible when the OS
+                          // text scale is turned up.
+                          style: SovereignTypography.badge().copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 6),
             Text(

@@ -2,9 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../core/theme/sovereign_colors.dart";
-import "../../services/backend_config.dart" show backendConfigProvider;
-import "../../services/lane_service.dart";
-import "../../services/livekit_call_service.dart";
+import "space_chat_session.dart";
 
 /// In-Space text chat over the data-lane substrate (Tier 4). Uses the "chat"
 /// lane: messages go live over the LiveKit data channel and are persisted +
@@ -24,31 +22,17 @@ class SpaceChatPanel extends ConsumerStatefulWidget {
 }
 
 class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
-  late final LaneService _lane;
-  final List<Map<String, dynamic>> _msgs = [];
   final TextEditingController _ctl = TextEditingController();
   final ScrollController _scroll = ScrollController();
+
+  SpaceChatArgs get _args =>
+      SpaceChatArgs(spaceId: widget.spaceId, identity: widget.identity);
 
   @override
   void initState() {
     super.initState();
-    _lane = LaneService(
-      livekit: ref.read(liveKitCallServiceProvider),
-      // RUNTIME base, not the compile-time constant: kDefaultWebuiUrl is ""
-      // unless a dart-define sets it, and the web deploy does not, so an
-      // empty base sent every HTTP call into LaneService's swallowing catch
-      // and silently killed this lane's catch-up replay.
-      baseUrl: ref.read(backendConfigProvider).skchatWebuiUrl,
-      spaceId: widget.spaceId,
-    );
-    _lane.catchUp("chat").then((events) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      setState(() => _msgs.addAll(events));
-      _jumpToEnd();
-    });
-    _lane.inbound.where((j) => j["lane"] == "chat").listen((j) {
-      if (!mounted) return;
-      setState(() => _msgs.add(j));
       _jumpToEnd();
     });
   }
@@ -62,20 +46,22 @@ class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
   }
 
   Future<void> _send() async {
-    final text = _ctl.text.trim();
-    if (text.isEmpty) return;
-    final msg = <String, dynamic>{
-      "lane": "chat",
-      "from": widget.identity,
-      "text": text,
-      "ts": DateTime.now().millisecondsSinceEpoch,
-    };
+    final text = _ctl.text;
+    if (text.trim().isEmpty) return;
     _ctl.clear();
-    setState(() => _msgs.add(msg));
+    // The session owns the optimistic append AND the publish, so a message
+    // survives this sheet being closed mid-send.
+    await ref.read(spaceChatProvider(_args).notifier).send(text);
     _jumpToEnd();
-    await _lane.publish(msg);
   }
 
+  // NOTE: this widget deliberately does NOT mark the session open/closed.
+  // Doing it from dispose() RESURRECTS the provider: spaceChatProvider is
+  // autoDispose, so a `ref.read(...notifier)` during teardown rebuilds it,
+  // which re-subscribes to the lane and schedules a fresh auto-dispose, i.e.
+  // exactly the leak this session exists to prevent. The room screen brackets
+  // the sheet instead (see _openLanes), because it outlives the sheet and can
+  // safely write on both sides of it.
   @override
   void dispose() {
     _ctl.dispose();
@@ -85,6 +71,11 @@ class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final msgs = ref.watch(spaceChatProvider(_args)).messages;
+    // A message can land while this sheet is open; keep the view pinned to the
+    // newest one rather than leaving the reader stranded mid-history.
+    ref.listen(spaceChatProvider(_args).select((s) => s.messages.length),
+        (_, _) => _jumpToEnd());
     return Container(
       height: MediaQuery.of(context).size.height * 0.6,
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
@@ -113,7 +104,7 @@ class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: _msgs.isEmpty
+            child: msgs.isEmpty
                 ? const Center(
                     child: Text(
                       "No messages yet, say hello to the room.",
@@ -122,9 +113,9 @@ class _SpaceChatPanelState extends ConsumerState<SpaceChatPanel> {
                   )
                 : ListView.builder(
                     controller: _scroll,
-                    itemCount: _msgs.length,
+                    itemCount: msgs.length,
                     itemBuilder: (context, i) {
-                      final m = _msgs[i];
+                      final m = msgs[i];
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 3),
                         child: RichText(
