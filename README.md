@@ -4,7 +4,9 @@
 > to the agent stack on boxes you own — no SaaS backend, no account, no relay you
 > don't control. **Maturity: `T0 — Classical` (app layer)** — it renders, signs,
 > and *delegates* crypto to `sk_pqc`/`skcomms`/`skchat`; call-media is DTLS-SRTP.
-> Active phase · SemVer `1.0.0+1`. Full SOP: [`SOP.md`](./SOP.md).
+> Active phase. The version lives in `pubspec.yaml` (`version:`), not here: this line
+> used to quote a number and it went four minor versions stale. Full SOP:
+> [`SOP.md`](./SOP.md).
 
 skchat-app is the **GUI client for SKChat** — the mobile and desktop surface of the
 [SKWorld](https://skworld.io) sovereign communication layer. It is **not** another

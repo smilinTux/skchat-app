@@ -5,7 +5,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 
 ## [Unreleased]
 
+### Fixed (docs)
+- **`SOP.md` and `README.md` both quoted a stale version.** Both said `1.0.0`
+  build `1`; `pubspec.yaml:5` was already four minor versions ahead. Neither doc
+  quotes a number any more, they point at `pubspec.yaml`, and an evidence check
+  now fails if a literal version is written back into either.
+- **`SOP.md` repeated second-hand that the skcomms daemon port is not exposed.**
+  That is not this repo's fact to assert and it does not hold: observed on a live
+  node, `:9384` binds `0.0.0.0`, so it is LAN and tailnet reachable. Section 5 now
+  scopes the claim to skcomms as its owner.
+- **`SOP.md` was still titled "skchat-app" and implied the rename was complete.**
+  It is surface-only: only the GitHub repo name, the README title and the SOP title
+  changed. `pubspec.yaml:1` still declares `name: skchat`, the workspace members are
+  still `packages/skchat_ui` and `apps/skchat_standalone`, and the CI step names and
+  web artifact are still `skchat-*`. A new section 0 states exactly which names did
+  and did not change, and two evidence checks fire if that ever shifts.
+- **`SOP.md` omitted the serving surface entirely.** The built web bundle is served
+  on `0.0.0.0:8088` by `scripts/serve-app-web.sh`, which lives in the **skchat**
+  repo, not this one. Section 5 now lists it, names the owning repo for every
+  external surface, and records the `--base-href /app/` requirement.
+- **`SOP.md` section 4 understated the release gate.** CI runs four import gates and
+  **five** separate `flutter test` invocations (workspace members are not covered by
+  the root run), builds liboqs 0.12.0 from source, and preflights the required web
+  artifacts. All of that is now written down.
+
 ### Added
+- **Executable docs evidence**: a `docs-evidence` block at the end of `SOP.md` with
+  10 hermetic checks over `pubspec.yaml`, the package paths, `lib/main.dart` and the
+  CI workflow. Every check was negative-tested. Wired to CI via
+  `.github/workflows/docs-check.yml` (tiers 1,2 for now; tier 3 once it runs clean).
 - **1:1 calls now ring the peer (in-thread calling, Phase 2).** A call now
   rings the callee via the server's signed `CALL_INVITE` (the `/call/*`
   routes) instead of the retired `__CALL_REQUEST__` chat-sentinel path, is
