@@ -619,7 +619,7 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                     join: join,
                     state: st,
                     onLeave: _leave,
-                    onOpenLanes: () => _openLanes(context, join),
+                    onOpenLanes: () => _openLanes(context, join, st),
                   ),
                 ],
               ),
@@ -633,14 +633,40 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
   // live in a ListView wired to the sheet's own scrollController, the
   // standard DraggableScrollableSheet pattern, so the sheet drags AND the
   // list scrolls; a grab handle makes it tactile by default.
-  void _openLanes(BuildContext context, SpaceJoin join) {
+  void _openLanes(BuildContext context, SpaceJoin join, SpaceRoomState st) {
     final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    // Same gate the Devices control carried on the bar: anyone who can publish
+    // video. A listener has no track to pick a device for.
+    final local = _localSnapshot(st.participants);
+    final canShare = join.isHost || (local?.canPublish ?? false);
+    final showDevices = canShare && (local?.canPublishVideo ?? true);
+
+    // Open tall enough to show every row it actually has, instead of a fixed
+    // 0.55 that was sized by eye when this list was shorter.
+    //
+    // This is load-bearing, not polish. The sheet's ListView is LAZY: a row
+    // below the fold is not merely scrolled past, it is never built at all.
+    // Adding the two setup rows at a fixed 0.55 put them in that dead zone, so
+    // "moved into Tools" would have meant "gone" for anyone who did not think
+    // to drag the sheet up, which is the same discoverability trap that put
+    // this work on the list in the first place. Verified by counting built
+    // ListTiles in a widget test: six of eight.
+    //
+    // Still clamped and still draggable, so a very short screen degrades to
+    // scrolling rather than a sheet that swallows the room.
+    const rowHeight = 56.0;
+    final rows = 6 + (showDevices ? 1 : 0) + 1; // lanes + devices? + cast
+    final contentHeight =
+        24 + (rows * rowHeight) + 1 + bottomSafeArea + 12; // handle, rows, rule
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final wanted =
+        screenHeight <= 0 ? 0.55 : (contentHeight / screenHeight).clamp(0.30, 0.92);
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetCtx) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
+        initialChildSize: wanted.toDouble(),
         minChildSize: 0.30,
         maxChildSize: 0.92,
         expand: false,
@@ -672,11 +698,57 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                 _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
                 _laneTile(sheetCtx, context, Icons.screen_share_outlined, "Screen share", ScreenSharePanel(spaceId: join.spaceId, identity: join.identity)),
                 _laneTile(sheetCtx, context, Icons.terminal_rounded, "Terminal", TerminalPanel(spaceId: join.spaceId, identity: join.identity)),
+                // Setup controls, moved off the control bar (which was
+                // overflowing on a phone and dropping Leave off the right
+                // edge). Both are "set once at the start", not live-moment
+                // controls, so a second tap to reach them costs nothing, and
+                // the width they give back is what keeps Leave on screen.
+                const Divider(height: 1, color: Color(0xFF2A2D34)),
+                if (showDevices)
+                  _actionTile(sheetCtx, Icons.tune_rounded, "Camera & mic",
+                      () => showCallDevicePickerSheet(
+                            context,
+                            ref.read(liveKitCallServiceProvider),
+                          )),
+                _actionTile(
+                  sheetCtx,
+                  Icons.cast_rounded,
+                  ref.read(activeCastSessionProvider) != null
+                      ? "Casting to TV"
+                      : "Cast to TV",
+                  () => showCastToTvSheet(
+                    context,
+                    ref,
+                    room: join.room,
+                    // Forward the room token so the backend authorizes the
+                    // egress start even when casting from a phone over the
+                    // public Funnel.
+                    token: join.token,
+                  ),
+                ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// A Tools row that RUNS something instead of opening a lane panel (the
+  /// device picker and the cast sheet are both their own sheets already, so
+  /// they cannot go through [_openLane]). Closes the Tools sheet first, same
+  /// as [_laneTile], so the action's own sheet is never stacked on top of it.
+  Widget _actionTile(BuildContext sheetCtx, IconData icon, String label,
+      VoidCallback action) {
+    return ListTile(
+      key: Key("toolsAction:$label"),
+      leading: Icon(icon, color: SovereignColors.textSecondary),
+      title: Text(label,
+          style: const TextStyle(color: SovereignColors.textPrimary)),
+      onTap: () {
+        Navigator.of(sheetCtx).pop();
+        action();
+      },
     );
   }
 
@@ -2110,34 +2182,43 @@ class _ControlBar extends ConsumerWidget {
             // Live camera/mic device picker (same 1:1-call widget, same
             // liveKitCallServiceProvider): lets a Linux user with a phantom
             // Droidcam/v4l2loopback device switch to the real webcam.
-            // Gated the same as "Go live" (can publish video), NOT on
-            // isCameraLive: the picker MUST be reachable before the camera is
-            // live so a user whose camera did not come up on the right device
-            // can select a working one (picking a device publishes it). Gating
-            // on isCameraLive was a chicken-and-egg trap (no live camera means
-            // no picker means no way to fix a bad default device).
-            if (canShare && canPublishVideoLocal)
-              const CallDevicePickerButton(size: 56),
+            // Devices moved into the Tools menu (see _openLanes) to buy back
+            // width on a phone. It stays gated the same way there: reachable
+            // before the camera is live, so a user whose camera did not come
+            // up on the right device can select a working one (picking a
+            // device publishes it). Gating on isCameraLive was a
+            // chicken-and-egg trap.
+            //
+            // This headless reconciler stays HERE, on the always-mounted bar,
+            // and is why the move is safe: applying the saved-or-smart-default
+            // device is tied to being mounted, not to being visible, so
+            // mounting it only when the user opens Tools would silently stop
+            // reconciling at connect time. See CallDeviceReconciler.
+            if (canShare && canPublishVideoLocal) const CallDeviceReconciler(),
             // Quick emoji reactions: floats to everyone in the Space.
             ReactionsButton(identity: join.identity),
-            // Cast the Space's shared video to a TV (Chromecast / AirPlay) over
-            // HLS. The Space's live audio + chat stay on the phone.
-            _RoundButton(
-              icon: Icons.cast_rounded,
-              label: ref.watch(activeCastSessionProvider) != null
-                  ? "Casting"
-                  : "Cast",
-              active: ref.watch(activeCastSessionProvider) != null,
-              activeColor: SovereignColors.soulLumina,
-              onTap: () => showCastToTvSheet(
-                context,
-                ref,
-                room: join.room,
-                // Forward the room token so the backend authorizes the egress
-                // start even when casting from a phone over the public Funnel.
-                token: join.token,
+            // Cast also lives in the Tools menu now, with one exception: while
+            // a cast is actually running it comes BACK onto the bar. Hiding a
+            // live, room-visible state two taps deep is how someone forgets
+            // they are still throwing this Space at a TV, and stopping it is
+            // exactly the kind of thing that should not need a menu. Same
+            // shape as Flip, which only appears while the camera is live.
+            if (ref.watch(activeCastSessionProvider) != null)
+              _RoundButton(
+                icon: Icons.cast_connected_rounded,
+                label: "Casting",
+                active: true,
+                activeColor: SovereignColors.soulLumina,
+                onTap: () => showCastToTvSheet(
+                  context,
+                  ref,
+                  room: join.room,
+                  // Forward the room token so the backend authorizes the
+                  // egress start even when casting from a phone over the
+                  // public Funnel.
+                  token: join.token,
+                ),
               ),
-            ),
             if (join.isHost)
               _RoundButton(
                 icon: Icons.stop_circle_outlined,

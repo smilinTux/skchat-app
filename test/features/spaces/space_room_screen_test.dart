@@ -9,6 +9,10 @@ import "package:hive_flutter/hive_flutter.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/call_shared/screen_share_source.dart";
+import "package:skchat/features/calls/call_device_picker.dart"
+    show CallDeviceReconciler;
+import "package:skchat/features/calls/cast_sheet.dart"
+    show activeCastSessionProvider;
 import "package:skchat/features/spaces/space_chat_panel.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/space_room_screen.dart";
@@ -17,6 +21,7 @@ import "package:skchat/features/spaces/watch_session.dart"
 import "package:skchat/features/spaces/watch_video_stub.dart"
     if (dart.library.html) "package:skchat/features/spaces/watch_video_web.dart";
 import "package:skchat/services/lane_service.dart" show LaneLike;
+import "package:skchat/services/cast_service.dart" show HlsCastSession;
 import "package:skchat/services/livekit_call_service.dart";
 import "package:skchat/services/spaces_service.dart";
 
@@ -54,6 +59,8 @@ class _NoopLane implements LaneLike {
 class MockRoom extends Mock implements Room {}
 
 class MockRemoteParticipant extends Mock implements RemoteParticipant {}
+
+class MockLocalParticipant extends Mock implements LocalParticipant {}
 
 class MockRemoteTrackPublication extends Mock
     implements RemoteTrackPublication {}
@@ -2162,14 +2169,15 @@ void main() {
 
     // Chef: "my old iphone is already cutting off the hangup button".
     //
-    // The control row is a plain Row of fixed 56px _RoundButtons inside 24px
-    // of horizontal padding. A Row neither wraps nor scrolls, so past the
+    // The control row was a plain Row of fixed _RoundButtons inside 24px of
+    // horizontal padding. A Row neither wraps nor scrolls, so past the
     // available width it simply overflows and the LAST child is what runs off
-    // the edge. Leave is last. A host live on camera carries eight controls
-    // (Mute, Stop, Flip, Reactions, Cast, End, Tools, Leave): 8 * 56 + 48 =
-    // 496 logical pixels, against 375 on an iPhone 8 / SE 2 and 320 on an SE
-    // 1. Losing the one control you need when a call goes wrong is the worst
-    // possible thing for this row to drop.
+    // the edge. Leave is last. A host live on camera carried NINE controls
+    // (Mute, Stop, Flip, Devices, Reactions, Cast, End, Tools, Leave) at
+    // 56+56+56+56+52+56+56+56+60 = 504px, plus 48px of gutters, against 375
+    // logical pixels on an iPhone 8 / SE 2 and 320 on an SE 1. Losing the one
+    // control you need when a call goes wrong is the worst possible thing for
+    // this row to drop.
     //
     // Sized by hand rather than trusting the default 800x600 test surface,
     // which is wider than any phone and hides this entirely.
@@ -2209,5 +2217,139 @@ void main() {
             reason: "Leave runs off the left edge at $leaveRect");
       });
     }
+  });
+
+  group("setup controls live in Tools, not on the control bar", () {
+    // Devices and Cast are "set once at the start" controls, not live-moment
+    // ones, so they are the right two to give up bar width: at 320pt the row
+    // was three runs deep with them and is two without.
+
+    testWidgets("Devices is not a control-bar button any more", (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Devices"), findsNothing);
+      expect(find.byIcon(Icons.tune_rounded), findsNothing);
+    });
+
+    testWidgets("Tools offers Camera & mic, and it opens the picker",
+        (tester) async {
+      when(() => svc.enumerateAudioInputs()).thenAnswer(
+          (_) async => [MediaDevice("mic-1", "Blue Yeti", "audioinput", null)]);
+      when(() => svc.enumerateVideoInputs()).thenAnswer((_) async =>
+          [MediaDevice("cam-1", "FaceTime HD", "videoinput", null)]);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Tools"));
+      await tester.pumpAndSettle();
+      expect(find.text("Camera & mic"), findsOneWidget);
+
+      await tester.tap(find.text("Camera & mic"));
+      // Fixed frames, not pumpAndSettle: the picker enumerates devices and
+      // reads Hive on open, which is real I/O that never "settles" under the
+      // test binding. The sheet's own heading appearing is proof enough that
+      // the row is wired to the real picker and not just closing the menu.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text("Devices"), findsOneWidget);
+    });
+
+    testWidgets("a listener gets no Camera & mic row (no track to configure)",
+        (tester) async {
+      // The shared harness marks chef@ as the LOCAL participant whichever
+      // join is passed, so a genuine listener case has to say so itself.
+      final asListener = <LiveKitParticipantSnapshot>[
+        _snap("alice@dk.skworld", isLocal: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => Stream.value(asListener));
+      when(() => svc.currentParticipants).thenReturn(asListener);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Tools"));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Camera & mic"), findsNothing);
+      // Cast is NOT gated the same way: a listener watching along is exactly
+      // who wants this Space on the big screen.
+      expect(find.text("Cast to TV"), findsOneWidget);
+    });
+
+    testWidgets("Cast is a Tools row while idle, and comes back onto the bar "
+        "once a cast is actually running", (tester) async {
+      // Hiding a live, room-visible state two taps deep is how someone forgets
+      // they are still throwing the Space at a TV.
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Cast"), findsNothing);
+      expect(find.text("Casting"), findsNothing);
+
+      await tester.tap(find.text("Tools"));
+      await tester.pumpAndSettle();
+      expect(find.text("Cast to TV"), findsOneWidget);
+      Navigator.of(tester.element(find.text("Cast to TV"))).pop();
+      await tester.pumpAndSettle();
+
+      // Now a cast is live.
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(SpaceRoomScreen)));
+      container.read(activeCastSessionProvider.notifier).state =
+          const HlsCastSession(egressId: "eg-1", hlsUrl: "https://x/y.m3u8");
+      await tester.pump();
+
+      expect(find.text("Casting"), findsOneWidget);
+    });
+  });
+
+  group("saved device prefs survive Devices leaving the control bar", () {
+    // The regression the Tools move could have caused, and the reason
+    // CallDeviceReconciler exists. Reconciling the live tracks with the saved
+    // (or smart-default) device is tied to being MOUNTED, and it used to live
+    // inside the Devices BUTTON. Had the whole widget moved into the Tools
+    // sheet, this would only ever run when a user happened to open that menu:
+    // someone whose OS default is a dead DroidCam would silently get the
+    // phantom device back on every join, with no error and nothing to see.
+    //
+    // Asserted structurally (is it mounted on the always-present bar?) rather
+    // than by driving the reconcile to completion: the work behind it reads
+    // Hive, which is real file I/O that pumpAndSettle cannot advance, and the
+    // device-selection logic it applies is already covered directly in
+    // test/services/livekit_device_picker_test.dart. Mounting is the invariant
+    // this refactor could actually break.
+    testWidgets("a speaker keeps the reconciler mounted on the control bar",
+        (tester) async {
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(CallDeviceReconciler), findsOneWidget);
+      // Mounted but invisible: it is not a control, it renders nothing.
+      expect(tester.getSize(find.byType(CallDeviceReconciler)), Size.zero);
+    });
+
+    testWidgets("a listener has nothing to reconcile, so it is not mounted",
+        (tester) async {
+      final asListener = <LiveKitParticipantSnapshot>[
+        _snap("alice@dk.skworld", isLocal: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => Stream.value(asListener));
+      when(() => svc.currentParticipants).thenReturn(asListener);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(CallDeviceReconciler), findsNothing);
+    });
   });
 }

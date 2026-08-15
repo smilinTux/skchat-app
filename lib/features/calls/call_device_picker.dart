@@ -72,6 +72,50 @@ class CallDevicePrefs {
 /// default (first non-virtual device). So a picked mic/camera is reused across
 /// calls and a fresh call auto-avoids a phantom device, without the user
 /// re-opening the sheet.
+/// Open the mic + camera picker sheet.
+///
+/// Standalone so a caller can offer the picker from somewhere that is not a
+/// round control-bar button (the Spaces Tools menu opens it from a list tile).
+/// [CallDevicePickerButton] is now just this function plus an icon.
+Future<void> showCallDevicePickerSheet(
+    BuildContext context, LiveKitCallService service) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: SovereignColors.surfaceRaised,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => _DevicePickerSheet(service: service),
+  );
+}
+
+/// Applies the saved-or-smart-default mic / camera to the live tracks, once,
+/// while mounted. Renders NOTHING.
+///
+/// Split out of [CallDevicePickerButton] because this work is tied to being
+/// MOUNTED, not to being visible, and the two had been the same thing only by
+/// accident. The Spaces control bar no longer shows a Devices button (the
+/// picker moved into the Tools menu to buy back width, see
+/// space_room_screen.dart), and mounting the picker only when the user opens
+/// that menu would mean the saved device choice stopped being applied at
+/// connect time: a user whose OS default is a dead DroidCam would silently get
+/// the phantom device again, exactly the bug [_reapplySaved] exists to prevent.
+/// So the reconciliation stays mounted on the bar and only the icon moved.
+class CallDeviceReconciler extends ConsumerStatefulWidget {
+  const CallDeviceReconciler({super.key});
+
+  @override
+  ConsumerState<CallDeviceReconciler> createState() =>
+      _CallDeviceReconcilerState();
+}
+
+class _CallDeviceReconcilerState extends ConsumerState<CallDeviceReconciler>
+    with _ReapplySavedDevices {
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
 class CallDevicePickerButton extends ConsumerStatefulWidget {
   const CallDevicePickerButton({super.key, this.size = 52});
 
@@ -83,8 +127,11 @@ class CallDevicePickerButton extends ConsumerStatefulWidget {
       _CallDevicePickerButtonState();
 }
 
-class _CallDevicePickerButtonState
-    extends ConsumerState<CallDevicePickerButton> {
+/// The reconcile-on-mount behavior, shared by the headless
+/// [CallDeviceReconciler] and the visible [CallDevicePickerButton] so the two
+/// can never drift apart.
+mixin _ReapplySavedDevices<T extends ConsumerStatefulWidget>
+    on ConsumerState<T> {
   bool _reapplied = false;
   int _reapplyAttempts = 0;
 
@@ -155,19 +202,14 @@ class _CallDevicePickerButtonState
   /// generic over any [MediaDevice] list, mic included).
   String? _pickTarget(List<MediaDevice> list, String? saved) =>
       LiveKitCallService.resolveCameraDeviceId(list, saved);
+}
 
-  Future<void> _openSheet() async {
-    final svc = ref.read(liveKitCallServiceProvider);
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: SovereignColors.surfaceRaised,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => _DevicePickerSheet(service: svc),
-    );
-  }
+class _CallDevicePickerButtonState
+    extends ConsumerState<CallDevicePickerButton> with _ReapplySavedDevices {
+  Future<void> _openSheet() => showCallDevicePickerSheet(
+        context,
+        ref.read(liveKitCallServiceProvider),
+      );
 
   @override
   Widget build(BuildContext context) {
