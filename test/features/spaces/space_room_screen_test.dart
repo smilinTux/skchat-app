@@ -2225,6 +2225,7 @@ void main() {
       // ignore: invalid_use_of_internal_member
       when(() => fakeTrack.removeViewKey(any())).thenAnswer((_) {});
       when(() => camPub.track).thenReturn(fakeTrack);
+      when(() => camPub.muted).thenReturn(false);
       when(() => dana.getTrackPublicationBySource(TrackSource.camera))
           .thenReturn(camPub);
       when(() => dana.getTrackPublicationBySource(TrackSource.screenShareVideo))

@@ -135,6 +135,30 @@ typedef StageVideo = ({
   bool isCamera,
 });
 
+/// The one rule for "is there a renderable video track on this publication".
+/// A missing publication (never published, unsubscribed, or torn down) and a
+/// MUTED publication both mean no video: the SFU stops forwarding a muted
+/// track, so drawing it would pin the last decoded frame on screen instead of
+/// falling back to nothing (or, for a caller trying more than one source in
+/// priority order, to the next source).
+///
+/// Every resolver in this file funnels through here, and that consolidation
+/// is the point. Before this helper existed, [_resolveTracksBySource]
+/// (backing the whole Spaces stage: [resolveScreenShares],
+/// [resolveCameraShares], [resolveStageVideos]) never checked `muted` at all,
+/// while [resolveTileVideoTrack] (the calls surface) did. The same
+/// participant at the same instant could then show "no video" on a call tile
+/// and "video" on the Spaces stage, purely by which resolver asked. A shared
+/// layout engine is about to consume both paths, and that divergence would
+/// have looked like a layout bug (why does this tile render differently on
+/// two surfaces) rather than what it actually was: two resolvers disagreeing
+/// about one room graph.
+VideoTrack? _renderableTrack(TrackPublication? pub) {
+  if (pub == null || pub.muted) return null;
+  final track = pub.track;
+  return track is VideoTrack ? track : null;
+}
+
 /// Resolve every live [VideoTrack] published on [source] in the [room],
 /// keyed to the [participants] snapshot list. Shared lookup behind
 /// [resolveScreenShares] (TrackSource.screenShareVideo) and
@@ -159,19 +183,17 @@ List<ScreenShare> _resolveTracksBySource(
     if (p.isLocal) {
       final local = room.localParticipant;
       if (local == null) continue;
-      final pub = local.getTrackPublicationBySource(source);
-      final track = pub?.track;
-      if (track is VideoTrack) {
-        out.add((identity: p.identity, track: track as VideoTrack, isLocal: true));
+      final track = _renderableTrack(local.getTrackPublicationBySource(source));
+      if (track != null) {
+        out.add((identity: p.identity, track: track, isLocal: true));
       }
       continue;
     }
     final remote = room.remoteParticipants[p.identity];
     if (remote == null) continue;
-    final pub = remote.getTrackPublicationBySource(source);
-    final track = pub?.track;
-    if (track is VideoTrack) {
-      out.add((identity: p.identity, track: track as VideoTrack, isLocal: false));
+    final track = _renderableTrack(remote.getTrackPublicationBySource(source));
+    if (track != null) {
+      out.add((identity: p.identity, track: track, isLocal: false));
     }
   }
   return out;
@@ -234,11 +256,11 @@ TrackPublication? _publicationFor(
 /// have never consulted that field, so this brings the call grid onto the same
 /// rule.
 ///
-/// A publication whose `muted` flag is set is deliberately still treated as
-/// "no video": the SFU stops forwarding a muted track, so drawing it would
-/// pin the last decoded frame on screen instead of falling back. The flag is
-/// read off the live publication here rather than off the snapshot, so it can
-/// never be stale relative to what is being drawn.
+/// "Is there a video to draw" (including the muted-publication rule) is
+/// [_renderableTrack]'s job, not this function's: every source below is
+/// checked the same way [_resolveTracksBySource] checks its sources, so a
+/// participant cannot get a different answer here than on the Spaces stage.
+/// This function's own job is just the screen-over-camera priority order.
 VideoTrack? resolveTileVideoTrack(
   Room? room,
   LiveKitParticipantSnapshot participant,
@@ -247,12 +269,8 @@ VideoTrack? resolveTileVideoTrack(
     TrackSource.screenShareVideo,
     TrackSource.camera,
   ]) {
-    final pub = _publicationFor(room, participant, source);
-    if (pub == null || pub.muted) continue;
-    final track = pub.track;
-    // An unsubscribed or torn-down publication has a null track, which is how
-    // a track going away mid-call falls back cleanly instead of freezing.
-    if (track is VideoTrack) return track;
+    final track = _renderableTrack(_publicationFor(room, participant, source));
+    if (track != null) return track;
   }
   return null;
 }
