@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import '../../core/theme/sovereign_colors.dart';
+import '../../core/widgets/tap_feedback.dart';
 import '../../services/livekit_call_service.dart';
 
 // ── Persistence ──────────────────────────────────────────────────────────────
@@ -216,7 +217,7 @@ class _CallDevicePickerButtonState
     return Semantics(
       button: true,
       label: 'Devices',
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: _openSheet,
         child: Column(
           mainAxisSize: MainAxisSize.min,

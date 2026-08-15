@@ -962,6 +962,64 @@ void main() {
       expect(find.text("Remove from Space"), findsOneWidget);
     });
 
+    testWidgets("Invite to speak says so immediately, without waiting for the "
+        "promotion to land", (tester) async {
+      // Chef: "when I click to accept a speaker, it hangs like 5 secs before
+      // it moves them into speaker position so you cant tell if you hit the
+      // button or if it registered." Nothing can make that round trip
+      // shorter, so the wait gets narrated: the acknowledgement must appear
+      // while the invite is still in flight, NOT when it resolves.
+      final gate = Completer<void>();
+      when(() => spaces.invite(any(),
+              requester: any(named: "requester"),
+              identity: any(named: "identity")))
+          .thenAnswer((_) => gate.future);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("alice"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.text("Invite to speak"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.textContaining("Inviting"), findsOneWidget,
+          reason: "the host must be told the tap registered, mid-flight");
+
+      gate.complete();
+      await tester.pump();
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+    });
+
+    testWidgets("a failed invite is surfaced instead of looking like a slow "
+        "success", (tester) async {
+      // These host actions were all called WITHOUT an await, so a rejection
+      // (not the host any more, space ended, network gone) threw into a
+      // dropped future and the host saw exactly what a slow success looks
+      // like: nothing, forever.
+      when(() => spaces.invite(any(),
+              requester: any(named: "requester"),
+              identity: any(named: "identity")))
+          .thenThrow(Exception("403 not the host"));
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("alice"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.text("Invite to speak"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.textContaining("Could not invite"), findsOneWidget);
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+    });
+
     testWidgets(
         "Mute mic calls SpacesService.mute with the speaker identity and "
         "their live mic track sid", (tester) async {

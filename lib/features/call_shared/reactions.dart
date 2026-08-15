@@ -6,6 +6,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../core/theme/sovereign_colors.dart";
+import "../../core/widgets/tap_feedback.dart";
 import "../../services/livekit_call_service.dart";
 
 /// In-call emoji reactions (Phase 2 polish).
@@ -167,7 +168,7 @@ class ReactionsButton extends ConsumerWidget {
     return Semantics(
       button: true,
       label: "React",
-      child: GestureDetector(
+      child: TapFeedback(
         onTap: () => _openPicker(context, ref),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -218,7 +219,7 @@ class ReactionsButton extends ConsumerWidget {
                 Semantics(
                   button: true,
                   label: r.label,
-                  child: GestureDetector(
+                  child: TapFeedback(
                     onTap: () => Navigator.of(sheetCtx).pop(r.emoji),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
