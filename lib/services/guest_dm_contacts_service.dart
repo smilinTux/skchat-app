@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
+import 'diag/diag_error_sink.dart';
+import 'diag/diag_interceptor.dart';
 import 'operator_auth_interceptor.dart';
 import 'operator_session_service.dart';
 import 'operator_token.dart' as op_token;
@@ -103,6 +105,9 @@ class GuestDmContactsService {
   })  : _dio = dio ?? Dio(),
         _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl) {
     _dio.interceptors.add(buildOperatorAuthInterceptor(sessionService, () => _dio));
+    // Network breadcrumbs (card 0a5b8e07): immediately after the auth
+    // interceptor, same placement everywhere else in this file family.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   }
 
   final Dio _dio;

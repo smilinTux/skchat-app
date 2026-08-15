@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'backend_config.dart';
+import 'diag/diag_error_sink.dart';
+import 'diag/diag_interceptor.dart';
 import 'guest_identity.dart';
 import 'operator_auth_interceptor.dart';
 import 'operator_session_service.dart';
@@ -134,7 +136,13 @@ class GuestGroupService {
   GuestGroupService({Dio? dio, String? webuiBaseUrl, GuestIdentity? identity})
       : _dio = dio ?? Dio(),
         _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl),
-        _identity = identity ?? createGuestIdentity();
+        _identity = identity ?? createGuestIdentity() {
+    // Network breadcrumbs (card 0a5b8e07). This client has no
+    // buildOperatorAuthInterceptor (it authenticates with the guest session
+    // token, not an operator session), so the diag interceptor is the only
+    // one attached here.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
+  }
 
   final Dio _dio;
   final String _base;
@@ -436,6 +444,9 @@ class GuestInviteService {
   })  : _dio = dio ?? Dio(),
         _base = GuestGroupService._strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl) {
     _dio.interceptors.add(buildOperatorAuthInterceptor(sessionService, () => _dio));
+    // Network breadcrumbs (card 0a5b8e07): immediately after the auth
+    // interceptor, same placement everywhere else in this file family.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   }
 
   final Dio _dio;

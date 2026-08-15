@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/daemon_config.dart';
+import '../../services/diag/diag_error_sink.dart';
+import '../../services/diag/diag_interceptor.dart';
 import '../../services/operator_auth_interceptor.dart';
 import '../../services/operator_session_service.dart';
 import 'geo_unit.dart';
@@ -34,6 +36,9 @@ final geoUnitsSourceProvider = Provider<GeoUnitsSource>((ref) {
   // operator-session Bearer, same as the peers/conversations plane. No-ops on an
   // unenrolled device, so native (direct :9384, ungated) is unaffected.
   dio.interceptors.add(buildOperatorAuthInterceptor(session, () => dio));
+  // Network breadcrumbs (card 0a5b8e07): immediately after the auth
+  // interceptor, same placement as every other daemon Dio client.
+  dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   final source = DaemonGeoUnitsSource(
     fetcher: () async {
       final r = await dio.get('/api/v1/geo/units');

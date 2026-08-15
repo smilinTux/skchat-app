@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import 'backend_config.dart';
+import 'diag/diag_error_sink.dart';
+import 'diag/diag_interceptor.dart';
 import 'screen_awake.dart';
 import 'system_audio_sources.dart';
 
@@ -302,7 +304,13 @@ class LiveKitCallService {
             connectTimeout: const Duration(seconds: 8),
             receiveTimeout: const Duration(seconds: 10),
           ),
-        );
+        ) {
+    // Network breadcrumbs (card 0a5b8e07). Spec 4.3 names "livekit token
+    // minting" explicitly as a call site; this client has no
+    // buildOperatorAuthInterceptor of its own, so the diag interceptor is
+    // the only one attached here.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
+  }
 
   final String _webuiBaseUrl;
   final String _defaultLivekitUrl;

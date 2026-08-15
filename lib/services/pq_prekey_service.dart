@@ -7,6 +7,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sk_pqc/sk_pqc.dart';
 
 import 'daemon_config.dart';
+import 'diag/diag_error_sink.dart';
+import 'diag/diag_interceptor.dart';
 import 'operator_auth_interceptor.dart';
 import 'operator_session_service.dart';
 import 'pq_backend.dart';
@@ -182,6 +184,9 @@ class PqPrekeyService {
     _dio.interceptors.add(
       buildOperatorAuthInterceptor(sessionService, () => _dio),
     );
+    // Network breadcrumbs (card 0a5b8e07): immediately after the auth
+    // interceptor, same placement everywhere else in this file family.
+    _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   }
 
   static const _kPub = 'pqc_hybrid_public_hex';

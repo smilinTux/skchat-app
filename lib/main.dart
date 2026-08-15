@@ -13,12 +13,27 @@ import 'core/providers/density_provider.dart';
 import 'data/hive_adapters.dart';
 import 'services/diag/diag_error_sink.dart';
 import 'services/diag/diag_event.dart';
+import 'services/diag/diag_log_provider.dart';
 import 'services/skcomms_sync.dart';
 import 'services/identity_service.dart';
 import 'services/pq_prekey_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Hive for local persistence.
+  await Hive.initFlutter();
+  Hive.registerAdapter(ChatMessageAdapter());
+  Hive.registerAdapter(ConversationAdapter());
+
+  // Wire the diagnostics ring buffer (card 0a5b8e07) into the global sink
+  // BEFORE installing the global error handlers just below, so those
+  // handlers can never fire into a null sink: `FlutterError.onError` /
+  // `PlatformDispatcher.instance.onError` are not even replaced yet at the
+  // point this line returns. Never throws (see initDiagLogAndWireSink doc);
+  // a diagnostics-boot failure must not be able to keep the app from
+  // launching.
+  final diagLog = await initDiagLogAndWireSink();
 
   installGlobalErrorSinks();
 
@@ -29,11 +44,6 @@ Future<void> main() async {
   if (!kDebugMode) {
     debugPrint = (String? message, {int? wrapWidth}) {};
   }
-
-  // Initialize Hive for local persistence.
-  await Hive.initFlutter();
-  Hive.registerAdapter(ChatMessageAdapter());
-  Hive.registerAdapter(ConversationAdapter());
 
   // Pre-open the boxes the router's startup redirect depends on (backend
   // config lives in `settings`; the onboarding-complete flag in `onboarding`)
@@ -59,7 +69,10 @@ Future<void> main() async {
   );
 
   runApp(
-    const ProviderScope(child: SKChatApp()),
+    ProviderScope(
+      overrides: [diagLogProvider.overrideWithValue(diagLog)],
+      child: const SKChatApp(),
+    ),
   );
 }
 
