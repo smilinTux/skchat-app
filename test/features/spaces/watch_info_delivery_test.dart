@@ -88,4 +88,33 @@ void main() {
           isNull);
     });
   });
+
+  group("snapshotAfterSeek", () {
+    test("moves the position to the seek target", () {
+      // Otherwise the drift loop's next beat measures where the player was
+      // BEFORE the correction, concludes it is still out of sync, and
+      // corrects again on a reading its own correction invalidated.
+      const prev = PlaybackSnapshot(position: 100.0, playing: true);
+      expect(snapshotAfterSeek(prev, 250.0)!.position, 250.0);
+    });
+
+    test("carries play state, buffering and rate forward untouched", () {
+      // A seek says nothing about any of them. Inventing buffering:true in
+      // particular would be worse than useless: parseYouTubeInfo carries
+      // buffering forward across every frame that omits playerState, and most
+      // of them do, so it could stick on and suppress correction for good.
+      const prev = PlaybackSnapshot(
+          position: 100.0, playing: true, buffering: true, rate: 1.25);
+      final s = snapshotAfterSeek(prev, 250.0)!;
+      expect(s.playing, isTrue);
+      expect(s.buffering, isTrue);
+      expect(s.rate, 1.25);
+    });
+
+    test("with no frame yet there is nothing to amend", () {
+      // Before the first infoDelivery frame the caller's own shadow position
+      // is already the best answer available.
+      expect(snapshotAfterSeek(null, 250.0), isNull);
+    });
+  });
 }

@@ -89,9 +89,21 @@ class FakeWatchController implements WatchController {
     calls.add("pause");
   }
 
+  /// Models a player whose seeks are accepted but never actually land inside
+  /// a heartbeat: the command is issued, the picture stalls, and the reported
+  /// position does not move. This is the iOS-Safari-shaped failure the drift
+  /// back-off exists for, and with a fake that always lands a seek instantly
+  /// no test can tell a working correction from a livelocked one.
+  bool stuck = false;
+
+  /// Move the reported position WITHOUT recording a control call: models the
+  /// video simply playing on between heartbeats, which is the difference
+  /// between a client that settles and one that never does.
+  void advanceTo(double t) => _position = t;
+
   @override
   void seekTo(double t) {
-    _position = t;
+    if (!stuck) _position = t;
     calls.add("seekTo:$t");
   }
 
@@ -604,6 +616,112 @@ void main() {
     expect(lane.ephemeral, isEmpty);
     expect(resolveStageKind(videos: const <StageVideo>[], watchActive: state().isActive),
         StageKind.none);
+  });
+
+  group("a viewer who cannot keep up is not stuttered to death", () {
+    // Chef's watch party, ~30 minutes in at 1.25x: one participant's player
+    // paused for a second or two, played, and paused again, on repeat. Each
+    // "pause" was a corrective seek whose own rebuffer put them straight back
+    // outside the dead band, so the next heartbeat corrected again.
+    List<String> seeks() => ctl.calls.where((c) => c.startsWith("seekTo")).toList();
+
+    void heartbeats(WatchSession n, int count, {double from = 100.0}) {
+      for (var i = 0; i < count; i++) {
+        n.applyRemote({
+          "lane": "watch",
+          "action": "heartbeat",
+          "t": from + i * 3.0,
+          "playing": true,
+        });
+      }
+    }
+
+    test("30 heartbeats at a player that never lands a seek produce 6 seeks, "
+        "not 30", () {
+      final n = notifier(); // never loaded => not the host
+      ctl.stuck = true;
+      ctl.playing = true;
+
+      heartbeats(n, 30);
+
+      // 1, 2, 4, then capped at 8 heartbeats between attempts: ticks
+      // 0, 2, 5, 10, 19, 28. Before the back-off this was one seek per
+      // heartbeat and it never stopped.
+      expect(seeks().length, 6);
+    });
+
+    test("the back-off never becomes a mute button", () {
+      // Bounded, so a genuine desync still heals: over 100 heartbeats (5
+      // minutes) a stuck viewer is still being retried.
+      final n = notifier();
+      ctl.stuck = true;
+      ctl.playing = true;
+
+      heartbeats(n, 100);
+
+      expect(seeks().length, greaterThanOrEqualTo(10));
+    });
+
+    test("a host scrub re-arms correction instead of waiting out the back-off",
+        () {
+      final n = notifier();
+      ctl.stuck = true;
+      ctl.playing = true;
+      heartbeats(n, 30); // deep in the back-off
+      final before = seeks().length;
+
+      // An explicit seek lane event: the host jumped somewhere. Whatever the
+      // drift loop had learned describes a situation that no longer exists.
+      n.applyRemote(
+          {"lane": "watch", "action": "seek", "t": 500.0, "from": "host1"});
+      // The very next heartbeat must correct, not sit out another 8 ticks.
+      n.applyRemote({
+        "lane": "watch",
+        "action": "heartbeat",
+        "t": 900.0,
+        "playing": true,
+      });
+
+      expect(seeks().length, before + 2,
+          reason: "the scrub itself, then the correction on the next beat");
+    });
+
+    test("a viewer whose seeks DO land pays nothing for the back-off", () {
+      // The back-off must cost a healthy client nothing. This one lands its
+      // seek, plays normally through the next beat, and is therefore settled
+      // when the beat after that arrives, so the next real drift is corrected
+      // on the spot rather than sitting out a cool-down it never earned.
+      final n = notifier();
+      ctl.playing = true;
+
+      n.applyRemote({
+        "lane": "watch",
+        "action": "heartbeat",
+        "t": 100.0,
+        "playing": true,
+      });
+      expect(seeks(), ["seekTo:100.0"]);
+
+      // Playing normally: 3s of wall clock, 3s of video, still in step.
+      ctl.advanceTo(103.0);
+      n.applyRemote({
+        "lane": "watch",
+        "action": "heartbeat",
+        "t": 103.0,
+        "playing": true,
+      });
+      expect(seeks().length, 1, reason: "in band, nothing to correct");
+
+      // Now a real jump. Settled clients get corrected immediately.
+      ctl.advanceTo(106.0);
+      n.applyRemote({
+        "lane": "watch",
+        "action": "heartbeat",
+        "t": 400.0,
+        "playing": true,
+      });
+      expect(seeks(), ["seekTo:100.0", "seekTo:400.0"]);
+    });
   });
 
   group("a new video starts at 1x", () {
