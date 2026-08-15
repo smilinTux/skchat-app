@@ -326,6 +326,12 @@ class WatchVideoController implements WatchController {
   @override
   void seekTo(double t) {
     _shadowPos = t;
+    // For YouTube, [playbackSnapshot] prefers `_latest` over `_shadowPos` the
+    // moment any frame has ever arrived, so without this the shadow value is
+    // dead weight and a commanded seek stays invisible to the drift loop until
+    // the embed pushes a fresh frame. See snapshotAfterSeek for why only the
+    // position is amended.
+    _latest = snapshotAfterSeek(_latest, t) ?? _latest;
     switch (_mode) {
       case _WatchMode.video:
         videoEl?.currentTime = t;

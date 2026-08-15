@@ -146,6 +146,12 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   late final LaneLike _lane;
   Timer? _heartbeatTimer;
 
+  /// Drift-correction policy WITH memory (see watch_drift.dart). Stateful on
+  /// purpose: the bare [resolveDrift] re-decides from scratch every beat and
+  /// so cannot tell a viewer who drifted from a viewer who is drifting
+  /// because of the seek this loop issued three seconds ago.
+  final _drift = DriftCorrector();
+
   /// Set (only) inside [ref.onDispose]. Guards every continuation that can
   /// resume after disposal: [_lane.catchUp]'s HTTP round trip is exactly the
   /// kind of await a user backing out of the Space mid-join races against,
@@ -215,6 +221,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   /// [applyRemote] for the mirror image (a REMOTE load clears the flag).
   void loadUrl(String url) {
     controller.load(url);
+    _drift.reset();
     // Speed is per-video, not a sticky room preference: carrying 2x into an
     // unrelated video is a surprise, and the viewer who set it may not be the
     // one loading next. The reset rides the load event rather than a separate
@@ -227,12 +234,14 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
 
   void play() {
     controller.play();
+    _drift.reset();
     state = state.copyWith(isPlaying: true);
     _publish({"action": "play", "t": controller.position});
   }
 
   void pause() {
     controller.pause();
+    _drift.reset();
     state = state.copyWith(isPlaying: false);
     _publish({"action": "pause", "t": controller.position});
   }
@@ -245,6 +254,9 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   /// "rate" event happened to fire.
   void setRate(double rate) {
     controller.setRate(rate);
+    // The dead band is scaled by rate (see effectiveDeadBand), so a speed
+    // change moves the goalposts the back-off was measured against.
+    _drift.reset();
     state = state.copyWith(rate: rate);
     _publish({"action": "rate", "rate": rate});
   }
@@ -255,6 +267,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   void syncPosition() {
     final t = controller.position;
     controller.seekTo(t);
+    _drift.reset();
     _publish({"action": "seek", "t": t});
   }
 
@@ -267,6 +280,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   /// session for them.
   void stopWatching() {
     controller.pause();
+    _drift.reset();
     state = state.copyWith(
         clearUrl: true, isHostOfVideo: false, isPlaying: false);
     _publish({"action": "stop"});
@@ -298,7 +312,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
   void _applyHeartbeat(double hostPosition, bool hostPlaying) {
     if (state.isHostOfVideo) return; // never correct the authority
     final local = controller.playbackSnapshot;
-    final action = resolveDrift(
+    final action = _drift.onHeartbeat(
       local: local,
       hostPosition: hostPosition,
       hostPlaying: hostPlaying,
@@ -359,6 +373,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
       final r = (e["rate"] as num?)?.toDouble();
       if (r != null) {
         controller.setRate(r);
+        _drift.reset(); // mirror of setRate: the dead band just changed
         state = state.copyWith(rate: r);
       }
       return;
@@ -371,6 +386,7 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
       // falls into that switch's existing `default:` branch and simply
       // ignores it, same as any other action it predates.
       controller.pause();
+      _drift.reset();
       state = state.copyWith(
           clearUrl: true, isHostOfVideo: false, isPlaying: false);
       return;
@@ -379,6 +395,11 @@ class WatchSession extends AutoDisposeFamilyNotifier<WatchSessionState,
     // an older client also understands; heartbeat and stop are additive on
     // top of it.
     applyWatchEvent(controller, e);
+    // Every one of those re-aligns this client by construction, so whatever
+    // the drift loop had learned describes a situation that no longer holds.
+    // Without this a viewer deep in the back-off would ignore the heartbeats
+    // right after a host scrub, which is exactly when they need them.
+    _drift.reset();
     switch (action) {
       case "load":
         // Mirror of loadUrl's reset: every client drops to 1x on a load, which

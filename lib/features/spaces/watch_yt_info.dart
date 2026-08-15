@@ -8,6 +8,33 @@ import "watch_drift.dart";
 const int _kPlaying = 1;
 const int _kBuffering = 3;
 
+/// The snapshot to report immediately after commanding a seek to [target].
+///
+/// Player state is read from the last `infoDelivery` frame, and frames stop
+/// (or go stale) for as long as the seek is rebuffering. Leaving the old frame
+/// in place means the drift loop's next beat measures where the player WAS
+/// before the correction, decides it is still out of sync, and corrects again
+/// on the strength of a reading it invalidated itself. Reporting the target
+/// makes a commanded seek visible right away.
+///
+/// Only the position moves. Play state, buffering and rate all carry forward:
+/// a seek says nothing about them, and inventing `buffering: true` here would
+/// be worse than useless, since [parseYouTubeInfo] carries buffering forward
+/// across every frame that omits `playerState` and most of them do, so it
+/// could stick on and suppress correction for good.
+///
+/// Returns null when there is no previous frame to amend: before the first
+/// one lands the caller's own shadow position is already the best answer.
+PlaybackSnapshot? snapshotAfterSeek(PlaybackSnapshot? previous, double target) {
+  if (previous == null) return null;
+  return PlaybackSnapshot(
+    position: target,
+    playing: previous.playing,
+    buffering: previous.buffering,
+    rate: previous.rate,
+  );
+}
+
 /// Parse one `infoDelivery` frame from the YouTube IFrame API.
 ///
 /// The app used to assume player time was unreadable cross-origin and faked a
