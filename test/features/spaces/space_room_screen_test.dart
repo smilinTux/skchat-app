@@ -2159,5 +2159,55 @@ void main() {
       expect(leaveRect.overlaps(toolRect), isFalse,
           reason: "multitool at $toolRect must not cover Leave at $leaveRect");
     });
+
+    // Chef: "my old iphone is already cutting off the hangup button".
+    //
+    // The control row is a plain Row of fixed 56px _RoundButtons inside 24px
+    // of horizontal padding. A Row neither wraps nor scrolls, so past the
+    // available width it simply overflows and the LAST child is what runs off
+    // the edge. Leave is last. A host live on camera carries eight controls
+    // (Mute, Stop, Flip, Reactions, Cast, End, Tools, Leave): 8 * 56 + 48 =
+    // 496 logical pixels, against 375 on an iPhone 8 / SE 2 and 320 on an SE
+    // 1. Losing the one control you need when a call goes wrong is the worst
+    // possible thing for this row to drop.
+    //
+    // Sized by hand rather than trusting the default 800x600 test surface,
+    // which is wider than any phone and hides this entirely.
+    for (final size in const [Size(320, 568), Size(375, 667)]) {
+      testWidgets(
+          "every control stays on screen and reachable at ${size.width.toInt()}pt",
+          (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        // The widest case: host, live on camera, so Stop AND Flip AND End are
+        // all present at once.
+        final participants = <LiveKitParticipantSnapshot>[
+          _snap("chef@dk.skworld",
+              isLocal: true, canPublish: true, isCameraEnabled: true),
+          _snap("alice"),
+        ];
+        when(() => svc.participants)
+            .thenAnswer((_) => Stream.value(participants));
+        when(() => svc.currentParticipants).thenReturn(participants);
+
+        await tester.pumpWidget(wrapFor(join));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // A RenderFlex overflow is reported as a framework exception, not a
+        // failed expect, so it has to be claimed explicitly or the test would
+        // pass while the bar visibly bleeds off the screen.
+        expect(tester.takeException(), isNull,
+            reason: "something overflowed at ${size.width}pt");
+
+        final leaveRect = tester.getRect(find.byIcon(Icons.call_end_rounded));
+        expect(leaveRect.right, lessThanOrEqualTo(size.width),
+            reason: "Leave runs off the right edge at $leaveRect");
+        expect(leaveRect.left, greaterThanOrEqualTo(0.0),
+            reason: "Leave runs off the left edge at $leaveRect");
+      });
+    }
   });
 }

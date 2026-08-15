@@ -918,15 +918,25 @@ class _Header extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
+                // Flexible + ellipsis on the count, fixed on the separator and
+                // the timer. All three were unbounded Texts, so on a phone the
+                // subtitle overflowed its own Expanded column rather than
+                // giving anything up (measured: 260.4px of children in 251px
+                // at 375pt). The elapsed timer is the half that must stay
+                // whole, so the count is the half that yields.
                 Row(
                   children: [
-                    Text(
-                      state.isConnected
-                          ? "$listeners listening"
-                          : "connecting...",
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: SovereignColors.textSecondary,
-                          ),
+                    Flexible(
+                      child: Text(
+                        state.isConnected
+                            ? "$listeners listening"
+                            : "connecting...",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SovereignColors.textSecondary,
+                            ),
+                      ),
                     ),
                     if (state.isConnected) ...[
                       Text(
@@ -1945,8 +1955,17 @@ class _ControlBar extends ConsumerWidget {
       }
     }
 
+    // Chef: "my old iphone is already cutting off the hangup button."
+    //
+    // A phone is the tightest this row ever gets and 24px a side is a luxury
+    // there. Trading the gutter for control width is what keeps the ordinary
+    // cases (listener, speaker not live) on a single run at 320pt instead of
+    // wrapping for the sake of whitespace.
+    final narrow = MediaQuery.sizeOf(context).width < 400;
+    final gutter = narrow ? 10.0 : 24.0;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+      padding: EdgeInsets.fromLTRB(gutter, 12, gutter, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1981,8 +2000,27 @@ class _ControlBar extends ConsumerWidget {
                     ),
               ),
             ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          // Wrap, not Row. A Row neither wraps nor scrolls: past the available
+          // width it overflows, and what runs off the edge is the LAST child,
+          // which here is Leave. A host live on camera carries eight controls
+          // (Mute, Stop, Flip, Reactions, Cast, End, Tools, Leave) totalling
+          // 448px of buttons before any gap, against 375 logical pixels on an
+          // iPhone 8 / SE 2 and 320 on an SE 1. Losing the one control a user
+          // needs when a call goes wrong is the worst thing this row could
+          // choose to drop.
+          //
+          // spaceEvenly is kept as the Wrap's alignment so a single-run layout
+          // (every screen wide enough, which is all of them today above a
+          // phone) is pixel-identical to the Row it replaces; `spacing` is a
+          // floor so controls never touch once a run does fill up. Wrapping to
+          // a second run costs vertical space, which during a watch party is
+          // real, so it only ever happens when the alternative is a control
+          // nobody can reach.
+          Wrap(
+            alignment: WrapAlignment.spaceEvenly,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 12,
             children: [
             if (canPublish)
               _RoundButton(
