@@ -1,10 +1,34 @@
-# skchat-app — Standard Operating Procedures
+# SKWorld App - Standard Operating Procedures
 
 The Flutter GUI client for **SKChat** — the mobile/desktop/web surface of the
 SKWorld sovereign comms layer. It renders, signs, and delegates: it does no
 transport, identity, or crypto of its own — it speaks HTTP/WS to a **skchat /
 skcomms** daemon, mints room tokens against the SKChat web-UI, joins **LiveKit**
 SFU rooms for calls + data-lanes, and caches offline state in **Hive**.
+
+## 0. Naming: the rename is SURFACE-ONLY
+
+The GitHub repository was renamed from `skchat-app` to `skworld-app`, and the README
+title and this SOP title were changed to match. **Nothing else was renamed.** Do not
+assume the internal identifiers followed, because they did not:
+
+| Identifier | Value today | Where |
+|---|---|---|
+| Dart package name | `skchat` | `pubspec.yaml:1` |
+| pubspec description | still opens with `SKChat`, not SKWorld | `pubspec.yaml:2` |
+| workspace members | 2 of the 5 are `skchat_*`: `packages/skchat_ui`, `apps/skchat_standalone` (the other 3 are `packages/skworld_module_api`, `packages/skcode_client`, `apps/skcode_standalone`) | `pubspec.yaml:26-31` |
+| CI job checkout path + step names | `skchat-app` | `.github/workflows/ci.yml` |
+| CI web build artifact | `skchat-web-<sha>` | `.github/workflows/ci.yml` |
+| serving systemd unit | `skchat-app-web.service` | outside this repo, see section 5 |
+| GitHub repo name | `skworld-app` (**changed**) | github.com/smilinTux/skworld-app |
+| README title, this SOP title | SKWorld App (**changed**) | `README.md:1`, `SOP.md:1` |
+
+So a `pubspec.lock`, a `package:skchat` import, a CI artifact URL, or a Dart
+`import 'package:skchat_ui/...'` all still say `skchat`, and they are correct to. The
+remaining rename is a real change with a blast radius (lockfiles, import paths across
+every consumer, the deploy unit, the artifact contract) and is tracked separately.
+Until it lands: **`skchat` is the package identity, `skworld-app` is the repo
+identity.** Neither is a typo.
 
 ## 1. Overview
 
@@ -36,7 +60,7 @@ audio/video + data-lanes). Offline state lives in Hive.
 
 ```mermaid
 flowchart TD
-    subgraph APP["skchat-app (Flutter)"]
+    subgraph APP["skworld-app (Flutter, package name still `skchat`)"]
       MAIN["main.dart<br/>ProviderScope + MaterialApp.router"]
       ROUTER["GoRouter (app_router.dart)<br/>chats · conversation · groups · calls · spaces · identity"]
       PROV["Riverpod providers<br/>daemonUrlProvider · backendConfigProvider<br/>skcommsClientProvider · liveKitCallServiceProvider"]
@@ -127,6 +151,34 @@ flutter test             # unit/widget tests — must pass
 Both must pass before merge (see `CONTRIBUTING.md`). CI-equivalent local run:
 `flutter pub get && flutter analyze && flutter test`.
 
+**What CI actually gates** (`.github/workflows/ci.yml`, Flutter pinned `3.41.2`), in
+order, because the local two-liner above is a subset:
+
+1. **`import-gate` job** (pure bash, no Flutter toolchain, so a resolution failure
+   cannot mask it). Four scripts, each run as its own step:
+   `packages/skchat_ui/tool/import_gate.sh`,
+   `apps/skchat_standalone/tool/standalone_import_gate.sh`,
+   `packages/skcode_client/tool/import_gate.sh`,
+   `apps/skcode_standalone/tool/standalone_import_gate.sh`. They prove the module
+   packages import only `skworld_module_api` plus Flutter/Dart core, and that the
+   standalone runners never import the app shell (`package:skchat`).
+2. **`flutter` job.** Checks this repo out at `skchat-app/` and the **sibling**
+   `smilinTux/sk-pqc-dart` at `sk-pqc-dart/`, because `dependency_overrides` pins
+   `sk_pqc` to `../sk-pqc-dart` (`pubspec.yaml:168-170`) and pub applies overrides
+   unconditionally. Then it **builds liboqs `0.12.0` from source** (ML-KEM-768, cached)
+   because the PQ tests exercise the real backend through sk_pqc's FFI.
+3. `flutter analyze --no-fatal-infos` (warnings stay fatal; pre-existing info-level
+   hints do not gate).
+4. **Five separate `flutter test` invocations**, not one: the root app, then
+   `packages/skchat_ui`, `apps/skchat_standalone`, `packages/skcode_client`,
+   `apps/skcode_standalone`. Workspace members are **not** run by the root
+   `flutter test`, so a green root run proves nothing about them.
+5. `flutter build web --release --base-href /app/`, then a preflight that fails if any
+   of `index.html`, `main.dart.js`, `flutter_bootstrap.js`, `sk_pqc_noble.js` is
+   missing from `build/web` (a green build with a missing `sk_pqc_noble.js` breaks
+   hybrid DMs at runtime).
+6. Uploads the bundle as artifact `skchat-web-<sha>`.
+
 ## 5. Release / Deploy
 
 Multi-platform Flutter client — there is no server to deploy, only artifacts to
@@ -135,19 +187,58 @@ build and (for web) to serve.
 - **Native (mobile/desktop):** `flutter build <apk|ios|linux|macos|windows>` →
   ship the platform artifact. Point the build at a specific backend with
   `--dart-define` (see §6).
-- **Web:** `flutter build web --release` produces a static bundle in
-  `build/web/`. Serve it behind the SKChat web-UI reverse proxy.
+- **Web:** `flutter build web --release --base-href /app/` produces a static bundle in
+  `build/web/`. Two serving paths exist and they are not the same thing: same-origin
+  behind the SKChat web-UI reverse proxy, and the direct `0.0.0.0:8088` static server
+  that skchat ships. Both are described under Front-end / Exposure below.
 
-**Front-end / exposure (mandatory).** The web build is served **behind the
-funnel / tailnet** — the SKChat web-UI reverse-proxies `/api/v1`, `/daemon`,
-`/access`, `/spaces`, and `/livekit/token` to the daemon, so the browser talks
-**same-origin** and no daemon port is exposed. **Never** serve the web build on a
-raw public port and **never** expose the daemon (`:9384`), LiveKit token endpoint,
-or skcapstone (`:7777/:7778`) directly to the internet. Loopback-bound services
-(e.g. skbloom `:8774`) are reached only via SSH/tailnet forward.
+### Front-end / Exposure
 
-Versioning is SemVer via `pubspec.yaml` `version:` (`X.Y.Z+build`); tag + record
-changes in `CHANGELOG.md` on release (see §9).
+**Tier `T0` client. This repo binds nothing.** On every platform (Android, iOS,
+Linux, macOS, Windows, web) the app only opens **outbound** HTTP/WS/WSS connections.
+There is no listener in this codebase and no `:443` route it owns.
+
+Every surface listed below belongs to a **different repo**. They are recorded here so
+a reader of this SOP is not surprised by them, and each row names its real owner. Do
+not treat any of them as a fact this repo can assert or change.
+
+| Surface | Where it binds | Owned by |
+|---|---|---|
+| the built web bundle (`build/web`) | **`0.0.0.0:8088`** (see below) | **skchat** |
+| SKChat web-UI reverse proxy (`/api/v1`, `/daemon`, `/access`, `/spaces`, `/livekit/token`) | funnel / tailnet | skchat |
+| skcomms daemon | `:9384` (see below) | skcomms |
+| LiveKit SFU | `wss` (default `:8443` in `backend_config.dart`) | the LiveKit deployment |
+| skcapstone daemon / dashboard | `:7777` / `:7778` | skcapstone |
+| skbloom | `:8774` | skbloom |
+
+**The web build is served on `0.0.0.0:8088`.** This SOP previously omitted the
+serving surface entirely. The serving script is `scripts/serve-app-web.sh` **in the
+skchat repo, not this one** (a wrapper over `serve_app_web.py`: correct content types,
+no-cache on `index.html`, immutable cache on hashed filenames, autoindex disabled).
+The unit `skchat-app-web.service` that skchat ships sets `SKCHAT_APP_WEB_PORT=8088`
+and `SKCHAT_APP_WEB_BIND=0.0.0.0`, so `:8088` is reached **directly on the LAN and
+tailnet**, not funnel-fronted. The script's own default bind is `127.0.0.1`; the unit
+overrides it. To change any of that, change it in **skchat**. Note also that the app
+must be built with `--base-href /app/` to match the production serve path (CI does
+this), or the deployed bundle 404s its assets and never boots.
+
+**On `:9384`, correcting an earlier revision of this SOP.** That revision claimed
+second-hand that the reverse proxy meant "no daemon port is exposed". **Do not repeat
+that claim.** This repo does not own the skcomms bind and cannot verify it from its own
+tree; observed on a live node, `:9384` binds `0.0.0.0`, so it is reachable across the
+LAN and the tailnet. The skcomms daemon's exposure is **skcomms' documented fact**;
+read it there. Design client behaviour (URL handling, mixed content, CORS) without
+assuming a same-origin-only daemon.
+
+**What this repo can still say honestly:** prefer the same-origin web-UI proxy so the
+browser is not making cross-origin or mixed-content calls, never point a production
+build at a plain-HTTP daemon across an untrusted path, and remember that repointing is
+a one-field operation for the user (`setCustomHost()` in `backend_config.dart:333`
+derives the whole backend stack from one `scheme://host[:port]`), so a bad default
+propagates everywhere at once.
+
+Versioning: SemVer plus a build number in `pubspec.yaml` `version:` (`X.Y.Z+build`);
+bump it there, add a `CHANGELOG.md` entry, and tag on release (see §9).
 
 ## 6. Configuration / Usage
 
@@ -234,7 +325,8 @@ byte-for-byte interoperable with the daemon's `pqdm.py`.
 | "daemon offline" on web after moving hosts | `daemonUrlProvider` seeds from the served origin; a stale persisted `settings/skcomms_daemon_url` (esp. one ending in `/api`) mis-routes. Reset via Profile or clear the Hive `settings` box. |
 | `pub get` fails: `could not find package sk_pqc at "../sk-pqc-dart"` | `dependency_overrides` points at a sibling `sk-pqc-dart/`. Clone/symlink it next to the checkout root (worktrees resolve `../` from the worktree dir). |
 | Calls connect but never see remote video/audio | LiveKit SFU URL (`backendConfigProvider.livekitUrl`) unreachable, or the server returned a `livekit_url` that routes off your tailnet. Verify `wss://…:8443` reachability. |
-| Web build served but browser blocks daemon calls | Not behind the web-UI reverse proxy → mixed-content / CORS. Serve the bundle behind the funnel same-origin (§5), never a raw port. |
+| Web build served but browser blocks daemon calls | Cross-origin / mixed content. The bundle can be reached two ways: same-origin behind the web-UI reverse proxy, or directly on `:8088` (skchat's static server), where the daemon is *not* same-origin. Prefer the proxy path, or set an explicit daemon URL. See §5. |
+| Web build loads a blank page and 404s its assets | Built without `--base-href /app/`, which must match the production serve path. CI builds with it, a hand build may not. |
 | Messages send unsigned | No local keypair loaded yet (mid-onboarding). Signing is best-effort; complete identity pairing (`identity_service.dart`). |
 | PQ badge never shows / DMs stay classical | `pqBootstrapProvider` failed to publish the prekey, or the peer has no published prekey. Check `pq_prekey_service.dart` publish and the daemon's prekey store. |
 
@@ -251,11 +343,42 @@ byte-for-byte interoperable with the daemon's `pqdm.py`.
   honestly, not a post-quantum guarantee.
 - **VERSION_LIFECYCLE phase:** Active (default, all new work) — see
   [`VERSION_LIFECYCLE`](https://github.com/smilinTux/sk-standards).
-- **Version:** SemVer via `pubspec.yaml` `version:` (currently `1.0.0+1`).
-  Bump + `CHANGELOG.md` entry + tag on release.
+- **Version: read it from `pubspec.yaml`, not from here.** The single source of truth
+  is the `version: X.Y.Z+build` field at `pubspec.yaml:5` (SemVer plus a build
+  number). Bump it there, add a `CHANGELOG.md` entry, and tag on release. This
+  document deliberately does not quote a number: an earlier revision of both this SOP
+  and `README.md` pinned it at `1.0.0` with build `1`, which was **four minor
+  versions** behind the tree by the time anyone read it. The evidence block at the end
+  of this file fails if a literal `X.Y.Z+N` is ever written back into either doc.
 
 ---
 
 _Honest-claims note: no part of this repo is "quantum-proof", "quantum-safe", or
 "unbreakable". Post-quantum protection is limited to the DM KEM surface provided
 by `sk_pqc`; the call-media leg is DTLS-SRTP (classical)._
+
+<!-- docs-evidence
+verified: 2026-08-15
+checks:
+  - name: Dart package name is still skchat (section 0 surface-only-rename claim)
+    run: grep -qxF "name: skchat" pubspec.yaml
+  - name: documented workspace member paths exist and are declared
+    run: grep -qxF "  - packages/skchat_ui" pubspec.yaml && grep -qxF "  - apps/skchat_standalone" pubspec.yaml && test -d packages/skchat_ui && test -d apps/skchat_standalone
+  - name: version lives in pubspec.yaml and is NOT hardcoded into SOP.md or README.md
+    run: grep -qE "^version: [0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$" pubspec.yaml && ! grep -qE "[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+" SOP.md README.md
+  - name: documented entry point lib/main.dart still has the async main
+    run: grep -qxF "Future<void> main() async {" lib/main.dart
+  - name: sk_pqc still resolves via the sibling ../sk-pqc-dart path override
+    run: grep -qxF "    path: ../sk-pqc-dart" pubspec.yaml
+  - name: all four documented import-gate scripts exist and are wired into CI
+    run: for s in packages/skchat_ui/tool/import_gate.sh apps/skchat_standalone/tool/standalone_import_gate.sh packages/skcode_client/tool/import_gate.sh apps/skcode_standalone/tool/standalone_import_gate.sh; do test -f "$s" && grep -qF "bash $s" .github/workflows/ci.yml || exit 1; done
+  - name: CI still runs exactly the five documented flutter test invocations
+    run: test "$(grep -cE "^ +run: flutter test$" .github/workflows/ci.yml)" -eq 5
+  - name: CI still builds the documented liboqs 0.12.0 from source
+    run: grep -qF -- "--branch 0.12.0" .github/workflows/ci.yml && grep -qxF "          key: liboqs-0.12.0-\${{ runner.os }}" .github/workflows/ci.yml
+  - name: web build still uses the documented production base href /app/
+    run: grep -qxF "        run: flutter build web --release --base-href /app/" .github/workflows/ci.yml
+  - name: CI web artifact name is still skchat-web (section 0 rename claim)
+    run: grep -qxF "          name: skchat-web-\${{ github.sha }}" .github/workflows/ci.yml
+-->
+
