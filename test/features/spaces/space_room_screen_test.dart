@@ -9,6 +9,10 @@ import "package:hive_flutter/hive_flutter.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/call_shared/screen_share_source.dart";
+import "package:skchat/features/calls/call_device_picker.dart"
+    show CallDeviceReconciler;
+import "package:skchat/features/calls/cast_sheet.dart"
+    show activeCastSessionProvider;
 import "package:skchat/features/spaces/space_chat_panel.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/space_room_screen.dart";
@@ -17,6 +21,7 @@ import "package:skchat/features/spaces/watch_session.dart"
 import "package:skchat/features/spaces/watch_video_stub.dart"
     if (dart.library.html) "package:skchat/features/spaces/watch_video_web.dart";
 import "package:skchat/services/lane_service.dart" show LaneLike;
+import "package:skchat/services/cast_service.dart" show HlsCastSession;
 import "package:skchat/services/livekit_call_service.dart";
 import "package:skchat/services/spaces_service.dart";
 
@@ -54,6 +59,8 @@ class _NoopLane implements LaneLike {
 class MockRoom extends Mock implements Room {}
 
 class MockRemoteParticipant extends Mock implements RemoteParticipant {}
+
+class MockLocalParticipant extends Mock implements LocalParticipant {}
 
 class MockRemoteTrackPublication extends Mock
     implements RemoteTrackPublication {}
@@ -2158,6 +2165,295 @@ void main() {
       final toolRect = tester.getRect(multitool);
       expect(leaveRect.overlaps(toolRect), isFalse,
           reason: "multitool at $toolRect must not cover Leave at $leaveRect");
+    });
+
+    // Chef: "my old iphone is already cutting off the hangup button".
+    //
+    // The control row was a plain Row of fixed _RoundButtons inside 24px of
+    // horizontal padding. A Row neither wraps nor scrolls, so past the
+    // available width it simply overflows and the LAST child is what runs off
+    // the edge. Leave is last. A host live on camera carried NINE controls
+    // (Mute, Stop, Flip, Devices, Reactions, Cast, End, Tools, Leave) at
+    // 56+56+56+56+52+56+56+56+60 = 504px, plus 48px of gutters, against 375
+    // logical pixels on an iPhone 8 / SE 2 and 320 on an SE 1. Losing the one
+    // control you need when a call goes wrong is the worst possible thing for
+    // this row to drop.
+    //
+    // Sized by hand rather than trusting the default 800x600 test surface,
+    // which is wider than any phone and hides this entirely.
+    for (final size in const [Size(320, 568), Size(375, 667)]) {
+      testWidgets(
+          "every control stays on screen and reachable at ${size.width.toInt()}pt",
+          (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        // The widest case: host, live on camera, so Stop AND Flip AND End are
+        // all present at once.
+        final participants = <LiveKitParticipantSnapshot>[
+          _snap("chef@dk.skworld",
+              isLocal: true, canPublish: true, isCameraEnabled: true),
+          _snap("alice"),
+        ];
+        when(() => svc.participants)
+            .thenAnswer((_) => Stream.value(participants));
+        when(() => svc.currentParticipants).thenReturn(participants);
+
+        await tester.pumpWidget(wrapFor(join));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // A RenderFlex overflow is reported as a framework exception, not a
+        // failed expect, so it has to be claimed explicitly or the test would
+        // pass while the bar visibly bleeds off the screen.
+        expect(tester.takeException(), isNull,
+            reason: "something overflowed at ${size.width}pt");
+
+        final leaveRect = tester.getRect(find.byIcon(Icons.call_end_rounded));
+        expect(leaveRect.right, lessThanOrEqualTo(size.width),
+            reason: "Leave runs off the right edge at $leaveRect");
+        expect(leaveRect.left, greaterThanOrEqualTo(0.0),
+            reason: "Leave runs off the left edge at $leaveRect");
+      });
+    }
+  });
+
+  group("the room below the video stays on screen", () {
+    // Chef, browser maximised: "when i do full screen, the stage is not
+    // viewable and i can't scroll it up or down [...] when i shrink the
+    // browser horizontally, it squishes the video up and i'm able to see the
+    // stage below."
+    //
+    // A bare AspectRatio(16 / 9) in a full-width list is sized entirely by
+    // WIDTH, so a WIDER window produced a TALLER video. At a 1400px stage that
+    // is ~790px of height, more than the whole stage area, so the Speakers row
+    // sat below the fold; narrowing the window shrank the width, so the video
+    // got shorter and the room came back. Hence the backwards-looking symptom:
+    // a bigger window showing less.
+    //
+    // Scrolling was no escape either. On web the watch surface is a platform
+    // view (a real DOM element) and the browser routes a wheel over it to that
+    // element rather than to Flutter's list, so the one gesture that would
+    // reach the hidden content is swallowed by the thing hiding it.
+    Future<void> loadWatchVideo(WidgetTester tester) async {
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(SpaceRoomScreen)));
+      const watchArgs =
+          WatchSessionArgs(spaceId: "s1", identity: "chef@dk.skworld");
+      container
+          .read(watchSessionProvider(watchArgs).notifier)
+          .loadUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets("a wide window does not push Speakers off the bottom",
+        (tester) async {
+      // Chef's actual case: a maximised browser on a 1440p-class screen.
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await loadWatchVideo(tester);
+
+      final video = find.byType(WatchVideo, skipOffstage: false);
+      expect(video, findsOneWidget);
+      final videoRect = tester.getRect(video);
+      final speakers = find.text("SPEAKERS");
+      expect(speakers, findsOneWidget);
+      final speakersRect = tester.getRect(speakers);
+
+      expect(speakersRect.top, lessThan(900.0),
+          reason: "SPEAKERS at $speakersRect is off the bottom of the window");
+      expect(videoRect.height, lessThan(900.0 * 0.8),
+          reason: "the video at $videoRect ate the whole stage");
+    });
+
+    testWidgets("the video is capped by HEIGHT, not grown by width",
+        (tester) async {
+      // The direct statement of the bug: widening the window must not make the
+      // video taller once the cap binds. Before the fix these two heights
+      // differed by the full width ratio.
+      double heightAt(double w) => w;
+
+      final heights = <double, double>{};
+      for (final width in [1000.0, 1600.0]) {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(wrap());
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        await loadWatchVideo(tester);
+
+        heights[width] = tester
+            .getRect(find.byType(WatchVideo, skipOffstage: false))
+            .height;
+      }
+      tester.view.reset();
+      heightAt(0);
+
+      expect(heights[1600], closeTo(heights[1000]!, 1.0),
+          reason: "widening the window from 1000 to 1600 changed the video "
+              "height from ${heights[1000]} to ${heights[1600]}, which is the "
+              "bug: width driving height");
+    });
+
+    testWidgets("a narrow window still fills the width (cap does not bind)",
+        (tester) async {
+      // The cap must not shrink a phone-width video, where width is already
+      // the binding limit and the old behavior was correct.
+      tester.view.physicalSize = const Size(375, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await loadWatchVideo(tester);
+
+      final videoRect =
+          tester.getRect(find.byType(WatchVideo, skipOffstage: false));
+      // 375 wide minus the list's 16px padding a side.
+      expect(videoRect.width, closeTo(343.0, 1.0));
+    });
+  });
+
+  group("setup controls live in Tools, not on the control bar", () {
+    // Devices and Cast are "set once at the start" controls, not live-moment
+    // ones, so they are the right two to give up bar width: at 320pt the row
+    // was three runs deep with them and is two without.
+
+    testWidgets("Devices is not a control-bar button any more", (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Devices"), findsNothing);
+      expect(find.byIcon(Icons.tune_rounded), findsNothing);
+    });
+
+    testWidgets("Tools offers Camera & mic, and it opens the picker",
+        (tester) async {
+      when(() => svc.enumerateAudioInputs()).thenAnswer(
+          (_) async => [MediaDevice("mic-1", "Blue Yeti", "audioinput", null)]);
+      when(() => svc.enumerateVideoInputs()).thenAnswer((_) async =>
+          [MediaDevice("cam-1", "FaceTime HD", "videoinput", null)]);
+
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Tools"));
+      await tester.pumpAndSettle();
+      expect(find.text("Camera & mic"), findsOneWidget);
+
+      await tester.tap(find.text("Camera & mic"));
+      // Fixed frames, not pumpAndSettle: the picker enumerates devices and
+      // reads Hive on open, which is real I/O that never "settles" under the
+      // test binding. The sheet's own heading appearing is proof enough that
+      // the row is wired to the real picker and not just closing the menu.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text("Devices"), findsOneWidget);
+    });
+
+    testWidgets("a listener gets no Camera & mic row (no track to configure)",
+        (tester) async {
+      // The shared harness marks chef@ as the LOCAL participant whichever
+      // join is passed, so a genuine listener case has to say so itself.
+      final asListener = <LiveKitParticipantSnapshot>[
+        _snap("alice@dk.skworld", isLocal: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => Stream.value(asListener));
+      when(() => svc.currentParticipants).thenReturn(asListener);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text("Tools"));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Camera & mic"), findsNothing);
+      // Cast is NOT gated the same way: a listener watching along is exactly
+      // who wants this Space on the big screen.
+      expect(find.text("Cast to TV"), findsOneWidget);
+    });
+
+    testWidgets("Cast is a Tools row while idle, and comes back onto the bar "
+        "once a cast is actually running", (tester) async {
+      // Hiding a live, room-visible state two taps deep is how someone forgets
+      // they are still throwing the Space at a TV.
+      await tester.pumpWidget(wrap());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text("Cast"), findsNothing);
+      expect(find.text("Casting"), findsNothing);
+
+      await tester.tap(find.text("Tools"));
+      await tester.pumpAndSettle();
+      expect(find.text("Cast to TV"), findsOneWidget);
+      Navigator.of(tester.element(find.text("Cast to TV"))).pop();
+      await tester.pumpAndSettle();
+
+      // Now a cast is live.
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(SpaceRoomScreen)));
+      container.read(activeCastSessionProvider.notifier).state =
+          const HlsCastSession(egressId: "eg-1", hlsUrl: "https://x/y.m3u8");
+      await tester.pump();
+
+      expect(find.text("Casting"), findsOneWidget);
+    });
+  });
+
+  group("saved device prefs survive Devices leaving the control bar", () {
+    // The regression the Tools move could have caused, and the reason
+    // CallDeviceReconciler exists. Reconciling the live tracks with the saved
+    // (or smart-default) device is tied to being MOUNTED, and it used to live
+    // inside the Devices BUTTON. Had the whole widget moved into the Tools
+    // sheet, this would only ever run when a user happened to open that menu:
+    // someone whose OS default is a dead DroidCam would silently get the
+    // phantom device back on every join, with no error and nothing to see.
+    //
+    // Asserted structurally (is it mounted on the always-present bar?) rather
+    // than by driving the reconcile to completion: the work behind it reads
+    // Hive, which is real file I/O that pumpAndSettle cannot advance, and the
+    // device-selection logic it applies is already covered directly in
+    // test/services/livekit_device_picker_test.dart. Mounting is the invariant
+    // this refactor could actually break.
+    testWidgets("a speaker keeps the reconciler mounted on the control bar",
+        (tester) async {
+      await tester.pumpWidget(wrapFor(speakerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(CallDeviceReconciler), findsOneWidget);
+      // Mounted but invisible: it is not a control, it renders nothing.
+      expect(tester.getSize(find.byType(CallDeviceReconciler)), Size.zero);
+    });
+
+    testWidgets("a listener has nothing to reconcile, so it is not mounted",
+        (tester) async {
+      final asListener = <LiveKitParticipantSnapshot>[
+        _snap("alice@dk.skworld", isLocal: true),
+        _snap("chef@dk.skworld", canPublish: true),
+      ];
+      when(() => svc.participants).thenAnswer((_) => Stream.value(asListener));
+      when(() => svc.currentParticipants).thenReturn(asListener);
+
+      await tester.pumpWidget(wrapFor(listenerJoin));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(CallDeviceReconciler), findsNothing);
     });
   });
 }

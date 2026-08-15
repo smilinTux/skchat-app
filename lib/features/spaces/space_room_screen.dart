@@ -619,7 +619,7 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                     join: join,
                     state: st,
                     onLeave: _leave,
-                    onOpenLanes: () => _openLanes(context, join),
+                    onOpenLanes: () => _openLanes(context, join, st),
                   ),
                 ],
               ),
@@ -633,14 +633,40 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
   // live in a ListView wired to the sheet's own scrollController, the
   // standard DraggableScrollableSheet pattern, so the sheet drags AND the
   // list scrolls; a grab handle makes it tactile by default.
-  void _openLanes(BuildContext context, SpaceJoin join) {
+  void _openLanes(BuildContext context, SpaceJoin join, SpaceRoomState st) {
     final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    // Same gate the Devices control carried on the bar: anyone who can publish
+    // video. A listener has no track to pick a device for.
+    final local = _localSnapshot(st.participants);
+    final canShare = join.isHost || (local?.canPublish ?? false);
+    final showDevices = canShare && (local?.canPublishVideo ?? true);
+
+    // Open tall enough to show every row it actually has, instead of a fixed
+    // 0.55 that was sized by eye when this list was shorter.
+    //
+    // This is load-bearing, not polish. The sheet's ListView is LAZY: a row
+    // below the fold is not merely scrolled past, it is never built at all.
+    // Adding the two setup rows at a fixed 0.55 put them in that dead zone, so
+    // "moved into Tools" would have meant "gone" for anyone who did not think
+    // to drag the sheet up, which is the same discoverability trap that put
+    // this work on the list in the first place. Verified by counting built
+    // ListTiles in a widget test: six of eight.
+    //
+    // Still clamped and still draggable, so a very short screen degrades to
+    // scrolling rather than a sheet that swallows the room.
+    const rowHeight = 56.0;
+    final rows = 6 + (showDevices ? 1 : 0) + 1; // lanes + devices? + cast
+    final contentHeight =
+        24 + (rows * rowHeight) + 1 + bottomSafeArea + 12; // handle, rows, rule
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final wanted =
+        screenHeight <= 0 ? 0.55 : (contentHeight / screenHeight).clamp(0.30, 0.92);
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetCtx) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
+        initialChildSize: wanted.toDouble(),
         minChildSize: 0.30,
         maxChildSize: 0.92,
         expand: false,
@@ -672,11 +698,57 @@ class _SpaceRoomScreenState extends ConsumerState<SpaceRoomScreen> {
                 _laneTile(sheetCtx, context, Icons.description_outlined, "Shared doc", DocPanel(spaceId: join.spaceId, identity: join.identity)),
                 _laneTile(sheetCtx, context, Icons.screen_share_outlined, "Screen share", ScreenSharePanel(spaceId: join.spaceId, identity: join.identity)),
                 _laneTile(sheetCtx, context, Icons.terminal_rounded, "Terminal", TerminalPanel(spaceId: join.spaceId, identity: join.identity)),
+                // Setup controls, moved off the control bar (which was
+                // overflowing on a phone and dropping Leave off the right
+                // edge). Both are "set once at the start", not live-moment
+                // controls, so a second tap to reach them costs nothing, and
+                // the width they give back is what keeps Leave on screen.
+                const Divider(height: 1, color: Color(0xFF2A2D34)),
+                if (showDevices)
+                  _actionTile(sheetCtx, Icons.tune_rounded, "Camera & mic",
+                      () => showCallDevicePickerSheet(
+                            context,
+                            ref.read(liveKitCallServiceProvider),
+                          )),
+                _actionTile(
+                  sheetCtx,
+                  Icons.cast_rounded,
+                  ref.read(activeCastSessionProvider) != null
+                      ? "Casting to TV"
+                      : "Cast to TV",
+                  () => showCastToTvSheet(
+                    context,
+                    ref,
+                    room: join.room,
+                    // Forward the room token so the backend authorizes the
+                    // egress start even when casting from a phone over the
+                    // public Funnel.
+                    token: join.token,
+                  ),
+                ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// A Tools row that RUNS something instead of opening a lane panel (the
+  /// device picker and the cast sheet are both their own sheets already, so
+  /// they cannot go through [_openLane]). Closes the Tools sheet first, same
+  /// as [_laneTile], so the action's own sheet is never stacked on top of it.
+  Widget _actionTile(BuildContext sheetCtx, IconData icon, String label,
+      VoidCallback action) {
+    return ListTile(
+      key: Key("toolsAction:$label"),
+      leading: Icon(icon, color: SovereignColors.textSecondary),
+      title: Text(label,
+          style: const TextStyle(color: SovereignColors.textPrimary)),
+      onTap: () {
+        Navigator.of(sheetCtx).pop();
+        action();
+      },
     );
   }
 
@@ -918,15 +990,25 @@ class _Header extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
+                // Flexible + ellipsis on the count, fixed on the separator and
+                // the timer. All three were unbounded Texts, so on a phone the
+                // subtitle overflowed its own Expanded column rather than
+                // giving anything up (measured: 260.4px of children in 251px
+                // at 375pt). The elapsed timer is the half that must stay
+                // whole, so the count is the half that yields.
                 Row(
                   children: [
-                    Text(
-                      state.isConnected
-                          ? "$listeners listening"
-                          : "connecting...",
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: SovereignColors.textSecondary,
-                          ),
+                    Flexible(
+                      child: Text(
+                        state.isConnected
+                            ? "$listeners listening"
+                            : "connecting...",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SovereignColors.textSecondary,
+                            ),
+                      ),
                     ),
                     if (state.isConnected) ...[
                       Text(
@@ -1039,11 +1121,17 @@ class _Stage extends ConsumerWidget {
     // for what it means, not what it is.
     final watchMounted = watchActive;
 
-    return ListView(
+    // LayoutBuilder HERE, not inside the video widgets: this sits directly in
+    // the Expanded above the control bar, so its constraints are the real
+    // stage height. Inside the ListView the height is unbounded by
+    // construction, so a cap measured there would have nothing to cap against.
+    return LayoutBuilder(builder: (context, stage) {
+      final stageHeight = stage.maxHeight;
+      return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         if (liveVideoOnTop) ...[
-          _WatchStage(videos: videos),
+          _WatchStage(videos: videos, availableHeight: stageHeight),
           const SizedBox(height: 24),
         ],
         if (watchMounted) ...[
@@ -1059,7 +1147,8 @@ class _Stage extends ConsumerWidget {
           Offstage(
             key: ValueKey("watch-together-${join.spaceId}"),
             offstage: liveVideoOnTop,
-            child: _WatchTogetherStage(join: join),
+            child: _WatchTogetherStage(
+                join: join, availableHeight: stageHeight),
           ),
           if (!liveVideoOnTop) const SizedBox(height: 24),
         ],
@@ -1115,6 +1204,7 @@ class _Stage extends ConsumerWidget {
         ],
       ],
     );
+    });
   }
 
   /// Host tapped a raised hand, invite them straight to the stage.
@@ -1283,10 +1373,71 @@ class _Stage extends ConsumerWidget {
 /// the host's mic ride normal LiveKit tracks that autoplay for every
 /// subscribed listener. Nothing here mutes or gates them, so the fight is
 /// heard as well as seen.
+/// Caps a 16:9 stage video so the room below it stays on screen.
+///
+/// Chef, with the browser maximised: "when i do full screen, the stage is not
+/// viewable and i can't scroll it up or down [...] when i shrink the browser
+/// horizontally, it squishes the video up and i'm able to see the stage below."
+///
+/// A bare `AspectRatio(16 / 9)` in a full-width list is sized entirely by
+/// WIDTH, so a wide window makes a TALL video: at ~1400px of content that is
+/// ~790px of height, more than the whole stage area, which pushed the Speakers
+/// row below the fold. Narrowing the window shrank the width, so the video got
+/// shorter and the room reappeared. That is the entire bug, and it is why it
+/// looked backwards (a bigger window showing less).
+///
+/// Scrolling to it was not an escape either. On web the watch surface is a
+/// platform view, a REAL DOM element, and the browser routes a wheel over it
+/// to that element rather than to Flutter's list, so the one gesture that
+/// would reach the hidden content is swallowed by the thing hiding it. Making
+/// the content fit is therefore the fix, not a workaround for one.
+///
+class _CappedStageVideo extends StatelessWidget {
+  const _CappedStageVideo({
+    required this.availableHeight,
+    required this.child,
+  });
+
+  /// Share of the stage's own height the video may take. The remainder is
+  /// what guarantees the section label plus a row of speaker rings stays
+  /// visible, which is the property being fixed, so this is a constant rather
+  /// than a knob: a caller that could pass 1.0 could reintroduce the bug.
+  static const double maxStageFraction = 0.66;
+
+  /// Height of the stage area itself (from the Expanded above the control
+  /// bar), NOT the whole window: the header and control bar are already
+  /// excluded, so the fraction below means what it says.
+  final double availableHeight;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final maxWidth = constraints.maxWidth;
+      // Unbounded or nonsensical stage height (a test surface, a very short
+      // window): fall back to the old width-driven behavior rather than
+      // computing a garbage cap.
+      if (!availableHeight.isFinite || availableHeight <= 0) {
+        return child;
+      }
+      final capHeight = availableHeight * maxStageFraction;
+      // Width the video would need to hit that height at 16:9; whichever of
+      // the two limits binds first wins, so the video is never taller than
+      // the cap and never wider than the column.
+      final widthForCap = capHeight * 16 / 9;
+      final width = widthForCap < maxWidth ? widthForCap : maxWidth;
+      return Center(child: SizedBox(width: width, child: child));
+    });
+  }
+}
+
 class _WatchStage extends StatelessWidget {
-  const _WatchStage({required this.videos});
+  const _WatchStage({required this.videos, required this.availableHeight});
 
   final List<StageVideo> videos;
+
+  /// Stage height to cap against; see [_CappedStageVideo].
+  final double availableHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1307,7 +1458,9 @@ class _WatchStage extends StatelessWidget {
         // also wraps this video (screen-share or camera go-live alike) in a
         // ZoomableVideo internally, so the viewer can pinch-to-zoom and pan
         // it both here inline and in fullscreen.
-        FullscreenableVideo(
+        _CappedStageVideo(
+          availableHeight: availableHeight,
+          child: FullscreenableVideo(
           aspectRatio: 16 / 9,
           borderRadius: 14,
           semanticsLabel: "$who $verb. Pinch to zoom, double-tap for fullscreen.",
@@ -1347,6 +1500,7 @@ class _WatchStage extends StatelessWidget {
               ),
             ),
           ),
+        ),
         ),
         if (others > 0) ...[
           const SizedBox(height: 8),
@@ -1406,9 +1560,13 @@ class _WatchStage extends StatelessWidget {
 /// (`isFilePlayerReady`, `fileController`, `url`) that [WatchController]
 /// deliberately does not expose.
 class _WatchTogetherStage extends ConsumerWidget {
-  const _WatchTogetherStage({required this.join});
+  const _WatchTogetherStage(
+      {required this.join, required this.availableHeight});
 
   final SpaceJoin join;
+
+  /// Stage height to cap against; see [_CappedStageVideo].
+  final double availableHeight;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1416,7 +1574,9 @@ class _WatchTogetherStage extends ConsumerWidget {
         WatchSessionArgs(spaceId: join.spaceId, identity: join.identity);
     final session = ref.watch(watchSessionProvider(args).notifier);
 
-    return ClipRRect(
+    return _CappedStageVideo(
+      availableHeight: availableHeight,
+      child: ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: AspectRatio(
         aspectRatio: 16 / 9,
@@ -1484,6 +1644,7 @@ class _WatchTogetherStage extends ConsumerWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1945,8 +2106,17 @@ class _ControlBar extends ConsumerWidget {
       }
     }
 
+    // Chef: "my old iphone is already cutting off the hangup button."
+    //
+    // A phone is the tightest this row ever gets and 24px a side is a luxury
+    // there. Trading the gutter for control width is what keeps the ordinary
+    // cases (listener, speaker not live) on a single run at 320pt instead of
+    // wrapping for the sake of whitespace.
+    final narrow = MediaQuery.sizeOf(context).width < 400;
+    final gutter = narrow ? 10.0 : 24.0;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+      padding: EdgeInsets.fromLTRB(gutter, 12, gutter, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1981,8 +2151,27 @@ class _ControlBar extends ConsumerWidget {
                     ),
               ),
             ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          // Wrap, not Row. A Row neither wraps nor scrolls: past the available
+          // width it overflows, and what runs off the edge is the LAST child,
+          // which here is Leave. A host live on camera carries eight controls
+          // (Mute, Stop, Flip, Reactions, Cast, End, Tools, Leave) totalling
+          // 448px of buttons before any gap, against 375 logical pixels on an
+          // iPhone 8 / SE 2 and 320 on an SE 1. Losing the one control a user
+          // needs when a call goes wrong is the worst thing this row could
+          // choose to drop.
+          //
+          // spaceEvenly is kept as the Wrap's alignment so a single-run layout
+          // (every screen wide enough, which is all of them today above a
+          // phone) is pixel-identical to the Row it replaces; `spacing` is a
+          // floor so controls never touch once a run does fill up. Wrapping to
+          // a second run costs vertical space, which during a watch party is
+          // real, so it only ever happens when the alternative is a control
+          // nobody can reach.
+          Wrap(
+            alignment: WrapAlignment.spaceEvenly,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 12,
             children: [
             if (canPublish)
               _RoundButton(
@@ -2072,34 +2261,43 @@ class _ControlBar extends ConsumerWidget {
             // Live camera/mic device picker (same 1:1-call widget, same
             // liveKitCallServiceProvider): lets a Linux user with a phantom
             // Droidcam/v4l2loopback device switch to the real webcam.
-            // Gated the same as "Go live" (can publish video), NOT on
-            // isCameraLive: the picker MUST be reachable before the camera is
-            // live so a user whose camera did not come up on the right device
-            // can select a working one (picking a device publishes it). Gating
-            // on isCameraLive was a chicken-and-egg trap (no live camera means
-            // no picker means no way to fix a bad default device).
-            if (canShare && canPublishVideoLocal)
-              const CallDevicePickerButton(size: 56),
+            // Devices moved into the Tools menu (see _openLanes) to buy back
+            // width on a phone. It stays gated the same way there: reachable
+            // before the camera is live, so a user whose camera did not come
+            // up on the right device can select a working one (picking a
+            // device publishes it). Gating on isCameraLive was a
+            // chicken-and-egg trap.
+            //
+            // This headless reconciler stays HERE, on the always-mounted bar,
+            // and is why the move is safe: applying the saved-or-smart-default
+            // device is tied to being mounted, not to being visible, so
+            // mounting it only when the user opens Tools would silently stop
+            // reconciling at connect time. See CallDeviceReconciler.
+            if (canShare && canPublishVideoLocal) const CallDeviceReconciler(),
             // Quick emoji reactions: floats to everyone in the Space.
             ReactionsButton(identity: join.identity),
-            // Cast the Space's shared video to a TV (Chromecast / AirPlay) over
-            // HLS. The Space's live audio + chat stay on the phone.
-            _RoundButton(
-              icon: Icons.cast_rounded,
-              label: ref.watch(activeCastSessionProvider) != null
-                  ? "Casting"
-                  : "Cast",
-              active: ref.watch(activeCastSessionProvider) != null,
-              activeColor: SovereignColors.soulLumina,
-              onTap: () => showCastToTvSheet(
-                context,
-                ref,
-                room: join.room,
-                // Forward the room token so the backend authorizes the egress
-                // start even when casting from a phone over the public Funnel.
-                token: join.token,
+            // Cast also lives in the Tools menu now, with one exception: while
+            // a cast is actually running it comes BACK onto the bar. Hiding a
+            // live, room-visible state two taps deep is how someone forgets
+            // they are still throwing this Space at a TV, and stopping it is
+            // exactly the kind of thing that should not need a menu. Same
+            // shape as Flip, which only appears while the camera is live.
+            if (ref.watch(activeCastSessionProvider) != null)
+              _RoundButton(
+                icon: Icons.cast_connected_rounded,
+                label: "Casting",
+                active: true,
+                activeColor: SovereignColors.soulLumina,
+                onTap: () => showCastToTvSheet(
+                  context,
+                  ref,
+                  room: join.room,
+                  // Forward the room token so the backend authorizes the
+                  // egress start even when casting from a phone over the
+                  // public Funnel.
+                  token: join.token,
+                ),
               ),
-            ),
             if (join.isHost)
               _RoundButton(
                 icon: Icons.stop_circle_outlined,
