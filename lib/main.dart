@@ -1,13 +1,18 @@
+import 'dart:ui';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'core/build_info.dart';
 import 'core/theme/theme.dart';
 import 'core/router/app_router.dart';
 import 'core/providers/theme_provider.dart';
 import 'core/providers/density_provider.dart';
 import 'data/hive_adapters.dart';
+import 'services/diag/diag_error_sink.dart';
+import 'services/diag/diag_event.dart';
 import 'services/skcomms_sync.dart';
 import 'services/identity_service.dart';
 import 'services/pq_prekey_service.dart';
@@ -15,14 +20,14 @@ import 'services/pq_prekey_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Keep the host console quiet outside debug builds: no debugPrint spew and no
-  // framework error dumps written out to the host's stdout/stderr. Debug builds
-  // (`flutter run`/`--debug`) stay fully verbose so failures are still visible.
+  installGlobalErrorSinks();
+
+  // Keep the host console quiet outside debug builds: no debugPrint spew.
+  // Framework error dumps are handled by installGlobalErrorSinks above (it
+  // swallows in release and delegates to the default handler in debug, same
+  // split this block used to encode on its own).
   if (!kDebugMode) {
     debugPrint = (String? message, {int? wrapWidth}) {};
-    FlutterError.onError = (FlutterErrorDetails details) {
-      // Swallow, a sovereign release build must not write to the host console.
-    };
   }
 
   // Initialize Hive for local persistence.
@@ -56,6 +61,93 @@ Future<void> main() async {
   runApp(
     const ProviderScope(child: SKChatApp()),
   );
+}
+
+/// Monotonic, session-scoped sequence number for events built here. There is
+/// no ring buffer yet to own this (card b62da57c, in flight on its own
+/// branch); a local counter is a faithful stand-in per [DiagEvent.seq]'s own
+/// doc ("assigned by the caller"), and this is the caller until that lands.
+int _diagSeq = 0;
+
+/// Installs the two global error sinks: `FlutterError.onError` and
+/// `PlatformDispatcher.instance.onError` each record a `lifecycle.error`
+/// [DiagEvent] (spec section 4.2) carrying only the error's runtime TYPE
+/// name, never its message or stack text. That restriction is the direct
+/// fix for the incident this whole design answers: an exception message
+/// logged empty five times told nobody anything, and a separate leak spoke
+/// an internal string aloud as if it were the agent's own words. The
+/// catalog (`diag_codes.dart`) structurally cannot carry a message for
+/// `lifecycle.error`, so this function does not have to trust itself to
+/// leave one out.
+///
+/// [debugMode] defaults to [kDebugMode] and exists only so tests can drive
+/// both branches directly; `flutter test` always runs with asserts enabled
+/// (i.e. as a debug build), so the release branch cannot be reached by
+/// flipping the real [kDebugMode]. `test/main_error_sinks_test.dart`
+/// documents this the same way `diag_event_test.dart` already does for
+/// `DiagEvent.tryCreate`.
+///
+/// Behaviour is unchanged from before this function existed, on top of now
+/// also emitting an event:
+/// - Release: both handlers swallow. `FlutterError.onError` still writes
+///   nothing to the host console (this is exactly the block it replaces);
+///   `PlatformDispatcher.onError` reports the error handled and does not
+///   call whatever handler preceded it.
+/// - Debug: both handlers delegate to whatever handler was installed before
+///   this call, so local development keeps seeing full framework error
+///   output (red screens, console dumps) exactly as before.
+///
+/// Fail-open: nothing in the emit path below can throw past
+/// [_emitLifecycleError], which catches everything itself, so the
+/// swallow/delegate decision above always runs regardless of whether
+/// recording the event succeeded.
+@visibleForTesting
+void installGlobalErrorSinks({bool debugMode = kDebugMode}) {
+  final FlutterExceptionHandler? previousFlutterOnError = FlutterError.onError;
+  FlutterError.onError = (FlutterErrorDetails details) {
+    _emitLifecycleError(details.exception);
+    if (debugMode) {
+      previousFlutterOnError?.call(details);
+    }
+    // Release: swallow, unchanged from before this sink existed. A
+    // sovereign release build must not write to the host console.
+  };
+
+  final ErrorCallback? previousPlatformOnError =
+      PlatformDispatcher.instance.onError;
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    _emitLifecycleError(error);
+    if (debugMode) {
+      return previousPlatformOnError?.call(error, stack) ?? false;
+    }
+    // Release: report handled, matching the FlutterError policy above.
+    return true;
+  };
+}
+
+/// Builds and dispatches a `lifecycle.error` [DiagEvent] for [error]. Never
+/// throws: event construction and dispatch are both wrapped here so a bug
+/// in either can never propagate into, or suppress, the caller's own error
+/// handling in [installGlobalErrorSinks]. That property matters more than
+/// any event this could ever record.
+void _emitLifecycleError(Object error) {
+  try {
+    emitDiagEvent(
+      DiagEvent.tryCreate(
+        seq: _diagSeq++,
+        ts: DateTime.now(),
+        level: DiagLevel.error,
+        category: DiagCategory.lifecycle,
+        code: 'lifecycle.error',
+        fields: <String, Object>{
+          'buildId': kBuildId,
+          'errorType': error.runtimeType.toString(),
+        },
+      ),
+    );
+  } catch (_) {
+    // Fail-open: see installGlobalErrorSinks doc.
+  }
 }
 
 /// Open a Hive box, tolerating a corrupt/locked box so a bad on-disk file can
