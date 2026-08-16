@@ -197,6 +197,21 @@ class ProfileScreen extends ConsumerWidget {
           // ── Daemon & network health ──────────────────────────────────
           _SectionLabel(label: 'Network'),
           _DaemonStatusCard(daemon: daemon, transports: transports),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: GlassCard(
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                key: const Key('me-logs-entry'),
+                leading: const Icon(Icons.assignment_outlined),
+                title: const Text('Logs'),
+                subtitle: const Text('Recent problems and service health'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => context.push(AppRoutes.meLogs),
+              ),
+            ),
+          ),
           const SizedBox(height: 20),
 
           // ── Services & transports (capability discovery) ─────────────

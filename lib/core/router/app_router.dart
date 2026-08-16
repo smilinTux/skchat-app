@@ -17,6 +17,7 @@ import '../../features/profile/qr_login_screen.dart';
 import '../../features/profile/modules_settings_screen.dart';
 import '../../features/profile/manage_models_screen.dart';
 import '../../features/profile/linked_devices_screen.dart';
+import '../../features/profile/me_logs_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
@@ -161,6 +162,10 @@ class AppRoutes {
   /// Linked Devices: every device enrolled to this operator identity, with
   /// per-device Unlink + "Unlink all other devices": /devices/linked
   static const linkedDevices = '/devices/linked';
+
+  /// Me > Logs: recent client-side diag events + server-reported service
+  /// health (card b62da57c's Me > Logs follow-up): /me/logs
+  static const meLogs = '/me/logs';
 
   static String conversationPath(String peerId) => '/chats/$peerId';
   static String identityPath(String peerId) => '/identity/$peerId';
@@ -538,6 +543,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.linkedDevices,
         builder: (context, state) => const LinkedDevicesScreen(),
+      ),
+
+      // ── Me > Logs (recent problems + service health) ─────────────────────
+      GoRoute(
+        path: AppRoutes.meLogs,
+        builder: (context, state) => const MeLogsScreen(),
       ),
 
       // ── skos full-screen media viewer (above the shell) ─────────────────
