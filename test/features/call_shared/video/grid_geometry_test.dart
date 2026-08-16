@@ -38,15 +38,17 @@ void main() {
           computeGridDimensions(
               tileCount: 20, availableWidth: width, availableHeight: height),
           (rows: 2, columns: 2));
-      // The same area in compact mode (200x150 minimum, used for a strip or
-      // a sidebar rail) fits a much bigger 3x4 grid instead.
+      // The same area in compact mode (160x120 minimum, used for a strip, a
+      // sidebar rail or a phone-class stage) fits a much bigger 4x5 grid
+      // instead: 800/160 columns by 480/120 rows, exactly 20 slots for 20
+      // tiles, so the shrink loop never runs.
       expect(
           computeGridDimensions(
               tileCount: 20,
               availableWidth: width,
               availableHeight: height,
               compact: true),
-          (rows: 3, columns: 4));
+          (rows: 4, columns: 5));
     });
 
     test("a resize sweep across a threshold does not oscillate when the "
@@ -189,6 +191,74 @@ void main() {
       // total half-column count.
       expect(tileStarts.last + tileColumnSpan - 1,
           lessThanOrEqualTo(getHalfColumnCountForTest(columns)));
+    });
+  });
+
+  group("isCompactStage", () {
+    test("a phone-class stage is compact: a 390pt phone hands the Spaces "
+        "stage 358x383 and cannot hold a 2x2 of full-size tiles", () {
+      expect(isCompactStage(358, 383), isTrue);
+    });
+
+    test("a narrow but TALL box is not compact: full-size tiles stack in it "
+        "perfectly well", () {
+      // The regression guard on the predicate. Keying it on width alone would
+      // shrink the tiles in a portrait rail for nothing, and would flip the
+      // grid's own portrait case (two people stacked) into two slivers side
+      // by side.
+      expect(isCompactStage(400, 800), isFalse);
+    });
+
+    test("a desktop stage is never compact", () {
+      expect(isCompactStage(1368, 420), isFalse);
+      expect(isCompactStage(800, 600), isFalse);
+    });
+  });
+
+  group("preferredGridHeight", () {
+    test("the height it asks for really does hold every tile when handed "
+        "back to computeGridDimensions", () {
+      // The contract between the two functions, and the property whose
+      // absence was the phone bug: a stage sized 16:9 asked the geometry for
+      // a shape it had no room to draw, and the rows past the first were laid
+      // out below the box.
+      for (final compact in [false, true]) {
+        for (final width in [358.0, 500.0, 800.0, 1368.0]) {
+          for (final n in [2, 3, 4, 5, 6, 9]) {
+            final height = preferredGridHeight(
+                tileCount: n, availableWidth: width, compact: compact);
+            final dims = computeGridDimensions(
+                tileCount: n,
+                availableWidth: width,
+                availableHeight: height,
+                compact: compact);
+            expect(dims.rows * dims.columns, greaterThanOrEqualTo(n),
+                reason: "n=$n width=$width compact=$compact asked for "
+                    "$height and got ${dims.rows}x${dims.columns}, which "
+                    "cannot hold everyone");
+          }
+        }
+      }
+    });
+
+    test("three people on a phone stage want a box far taller than 16:9 of "
+        "the same width", () {
+      // 358pt of width at 16:9 is 201pt. Three tiles want roughly 358pt, so
+      // the 16:9 box was short by more than half the content: exactly the
+      // two rows that went missing on Chef's phone.
+      final wanted = preferredGridHeight(
+          tileCount: 3, availableWidth: 358, compact: true);
+      expect(wanted, greaterThan(358 * 9 / 16 * 1.5));
+    });
+
+    test("one tile, no tiles, or a degenerate width never returns a "
+        "nonsense box", () {
+      expect(preferredGridHeight(tileCount: 0, availableWidth: 800), 0);
+      expect(preferredGridHeight(tileCount: -3, availableWidth: 800), 0);
+      expect(preferredGridHeight(tileCount: 4, availableWidth: 0), 0);
+      expect(preferredGridHeight(tileCount: 4, availableWidth: double.nan), 0);
+      expect(preferredGridHeight(tileCount: 1, availableWidth: 800),
+          greaterThan(0));
     });
   });
 }

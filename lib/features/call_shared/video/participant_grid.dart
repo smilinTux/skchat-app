@@ -84,10 +84,20 @@ class ParticipantGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        // A phone-class stage takes the compact minimum tile size. See
+        // [isCompactStage]: on a box too small for a 2x2 of desktop-size
+        // tiles, the desktop minimum stops being a legibility floor and turns
+        // into "one person is visible, the rest are laid out past the bottom
+        // edge", which is the bug a Space on a phone actually showed.
+        final compact = isCompactStage(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
         final dims = computeGridDimensions(
           tileCount: participants.length,
           availableWidth: constraints.maxWidth,
           availableHeight: constraints.maxHeight,
+          compact: compact,
           // previousRows / previousColumns are left at their defaults: the
           // hysteresis seed needs somewhere to remember the last shape across
           // frames, which is a stateful concern this card does not own. The
@@ -120,8 +130,21 @@ class ParticipantGrid extends StatelessWidget {
         // Only the row count is recomputed, from the columns the geometry
         // chose.
         final scrollRows = (participants.length / dims.columns).ceil();
-        final rowHeight =
+        var rowHeight =
             (constraints.maxHeight - gridGap * (dims.rows - 1)) / dims.rows;
+        // When the shape collapsed to a SINGLE row, "the height a row would
+        // have had if everyone fitted" is the whole box, so the first row
+        // fills the stage and every other row starts below the fold. A viewer
+        // then sees exactly one person and no evidence that anyone else was
+        // drawn, which is indistinguishable from the tiles being dropped:
+        // scrolling is only an acceptable answer to a crowded room when the
+        // scroll is visible. Falling back to the mode's minimum tile height
+        // keeps part of the next row on screen, and that cut edge is the
+        // affordance.
+        final minRowHeight = compact ? minTileHeightCompact : minTileHeight;
+        if (dims.rows == 1 && rowHeight > minRowHeight) {
+          rowHeight = minRowHeight;
+        }
         return SingleChildScrollView(
           // The control bar floats over the bottom of the stage, so the last
           // row needs room to scroll clear of it.

@@ -2637,6 +2637,181 @@ void main() {
       expect(find.text("video-dana"), findsOneWidget);
       expect(find.text("video-erin"), findsOneWidget);
     });
+
+    // ── V15: a phone-sized viewport shows EVERY live video ────────────────
+    //
+    // Chef, from a real 3-person Space: a desktop browser drew all three
+    // cameras, but both PHONES drew exactly one, their own. The SFU had
+    // everything (all three publishing camera tracks, none muted) and the
+    // clients had everything too (`document.querySelectorAll('video').length`
+    // returned 3 at a 390x844 emulated viewport), so nothing was unpublished,
+    // unsubscribed or adaptive-streamed away. The three <video> elements were
+    // ATTACHED and then laid out where nobody could see them: the stage was a
+    // fixed 16:9 box, which at phone width is far too SHORT to hold the rows
+    // the grid geometry asks for at that width, so rows two and three were
+    // clipped out of existence. Each phone saw tile number one, and tile
+    // number one is the local participant, because
+    // `LiveKitCallService.currentParticipants` returns the local participant
+    // first. Hence "each phone shows only itself".
+    testWidgets(
+        "THREE live cameras on a 390x844 phone all get laid out on screen",
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isCameraEnabled: true),
+        _snap("erin", canPublish: true, isCameraEnabled: true),
+        _snap("finn", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaCam = _FakeVideoTrack();
+      final erinCam = _FakeVideoTrack();
+      final finnCam = _FakeVideoTrack();
+      wireRoom({
+        "dana": remote(camera: danaCam),
+        "erin": remote(camera: erinCam),
+        "finn": remote(camera: finnCam),
+      });
+
+      await tester.pumpWidget(wrapWithRenderer({
+        danaCam: "video-dana",
+        erinCam: "video-erin",
+        finnCam: "video-finn",
+      }));
+      await settle(tester);
+
+      final tiles = find.byType(ParticipantTile);
+      expect(tiles, findsNWidgets(3), reason: "three live cameras, three tiles");
+
+      final grid = tester.getRect(find.byType(ParticipantGrid));
+      for (var i = 0; i < 3; i++) {
+        final rect = tester.getRect(tiles.at(i));
+        expect(rect.width, greaterThan(0),
+            reason: "tile $i collapsed to zero width inside grid $grid");
+        expect(rect.height, greaterThan(0),
+            reason: "tile $i collapsed to zero height inside grid $grid");
+        // The stage is the only thing that may clip a tile, so a tile that
+        // is laid out BELOW the stage's own bottom edge is a person the
+        // phone renders and never shows. That is the reported bug.
+        expect(rect.bottom, lessThanOrEqualTo(grid.bottom + 0.5),
+            reason: "tile $i at $rect is clipped out of the stage $grid");
+        expect(rect.top, greaterThanOrEqualTo(grid.top - 0.5),
+            reason: "tile $i at $rect sits above the stage $grid");
+        // And on screen: the whole point is that a phone user SEES them.
+        expect(rect.bottom, lessThanOrEqualTo(844.0),
+            reason: "tile $i at $rect is off the bottom of a 390x844 phone");
+      }
+
+      // The 0.66 cap still binds: the Speakers row below the stage survives.
+      expect(grid.height, lessThan(844.0 * 0.66),
+          reason: "the phone stage at $grid ate the room below it");
+      expect(find.text("SPEAKERS"), findsOneWidget);
+    });
+
+    testWidgets(
+        "SIX live cameras on a 390x844 phone: nobody is dropped and the "
+        "overflow is reachable by scrolling", (tester) async {
+      // Six people cannot all be legible at once on a phone, so the grid
+      // scrolls. Scrolling is only an acceptable answer when it is genuinely
+      // reachable AND obvious, which means more than one row has to be
+      // visible before the user scrolls: a stage showing exactly one tile
+      // looks identical to the bug, whether or not it can technically be
+      // dragged.
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final names = ["dana", "erin", "finn", "gale", "hana", "ivan"];
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        for (final n in names) _snap(n, canPublish: true, isCameraEnabled: true),
+      ]);
+      final cams = {for (final n in names) n: _FakeVideoTrack()};
+      wireRoom({for (final n in names) n: remote(camera: cams[n])});
+
+      await tester.pumpWidget(wrapWithRenderer(
+          {for (final n in names) cams[n]!: "video-$n"}));
+      await settle(tester);
+
+      expect(find.byType(ParticipantTile, skipOffstage: false),
+          findsNWidgets(6),
+          reason: "nobody may be dropped to make the head count fit");
+
+      final grid = tester.getRect(find.byType(ParticipantGrid));
+      final visible = <int>[];
+      for (var i = 0; i < 6; i++) {
+        final rect =
+            tester.getRect(find.byType(ParticipantTile, skipOffstage: false).at(i));
+        if (rect.top < grid.bottom && rect.bottom > grid.top) visible.add(i);
+      }
+      expect(visible.length, greaterThanOrEqualTo(2),
+          reason: "only ${visible.length} of 6 tiles start on screen in $grid, "
+              "which reads exactly like the one-video bug");
+
+      // And the rest really are reachable: the grid scrolls.
+      expect(find.byType(Scrollable).evaluate().isNotEmpty, isTrue);
+      expect(grid.height, lessThan(844.0 * 0.66),
+          reason: "the phone stage at $grid ate the room below it");
+    });
+
+    testWidgets(
+        "THREE live cameras on a 1400x900 desktop still all get laid out on "
+        "screen, side by side", (tester) async {
+      // The desktop path was the one that WORKED when the phones broke, so it
+      // is the one a phone fix can quietly cost. Pinning it here means the
+      // stage shape is asserted at both ends of the range it has to serve,
+      // not just at the end that was broken.
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isCameraEnabled: true),
+        _snap("erin", canPublish: true, isCameraEnabled: true),
+        _snap("finn", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaCam = _FakeVideoTrack();
+      final erinCam = _FakeVideoTrack();
+      final finnCam = _FakeVideoTrack();
+      wireRoom({
+        "dana": remote(camera: danaCam),
+        "erin": remote(camera: erinCam),
+        "finn": remote(camera: finnCam),
+      });
+
+      await tester.pumpWidget(wrapWithRenderer({
+        danaCam: "video-dana",
+        erinCam: "video-erin",
+        finnCam: "video-finn",
+      }));
+      await settle(tester);
+
+      final tiles = find.byType(ParticipantTile);
+      expect(tiles, findsNWidgets(3));
+
+      final grid = tester.getRect(find.byType(ParticipantGrid));
+      final rects = [for (var i = 0; i < 3; i++) tester.getRect(tiles.at(i))];
+      for (var i = 0; i < 3; i++) {
+        expect(rects[i].width, greaterThan(0));
+        expect(rects[i].height, greaterThan(0));
+        expect(rects[i].bottom, lessThanOrEqualTo(grid.bottom + 0.5),
+            reason: "tile $i at ${rects[i]} is clipped out of the stage $grid");
+      }
+      // Wide enough for one row of three: the desktop shape, unchanged.
+      expect(rects[1].top, equals(rects[0].top));
+      expect(rects[2].top, equals(rects[0].top));
+      expect(rects[1].left, greaterThan(rects[0].left));
+      expect(rects[2].left, greaterThan(rects[1].left));
+
+      // And the 0.66 cap, the thing this stage may never trade away.
+      expect(grid.height, lessThan(900.0 * 0.66),
+          reason: "the wide stage at $grid ate the room below it");
+      expect(find.text("SPEAKERS"), findsOneWidget);
+      expect(tester.getRect(find.text("SPEAKERS")).top, lessThan(900.0));
+    });
   });
 
   group("control bar layout", () {
