@@ -227,6 +227,28 @@ void main() {
     );
 
     testWidgets(
+      "a 401 (not authorised) renders every service unknown, with wording "
+      "that says so -- distinct from both up and a generic connection "
+      "failure, so the operator can tell 'sign in' apart from 'the server "
+      "is down'",
+      (tester) async {
+        await tester.pumpWidget(
+          _wrap(health: _health(_ErrorAdapter(401)), diagLog: _diagLog()),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text("not verified"), findsNWidgets(kKnownServiceIds.length));
+        expect(find.text("reachable"), findsNothing);
+        expect(find.text("not reachable"), findsNothing);
+        expect(find.textContaining("isn't authorised"), findsOneWidget);
+        // Distinct wording from the unreachable case -- never the generic
+        // "can't reach the server" message for a 401.
+        expect(find.textContaining("can't reach the server"), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
       "up and unknown render with visually distinct icon and color",
       (tester) async {
         final adapter = _FixedHealthAdapter(body: {

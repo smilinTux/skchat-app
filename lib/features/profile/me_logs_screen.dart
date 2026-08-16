@@ -183,20 +183,26 @@ class _HealthSection extends StatelessWidget {
       HealthAvailable(:final report) => _HealthCard(
           key: const Key('health-card-available'),
           bannerText: refreshing ? 'Rechecking...' : null,
-          bannerIsWarning: false,
+          bannerIcon: Icons.sync_rounded,
+          bannerColor: SovereignColors.textTertiary,
           generatedAt: report.generatedAt,
           services: report.services,
         ),
       HealthUnavailable(:final reason, :final checkedAt) => _HealthCard(
           key: const Key('health-card-unavailable'),
           bannerText: _unavailableBannerText(reason),
-          bannerIsWarning: true,
+          bannerIcon: _unavailableBannerIcon(reason),
+          bannerColor: _unavailableBannerColor(reason),
           generatedAt: checkedAt,
           services: result.placeholderServices,
         ),
     };
   }
 
+  // Distinct wording per reason (honesty rule 3): "you are not authorised"
+  // and "the server is down" read as different problems on purpose, because
+  // the fix for each is completely different (sign in / re-enroll this
+  // device, vs escalate an outage).
   static String _unavailableBannerText(HealthUnavailableReason reason) {
     switch (reason) {
       case HealthUnavailableReason.unreachable:
@@ -205,9 +211,42 @@ class _HealthSection extends StatelessWidget {
       case HealthUnavailableReason.notDeployed:
         return "This server doesn't support service health checks yet. "
             'Nothing below has been verified.';
+      case HealthUnavailableReason.notAuthorized:
+        return "This app isn't authorised to check service health right "
+            'now. Nothing below has been verified.';
       case HealthUnavailableReason.unparseable:
         return "The server's health response couldn't be understood. "
             'Nothing below has been verified.';
+    }
+  }
+
+  // Icon shape (never color alone) also tells the 3 "something's wrong"
+  // reasons apart from each other, same principle as the per-service rows:
+  // a lock is a credential problem, a plug is a reachability problem, a
+  // question mark is "the server said something this client can't parse".
+  static IconData _unavailableBannerIcon(HealthUnavailableReason reason) {
+    switch (reason) {
+      case HealthUnavailableReason.unreachable:
+        return Icons.wifi_off_rounded;
+      case HealthUnavailableReason.notDeployed:
+        return Icons.sync_rounded;
+      case HealthUnavailableReason.notAuthorized:
+        return Icons.lock_outline_rounded;
+      case HealthUnavailableReason.unparseable:
+        return Icons.help_outline_rounded;
+    }
+  }
+
+  static Color _unavailableBannerColor(HealthUnavailableReason reason) {
+    switch (reason) {
+      case HealthUnavailableReason.unreachable:
+      case HealthUnavailableReason.notAuthorized:
+      case HealthUnavailableReason.unparseable:
+        return SovereignColors.accentWarning;
+      case HealthUnavailableReason.notDeployed:
+        // Not an error: the server is fine, this one route just isn't
+        // deployed yet (it is being built in parallel). Neutral, not amber.
+        return SovereignColors.textTertiary;
     }
   }
 }
@@ -244,13 +283,15 @@ class _HealthCard extends StatelessWidget {
   const _HealthCard({
     super.key,
     required this.bannerText,
-    required this.bannerIsWarning,
+    required this.bannerIcon,
+    required this.bannerColor,
     required this.generatedAt,
     required this.services,
   });
 
   final String? bannerText;
-  final bool bannerIsWarning;
+  final IconData bannerIcon;
+  final Color bannerColor;
   final DateTime generatedAt;
   final List<ServiceHealth> services;
 
@@ -268,33 +309,18 @@ class _HealthCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: (bannerIsWarning
-                        ? SovereignColors.accentWarning
-                        : SovereignColors.textTertiary)
-                    .withValues(alpha: 0.12),
+                color: bannerColor.withValues(alpha: 0.12),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    bannerIsWarning
-                        ? Icons.wifi_off_rounded
-                        : Icons.sync_rounded,
-                    size: 18,
-                    color: bannerIsWarning
-                        ? SovereignColors.accentWarning
-                        : SovereignColors.textTertiary,
-                  ),
+                  Icon(bannerIcon, size: 18, color: bannerColor),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       bannerText!,
-                      style: tt.bodySmall?.copyWith(
-                        color: bannerIsWarning
-                            ? SovereignColors.accentWarning
-                            : SovereignColors.textSecondary,
-                      ),
+                      style: tt.bodySmall?.copyWith(color: bannerColor),
                     ),
                   ),
                 ],

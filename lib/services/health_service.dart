@@ -15,8 +15,9 @@
 // HONESTY RULES this file exists to enforce (never soften these):
 //
 //  1. Never show green the client did not verify. A network failure (the
-//     client cannot reach the server at all) and a 404 (the endpoint isn't
-//     deployed yet) BOTH collapse to [HealthUnavailable] here, which the UI
+//     client cannot reach the server at all), a 404 (the endpoint isn't
+//     deployed yet), and a 401 (this device is not authorised -- see
+//     below) ALL collapse to [HealthUnavailable] here, which the UI
 //     renders as every known service `unknown`, never `up` and never a
 //     silently-empty section. A response this service cannot parse into the
 //     contract shape is treated the same way, defensively -- an
@@ -25,12 +26,28 @@
 //     parses to [ServiceHealthState.unknown], never defaulted to `up`. Only
 //     the literal strings "up" and "down" ever produce those states.
 //  3. [HealthUnavailable] carries WHY (unreachable vs not-yet-deployed vs
-//     unparseable) so the screen can say something honest rather than a
-//     generic "error".
+//     not-authorised vs unparseable) so the screen can say something honest
+//     rather than a generic "error" -- in particular, "you are not
+//     authorised" and "the server is down" need visibly different wording,
+//     because the fix for each is completely different (sign in, vs escalate
+//     an outage).
 //
-// The unreachable/not-deployed placeholder rows use [kKnownServiceLabels]
-// for a human label (there is no server data to read one from yet); a real
-// response's own `label` field is always preferred once one exists.
+// AUTH: `/api/v1/health` is a capauth-gated route on the server
+// (`CAP_STATUS` in skchat's `dataplane_auth.py`, correct: the response
+// exposes internal hostnames and ports). That gate accepts only
+// `Authorization: CapAuth/Bearer <session>` / `X-CapAuth-Token`, NOT a bare
+// `X-Operator-Token` -- a client that skips [buildOperatorAuthInterceptor]
+// gets a 401 on every call against a perfectly healthy server (skchat's own
+// CLAUDE.md documents this exact trap, "the client-side trap, which caused
+// a live outage"). [HealthService] therefore attaches that interceptor,
+// same order every other gated client in this codebase uses (device_list_
+// service.dart, pq_prekey_service.dart, ...): auth first, diag breadcrumbs
+// second.
+//
+// The unreachable/not-deployed/not-authorised placeholder rows use
+// [kKnownServiceLabels] for a human label (there is no server data to read
+// one from yet); a real response's own `label` field is always preferred
+// once one exists.
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -38,6 +55,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'backend_config.dart';
 import 'diag/diag_error_sink.dart';
 import 'diag/diag_interceptor.dart';
+import 'operator_auth_interceptor.dart';
+import 'operator_session_service.dart';
 
 /// Verified-by-the-client-or-not state of one service. Three states, three
 /// meanings -- never conflate `unknown` with either `up` or `down`:
@@ -158,6 +177,13 @@ enum HealthUnavailableReason {
   /// route is missing.
   notDeployed,
 
+  /// The server answered 401: this device's credential was rejected (or
+  /// none was available to attach) by the capauth data-plane gate. Distinct
+  /// from [unreachable] on purpose -- "the app is not authorised" and "the
+  /// server is down" are told apart in the UI because the fix for each is
+  /// completely different (sign in / re-enroll, vs escalate an outage).
+  notAuthorized,
+
   /// The server answered 2xx but the body could not be parsed into the
   /// contract shape. Treated with the same "everything unknown" rendering
   /// as the other two -- an unparseable document is not evidence of health.
@@ -202,12 +228,24 @@ class HealthUnavailable extends HealthResult {
 /// Talks to `GET {webui}/api/v1/health`. See file doc for the honesty
 /// contract every branch of [fetch] upholds.
 class HealthService {
-  HealthService({Dio? dio, String? webuiBaseUrl, DateTime Function()? now})
-      : _dio = dio ?? Dio(),
+  HealthService({
+    Dio? dio,
+    String? webuiBaseUrl,
+    DateTime Function()? now,
+    OperatorSessionService? sessionService,
+  })  : _dio = dio ?? Dio(),
         _base = _strip(webuiBaseUrl ?? kDefaultSkchatWebuiUrl),
         _now = now ?? DateTime.now {
-    // Network breadcrumbs, same placement as every other daemon-facing
-    // client in this codebase (diag_interceptor.dart's own doc).
+    // `/api/v1/health` is capauth-gated (see file doc's AUDIENCE section):
+    // attach the operator-session Bearer FIRST, same order + idiom every
+    // other gated client uses (device_list_service.dart etc), so this
+    // never repeats the "looks completely dead against a healthy server"
+    // trap of sending only a bare X-Operator-Token the gate does not
+    // recognize.
+    _dio.interceptors.add(buildOperatorAuthInterceptor(sessionService, () => _dio));
+    // Network breadcrumbs, immediately after auth, same placement as every
+    // other daemon-facing client in this codebase (diag_interceptor.dart's
+    // own doc).
     _dio.interceptors.add(buildDiagInterceptor(emitDiagEvent));
   }
 
@@ -227,6 +265,18 @@ class HealthService {
       if (status == 404) {
         return HealthUnavailable(
           reason: HealthUnavailableReason.notDeployed,
+          checkedAt: _now(),
+        );
+      }
+      if (status == 401) {
+        // buildOperatorAuthInterceptor already retried once (clear +
+        // re-handshake) before this exception could surface, so a 401
+        // reaching here means this device genuinely has no valid
+        // credential right now -- distinct from "the server is down"
+        // (honesty rule 3): the operator needs to sign in / re-enroll,
+        // not escalate an outage.
+        return HealthUnavailable(
+          reason: HealthUnavailableReason.notAuthorized,
           checkedAt: _now(),
         );
       }
@@ -270,8 +320,14 @@ class HealthService {
 }
 
 /// Health service repointed live by the runtime backend config, same
-/// pattern as `recordingsServiceProvider` / `deviceListServiceProvider`.
+/// pattern as `recordingsServiceProvider` / `deviceListServiceProvider`
+/// (the latter's `sessionService: ref.read(operatorSessionServiceProvider)`
+/// wiring is the exact precedent this mirrors, since both talk to
+/// capauth-gated routes).
 final healthServiceProvider = Provider<HealthService>((ref) {
   final base = ref.watch(backendConfigProvider.select((c) => c.skchatWebuiUrl));
-  return HealthService(webuiBaseUrl: base);
+  return HealthService(
+    webuiBaseUrl: base,
+    sessionService: ref.read(operatorSessionServiceProvider),
+  );
 });
