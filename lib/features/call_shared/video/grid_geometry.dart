@@ -18,10 +18,21 @@ const double gridGap = 8;
 const double minTileWidth = 320;
 const double minTileHeight = 240;
 
-/// Minimum tile size for a "compact" grid: a strip or a sidebar rail, where
-/// tiles are shown much smaller than in the main call view.
-const double minTileWidthCompact = 200;
-const double minTileHeightCompact = 150;
+/// Minimum tile size for a "compact" grid: a strip, a sidebar rail, or a
+/// phone-class stage, where tiles are shown much smaller than in the main
+/// call view.
+///
+/// These are sized for the smallest surface the app actually ships to, which
+/// is what [isCompactStage] selects them for. A 390pt phone hands the Spaces
+/// stage 358pt of width; at the 200pt this used to be, that is ONE column at
+/// every phone width there is, so three people became three stacked rows in a
+/// box only tall enough for one, and the second and third were clipped away.
+/// At 160pt the same 358pt holds two columns, so a phone lays three or four
+/// people out as a grid the way a phone should. 160x120 is still a real
+/// legibility floor: below it a face is not worth drawing, and the grid
+/// scrolls rather than shrinking further.
+const double minTileWidthCompact = 160;
+const double minTileHeightCompact = 120;
 
 /// Target tile aspect ratio (width / height) for a full grid. Talk tunes the
 /// shrink algorithm below towards this ratio because it is close to the
@@ -170,6 +181,78 @@ GridDimensions computeGridDimensions({
   }
 
   return (rows: rows, columns: columns);
+}
+
+/// True when a box of [availableWidth] x [availableHeight] px is a
+/// phone-class stage, and the compact minimum tile size ([minTileWidthCompact]
+/// / [minTileHeightCompact]) is therefore the right floor for it.
+///
+/// The test is whether the box could hold a 2x2 of FULL-size tiles in either
+/// direction. A minimum tile size is a legibility floor, and 320x240 is a
+/// legibility floor for a desktop; on a box smaller than two of them each way
+/// it stops being a floor and becomes a rule that says only one person may be
+/// seen, because [computeGridDimensions] resolves to a 1x1 grid and everybody
+/// past the first is pushed out of the box. That is the phone bug this
+/// predicate exists to keep out: three people live on a 390pt phone, three
+/// <video> elements attached and decoding, one of them visible.
+///
+/// Both axes have to be small, not just one. A narrow but TALL box (a
+/// portrait rail, 400x800) fits full-size tiles stacked perfectly well, and
+/// shrinking them there would trade legible tiles for nothing.
+bool isCompactStage(double availableWidth, double availableHeight) {
+  return availableWidth < minTileWidth * 2 + gridGap &&
+      availableHeight < minTileHeight * 2 + gridGap;
+}
+
+/// The height a grid of [tileCount] tiles wants at [availableWidth] px, so
+/// that [computeGridDimensions] given that same width and this height resolves
+/// to a shape with a slot for every tile.
+///
+/// This is the answer to "how tall should the box BE", which is a different
+/// question from [computeGridDimensions]' "what shape fits the box I already
+/// have", and it is the question a caller has to answer when the grid sits
+/// somewhere with no height of its own to inherit: a stage in a scrolling
+/// column, which is exactly where the Spaces stage lives. Such a caller used
+/// to answer it with a fixed 16:9, which is the right shape for ONE video and
+/// the wrong shape for a grid of N: 16:9 of a phone's width is far too short
+/// for the rows the geometry asks for at that width, so the rows past the
+/// first were laid out below the box and clipped out of existence.
+///
+/// The columns come from the width alone (same [_computeAxisMax] the shape
+/// does), never more than [tileCount] of them; the rows are however many that
+/// many columns need. Each tile is then sized towards the mode's target aspect
+/// ratio but never below the mode's minimum height, which is what makes the
+/// returned height re-derive the same column count and at least the needed row
+/// count when it is handed back to [computeGridDimensions].
+///
+/// The result is deliberately NOT capped: a caller with a height budget of its
+/// own (the Spaces stage caps the video at a fraction of the stage so the
+/// speaker rings below it stay on screen) clamps this itself, and the grid
+/// then scrolls, which is the honest outcome for a room too big for the
+/// surface. Returns 0 for [tileCount] <= 0 or a non-positive [availableWidth];
+/// there is nothing to size.
+double preferredGridHeight({
+  required int tileCount,
+  required double availableWidth,
+  bool compact = false,
+}) {
+  if (tileCount <= 0 || !availableWidth.isFinite || availableWidth <= 0) {
+    return 0;
+  }
+
+  final minWidth = compact ? minTileWidthCompact : minTileWidth;
+  final minHeight = compact ? minTileHeightCompact : minTileHeight;
+  final target = compact ? targetAspectRatioCompact : targetAspectRatio;
+
+  var columns = _computeAxisMax(availableWidth, minWidth, 0);
+  if (columns > tileCount) columns = tileCount;
+  final rows = (tileCount / columns).ceil();
+
+  final tileWidth = (availableWidth - gridGap * (columns - 1)) / columns;
+  final byAspect = tileWidth / target;
+  final tileHeight = byAspect < minHeight ? minHeight : byAspect;
+
+  return rows * tileHeight + gridGap * (rows - 1);
 }
 
 /// Number of tiles in each row of a grid of [rows] rows holding [tileCount]

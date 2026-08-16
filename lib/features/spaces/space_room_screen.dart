@@ -14,6 +14,7 @@ import "../../services/spaces_service.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/reactions.dart";
 import "../call_shared/screen_share_source.dart";
+import "../call_shared/video/grid_geometry.dart";
 import "../call_shared/video/participant_grid.dart";
 import "../calls/call_device_picker.dart";
 import "../calls/cast_sheet.dart";
@@ -1617,6 +1618,7 @@ class _CappedStageVideo extends StatelessWidget {
   const _CappedStageVideo({
     required this.availableHeight,
     required this.child,
+    this.aspectRatio = 16 / 9,
   });
 
   /// Share of the stage's own height the video may take. The remainder is
@@ -1629,6 +1631,18 @@ class _CappedStageVideo extends StatelessWidget {
   /// bar), NOT the whole window: the header and control bar are already
   /// excluded, so the fraction below means what it says.
   final double availableHeight;
+
+  /// Aspect ratio (width / height) the [child] sizes itself at, which is what
+  /// turns the height cap below into the width this hands down.
+  ///
+  /// 16:9 by default, because that is the shape of ONE video and of the Watch
+  /// Together surface. A GRID of N people is not 16:9 at any N: the shape it
+  /// needs is a function of the head count and the width it is given, which
+  /// [preferredGridHeight] answers and [_LiveVideoStage] passes in here. Left
+  /// hardcoded, a phone stage was a box far too short for the rows the grid
+  /// asked for at phone width, and everybody past the first was laid out
+  /// under the bottom edge.
+  final double aspectRatio;
   final Widget child;
 
   @override
@@ -1642,10 +1656,10 @@ class _CappedStageVideo extends StatelessWidget {
         return child;
       }
       final capHeight = availableHeight * maxStageFraction;
-      // Width the video would need to hit that height at 16:9; whichever of
-      // the two limits binds first wins, so the video is never taller than
-      // the cap and never wider than the column.
-      final widthForCap = capHeight * 16 / 9;
+      // Width the video would need to hit that height at its own aspect
+      // ratio; whichever of the two limits binds first wins, so the video is
+      // never taller than the cap and never wider than the column.
+      final widthForCap = capHeight * aspectRatio;
       final width = widthForCap < maxWidth ? widthForCap : maxWidth;
       return Center(child: SizedBox(width: width, child: child));
     });
@@ -1733,6 +1747,53 @@ class _LiveVideoStage extends StatelessWidget {
     return out;
   }
 
+  /// The shape the stage box should take at [maxWidth] px of width, as an
+  /// aspect ratio for [_CappedStageVideo] and [FullscreenableVideo].
+  ///
+  /// 16:9 is the right answer for exactly two cases and the wrong answer for
+  /// the rest:
+  ///
+  ///  * ONE publisher. The stage IS the video, and a video is 16:9.
+  ///  * Somebody is sharing a screen. [ParticipantGrid] then draws a stage
+  ///    plus a filmstrip rather than a grid, and the stage is the shared
+  ///    screen, which is again 16:9.
+  ///
+  /// For an actual grid of N people, 16:9 is a box sized by WIDTH alone, and
+  /// the rows the geometry asks for at that width do not fit in it. On a
+  /// 390pt phone the Spaces stage is 358pt wide, so a 16:9 box is 201pt tall
+  /// while three tiles want roughly 358pt: rows two and three were laid out
+  /// below the box and clipped, and since
+  /// `LiveKitCallService.currentParticipants` puts the local participant
+  /// first, every phone in the room showed one video and it was its own
+  /// camera. The height therefore comes from [preferredGridHeight], clamped
+  /// to the SAME cap [_CappedStageVideo] enforces so the Speakers row below
+  /// still cannot be pushed off the bottom. If even the capped height cannot
+  /// hold everyone, the grid scrolls rather than dropping anybody.
+  double _stageAspectRatio(int tileCount, bool anySharing, double maxWidth) {
+    const singleVideo = 16 / 9;
+    if (tileCount <= 1 || anySharing) return singleVideo;
+    if (!maxWidth.isFinite || maxWidth <= 0) return singleVideo;
+
+    final capped = availableHeight.isFinite && availableHeight > 0;
+    final capHeight = capped
+        ? availableHeight * _CappedStageVideo.maxStageFraction
+        : double.infinity;
+
+    var height = preferredGridHeight(
+      tileCount: tileCount,
+      availableWidth: maxWidth,
+      // Evaluated against the cap because the cap is the tallest the stage
+      // can end up. The predicate only ever gets MORE true as the box gets
+      // shorter, so a stage that is compact at the cap is compact at its
+      // final height too, and the grid re-derives the same minimums this
+      // height was computed from.
+      compact: isCompactStage(maxWidth, capHeight),
+    );
+    if (height > capHeight) height = capHeight;
+    if (!height.isFinite || height <= 0) return singleVideo;
+    return maxWidth / height;
+  }
+
   @override
   Widget build(BuildContext context) {
     final people = _livePeople();
@@ -1760,19 +1821,32 @@ class _LiveVideoStage extends StatelessWidget {
         // viewer can pinch-to-zoom and pan, both here inline and in
         // fullscreen.
         //
-        // It supplies the 16:9 AspectRatio the grid needs to self-size its
-        // height inside the width _CappedStageVideo hands down (the stage
-        // sits in a ListView, so height is unbounded here by construction and
-        // ParticipantGrid requires bounded constraints).
-        _CappedStageVideo(
-          availableHeight: availableHeight,
-          child: FullscreenableVideo(
-            aspectRatio: 16 / 9,
-            borderRadius: 14,
-            semanticsLabel: semanticsLabel,
-            video: ParticipantGrid(participants: people, room: room),
-          ),
-        ),
+        // It supplies the AspectRatio the grid needs to self-size its height
+        // inside the width _CappedStageVideo hands down (the stage sits in a
+        // ListView, so height is unbounded here by construction and
+        // ParticipantGrid requires bounded constraints). That ratio comes
+        // from _stageAspectRatio rather than a hardcoded 16:9, so a grid of N
+        // gets a box tall enough for the rows it actually needs at the width
+        // it actually has. The LayoutBuilder is OUTSIDE _CappedStageVideo on
+        // purpose: the ratio has to be computed from the full column width,
+        // which is the width the cap then narrows (or, for a grid, does not).
+        LayoutBuilder(builder: (context, constraints) {
+          final aspectRatio = _stageAspectRatio(
+            people.length,
+            people.any((p) => p.isScreenSharing),
+            constraints.maxWidth,
+          );
+          return _CappedStageVideo(
+            availableHeight: availableHeight,
+            aspectRatio: aspectRatio,
+            child: FullscreenableVideo(
+              aspectRatio: aspectRatio,
+              borderRadius: 14,
+              semanticsLabel: semanticsLabel,
+              video: ParticipantGrid(participants: people, room: room),
+            ),
+          );
+        }),
         if (localSharingScreen) ...[
           const SizedBox(height: 8),
           Row(
