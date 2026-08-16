@@ -9,13 +9,19 @@ import "package:hive_flutter/hive_flutter.dart";
 import "package:livekit_client/livekit_client.dart";
 import "package:mocktail/mocktail.dart";
 import "package:skchat/features/call_shared/screen_share_source.dart";
+import "package:skchat/features/call_shared/video/participant_grid.dart";
+import "package:skchat/features/call_shared/video/participant_tile.dart";
+import "package:skchat/features/call_shared/video/participant_video.dart"
+    show callVideoRendererBuilderProvider;
 import "package:skchat/features/calls/call_device_picker.dart"
     show CallDeviceReconciler;
 import "package:skchat/features/calls/cast_sheet.dart"
     show activeCastSessionProvider;
+import "package:skchat/features/spaces/fullscreen_video_stage.dart";
 import "package:skchat/features/spaces/space_chat_panel.dart";
 import "package:skchat/features/spaces/space_models.dart";
 import "package:skchat/features/spaces/space_room_screen.dart";
+import "package:skchat/features/spaces/zoomable_video.dart";
 import "package:skchat/features/spaces/watch_session.dart"
     show laneServiceFactoryProvider, watchSessionProvider, WatchSessionArgs;
 import "package:skchat/features/spaces/watch_video_stub.dart"
@@ -2312,6 +2318,12 @@ void main() {
       when(() => room.remoteParticipants).thenReturn(
           UnmodifiableMapView<String, RemoteParticipant>({"dana": dana}));
       when(() => room.localParticipant).thenReturn(null);
+      // The stage's video tiles carry their own room EventsListener now
+      // (ParticipantVideo), so a mock room has to be able to hand one out.
+      final emitter = EventsEmitter<RoomEvent>();
+      addTearDown(emitter.dispose);
+      when(() => room.createListener())
+          .thenAnswer((_) => EventsListener<RoomEvent>(emitter));
       when(() => svc.room).thenReturn(room);
 
       await tester.pumpWidget(wrap());
@@ -2373,6 +2385,257 @@ void main() {
       final stillMountedState =
           tester.state<State<WatchVideo>>(find.byType(WatchVideo));
       expect(identical(stillMountedState, mountedOnceState), isTrue);
+    });
+  });
+
+  // ── V13: the Space stage is a GRID, not one video plus a head count ──────
+  //
+  // Chef: "allow multiple ppl to go live at once with their video".
+  //
+  // resolveStageVideos has always returned every live camera and screen share
+  // (stage_video_resolver_test.dart asserts it returns 2 for two live
+  // cameras). The STAGE was the part that threw them away: it took
+  // `videos.first`, drew that one, and collapsed everybody else into the
+  // string "+N others are also live". These tests are the ones that would
+  // have caught that, so they assert on what actually got PAINTED, per
+  // participant, rather than on what the resolver returned.
+  group("V13 every live video renders, not just the first", () {
+    late EventsEmitter<RoomEvent> emitter;
+
+    setUp(() => emitter = EventsEmitter<RoomEvent>());
+    tearDown(() async => emitter.dispose());
+
+    /// A publication carrying a live (unmuted) [track].
+    MockRemoteTrackPublication pub(RemoteVideoTrack track) {
+      final p = MockRemoteTrackPublication();
+      when(() => p.track).thenReturn(track);
+      when(() => p.muted).thenReturn(false);
+      return p;
+    }
+
+    /// A remote participant publishing [camera] and/or [screen], and nothing
+    /// on the source it is not given.
+    MockRemoteParticipant remote({
+      RemoteVideoTrack? camera,
+      RemoteVideoTrack? screen,
+    }) {
+      // Built BEFORE the `when` calls: mocktail rejects a nested `when` while
+      // a stub response is being constructed.
+      final camPub = camera == null ? null : pub(camera);
+      final screenPub = screen == null ? null : pub(screen);
+      final p = MockRemoteParticipant();
+      when(() => p.getTrackPublicationBySource(TrackSource.camera))
+          .thenReturn(camPub);
+      when(() => p.getTrackPublicationBySource(TrackSource.screenShareVideo))
+          .thenReturn(screenPub);
+      return p;
+    }
+
+    /// Wire [remotes] into a live room the screen can resolve against.
+    ///
+    /// `createListener` is stubbed because every tile now carries its own
+    /// room EventsListener (ParticipantVideo), which is the mechanism that
+    /// repaints a tile on a late publish / subscribe / mute instead of
+    /// waiting for the participant snapshot stream to happen to tick.
+    void wireRoom(Map<String, RemoteParticipant> remotes) {
+      final room = MockRoom();
+      when(() => room.remoteParticipants).thenReturn(
+          UnmodifiableMapView<String, RemoteParticipant>(remotes));
+      when(() => room.localParticipant).thenReturn(null);
+      when(() => room.createListener())
+          .thenAnswer((_) => EventsListener<RoomEvent>(emitter));
+      when(() => svc.room).thenReturn(room);
+    }
+
+    void wireRoster(List<LiveKitParticipantSnapshot> participants) {
+      when(() => svc.participants)
+          .thenAnswer((_) => Stream.value(participants));
+      when(() => svc.currentParticipants).thenReturn(participants);
+    }
+
+    /// Draw each track as its own identifiable marker instead of the real
+    /// `VideoTrackRenderer`, which needs a flutter_webrtc platform channel
+    /// that does not exist under `flutter test`. This is the whole point of
+    /// the `callVideoRendererBuilderProvider` seam: without a per-track
+    /// marker, "the stage drew two videos" and "the stage drew one video
+    /// twice" are indistinguishable.
+    Widget wrapWithRenderer(Map<VideoTrack, String> labels) {
+      String labelFor(VideoTrack t) {
+        for (final entry in labels.entries) {
+          if (identical(entry.key, t)) return entry.value;
+        }
+        return "video-unknown";
+      }
+
+      return wrapFor(join, extraOverrides: [
+        callVideoRendererBuilderProvider
+            .overrideWithValue((track) => Text(labelFor(track))),
+      ]);
+    }
+
+    Future<void> settle(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets(
+        "TWO people live on camera both render, and the \"+N others are also "
+        "live\" fallback is gone", (tester) async {
+      // The exact bug, stated as a test: the resolver already returned both,
+      // the stage drew one and wrote the other one down as text.
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isCameraEnabled: true),
+        _snap("erin", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaCam = _FakeVideoTrack();
+      final erinCam = _FakeVideoTrack();
+      wireRoom({
+        "dana": remote(camera: danaCam),
+        "erin": remote(camera: erinCam),
+      });
+
+      await tester.pumpWidget(wrapWithRenderer({
+        danaCam: "video-dana",
+        erinCam: "video-erin",
+      }));
+      await settle(tester);
+
+      expect(find.byType(ParticipantTile), findsNWidgets(2),
+          reason: "two live cameras, two tiles");
+      expect(find.text("video-dana"), findsOneWidget);
+      expect(find.text("video-erin"), findsOneWidget);
+      expect(find.textContaining("also live"), findsNothing,
+          reason: "nobody gets demoted to a head count any more");
+    });
+
+    testWidgets("ONE person live on camera still gets the whole stage",
+        (tester) async {
+      // The single-publisher case is the common one and must not regress
+      // into a one-tile grid with grid margins and a corner ring.
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaCam = _FakeVideoTrack();
+      wireRoom({"dana": remote(camera: danaCam)});
+
+      await tester.pumpWidget(wrapWithRenderer({danaCam: "video-dana"}));
+      await settle(tester);
+
+      expect(find.byType(ParticipantTile), findsOneWidget);
+      expect(find.text("video-dana"), findsOneWidget);
+      final grid = tester.getRect(find.byType(ParticipantGrid));
+      expect(tester.getRect(find.byType(ParticipantTile)).size,
+          equals(grid.size),
+          reason: "a lone publisher is the stage, not a tile on one");
+    });
+
+    testWidgets(
+        "a screen share PLUS a camera: the share takes the stage and the "
+        "camera rides the filmstrip, both live", (tester) async {
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isScreenSharing: true),
+        _snap("erin", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaScreen = _FakeVideoTrack();
+      final erinCam = _FakeVideoTrack();
+      wireRoom({
+        "dana": remote(screen: danaScreen),
+        "erin": remote(camera: erinCam),
+      });
+
+      await tester.pumpWidget(wrapWithRenderer({
+        danaScreen: "video-dana-screen",
+        erinCam: "video-erin-cam",
+      }));
+      await settle(tester);
+
+      expect(find.byType(ParticipantTile), findsNWidgets(2));
+      expect(find.text("video-dana-screen"), findsOneWidget);
+      expect(find.text("video-erin-cam"), findsOneWidget,
+          reason: "a camera must not be dropped just because someone shares");
+      final stage = tester.getRect(find.byType(ParticipantTile).at(0));
+      final strip = tester.getRect(find.byType(ParticipantTile).at(1));
+      expect(stage.height, greaterThan(strip.height),
+          reason: "the shared content is what people came to see");
+      expect(strip.top, greaterThan(stage.top));
+    });
+
+    testWidgets(
+        "the 0.66 stage cap still binds on LIVE video: a wide window does "
+        "not push Speakers off the bottom", (tester) async {
+      // The same regression Chef reported for the Watch Together surface
+      // (see "the room below the video stays on screen"), now on the path
+      // that actually draws live cameras. A bare AspectRatio(16/9) in a
+      // full-width list is sized by WIDTH, so a wider window makes a taller
+      // video; _CappedStageVideo is what stops that.
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isCameraEnabled: true),
+        _snap("erin", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaCam = _FakeVideoTrack();
+      final erinCam = _FakeVideoTrack();
+      wireRoom({
+        "dana": remote(camera: danaCam),
+        "erin": remote(camera: erinCam),
+      });
+
+      await tester.pumpWidget(wrapWithRenderer({
+        danaCam: "video-dana",
+        erinCam: "video-erin",
+      }));
+      await settle(tester);
+
+      final gridRect = tester.getRect(find.byType(ParticipantGrid));
+      expect(gridRect.height, lessThan(900.0 * 0.66),
+          reason: "the live stage at $gridRect ate the room below it");
+      final speakers = find.text("SPEAKERS");
+      expect(speakers, findsOneWidget);
+      expect(tester.getRect(speakers).top, lessThan(900.0),
+          reason: "SPEAKERS is off the bottom of the window");
+    });
+
+    testWidgets("the live stage is still fullscreenable and still zoomable",
+        (tester) async {
+      // Spaces-only affordances that predate the shared grid. Adopting the
+      // grid must not quietly cost the viewer pinch-to-zoom or double-tap
+      // to fullscreen.
+      wireRoster(<LiveKitParticipantSnapshot>[
+        _snap("chef@dk.skworld", isLocal: true, canPublish: true),
+        _snap("dana", canPublish: true, isCameraEnabled: true),
+        _snap("erin", canPublish: true, isCameraEnabled: true),
+      ]);
+      final danaCam = _FakeVideoTrack();
+      final erinCam = _FakeVideoTrack();
+      wireRoom({
+        "dana": remote(camera: danaCam),
+        "erin": remote(camera: erinCam),
+      });
+
+      await tester.pumpWidget(wrapWithRenderer({
+        danaCam: "video-dana",
+        erinCam: "video-erin",
+      }));
+      await settle(tester);
+
+      expect(find.byType(FullscreenableVideo), findsOneWidget);
+      expect(find.byType(ZoomableVideo), findsWidgets);
+
+      // And the fullscreen route really carries the whole grid across, not
+      // just whichever video used to be `videos.first`.
+      await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FullscreenVideoPage), findsOneWidget);
+      expect(find.text("video-dana"), findsOneWidget);
+      expect(find.text("video-erin"), findsOneWidget);
     });
   });
 
