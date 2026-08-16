@@ -10,6 +10,7 @@ import 'core/theme/theme.dart';
 import 'core/router/app_router.dart';
 import 'core/providers/theme_provider.dart';
 import 'core/providers/density_provider.dart';
+import 'core/widgets/deploy_freshness_banner.dart';
 import 'data/hive_adapters.dart';
 import 'services/diag/diag_error_sink.dart';
 import 'services/diag/diag_event.dart';
@@ -218,7 +219,9 @@ class SKChatApp extends ConsumerWidget {
       // sizes anywhere else; test/font_literal_guard_test.dart enforces it.
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         maxScaleFactor: 2.0,
-        child: child ?? const SizedBox.shrink(),
+        child: DeployFreshnessBanner(
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
     );
   }
