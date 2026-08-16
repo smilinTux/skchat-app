@@ -14,6 +14,7 @@ import "../../services/spaces_service.dart";
 import "../call_shared/call_elapsed_timer.dart";
 import "../call_shared/reactions.dart";
 import "../call_shared/screen_share_source.dart";
+import "../call_shared/video/participant_grid.dart";
 import "../calls/call_device_picker.dart";
 import "../calls/cast_sheet.dart";
 import "space_chat_panel.dart";
@@ -1240,9 +1241,18 @@ class _Stage extends ConsumerWidget {
     // live video = normal audio-room layout. resolveStageVideos generalizes
     // the old screen-share-only lookup to also include camera go-lives
     // (TrackSource.camera), see screen_share_helper.dart.
-    final videos =
-        resolveStageVideos(ref.read(liveKitCallServiceProvider).room,
-            state.participants);
+    //
+    // The room is read once here and handed down to the stage, which hands it
+    // to the grid: the TILES are what listen to it. `resolveStageVideos` is
+    // still a per-build snapshot answer, and that is enough for it, because
+    // its only job now is deciding WHO is on the stage, and the roster stream
+    // that drives this build already re-emits on every track publish /
+    // unpublish / subscribe (LiveKitCallService._emitParticipants). The much
+    // finer-grained question ("did THIS person's video appear, mute or go
+    // away") is answered inside ParticipantVideo, off the room's own event
+    // bus, so a tile no longer depends on a roster tick to repaint.
+    final room = ref.watch(liveKitCallServiceProvider).room;
+    final videos = resolveStageVideos(room, state.participants);
 
     // Watch Together: same shared session the "Watch together" lane tile
     // (WatchPanel) targets, watched here so the stage learns the moment a
@@ -1274,7 +1284,12 @@ class _Stage extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         if (liveVideoOnTop) ...[
-          _WatchStage(videos: videos, availableHeight: stageHeight),
+          _LiveVideoStage(
+            videos: videos,
+            participants: state.participants,
+            room: room,
+            availableHeight: stageHeight,
+          ),
           const SizedBox(height: 24),
         ],
         if (watchMounted) ...[
@@ -1637,90 +1652,128 @@ class _CappedStageVideo extends StatelessWidget {
   }
 }
 
-class _WatchStage extends StatelessWidget {
-  const _WatchStage({required this.videos, required this.availableHeight});
+/// The Space's live-video stage: EVERY live camera and screen share in the
+/// room, drawn at once.
+///
+/// This used to be `_WatchStage`, and it used to take `videos.first`, render
+/// that one video, and collapse everybody else into a line of text reading
+/// "+N others are also live". [resolveStageVideos] has always returned all of
+/// them (stage_video_resolver_test.dart asserts it returns 2 for two live
+/// cameras), so the resolver was never the problem: the VIEW threw them away.
+/// Chef's report was exactly that, "allow multiple ppl to go live at once with
+/// their video".
+///
+/// The layout comes from [ParticipantGrid] (call_shared/video/), the grid the
+/// calls screen already used to render unbounded simultaneous video, rather
+/// than from a second Spaces-only implementation. A Space and a conference
+/// call are asking the same question ("draw these N people"), and the one
+/// place that has ever answered it correctly (unbounded head count, a
+/// screen-sharer stage plus filmstrip, geometry from the available space,
+/// overflow that scrolls rather than dropping people) is that grid.
+///
+/// Two Spaces-only properties survive the swap on purpose:
+///
+///  * [_CappedStageVideo] still wraps the whole stage, so the video area can
+///    never grow past [_CappedStageVideo.maxStageFraction] of the stage
+///    height and push the Speakers row below the fold. See that class for the
+///    bug Chef reported.
+///  * [FullscreenableVideo] (and, through it, `ZoomableVideo`) still wraps the
+///    stage, so double-tap / the corner button still opens fullscreen and
+///    pinch still zooms. It now carries the whole GRID across into fullscreen
+///    rather than a single track, which is the same change in the large: every
+///    live participant comes with you.
+///
+/// What is deliberately gone is the single "Live" / "Streaming" name
+/// pill. With one video it named the one publisher; with several it
+/// would name one of them and mislead about the rest. Each tile labels itself
+/// (identity, "(you)", mic state, connection quality) inside `ParticipantTile`,
+/// which is strictly more information and is per person.
+class _LiveVideoStage extends StatelessWidget {
+  const _LiveVideoStage({
+    required this.videos,
+    required this.participants,
+    required this.room,
+    required this.availableHeight,
+  });
 
+  /// Every live video on the stage, screen shares first
+  /// ([resolveStageVideos]'s own ordering).
   final List<StageVideo> videos;
+
+  /// The full room roster, the source of the snapshots the grid draws.
+  final List<LiveKitParticipantSnapshot> participants;
+
+  /// The live room. Passed straight through to the grid, whose tiles resolve
+  /// their own tracks off it AND subscribe to its event bus, so a track that
+  /// arrives, is muted, or is torn down repaints its tile immediately instead
+  /// of waiting for the participant snapshot stream to happen to tick.
+  final Room? room;
 
   /// Stage height to cap against; see [_CappedStageVideo].
   final double availableHeight;
 
+  /// The roster entries for the people who are actually publishing video, in
+  /// [videos] order so a screen sharer keeps the first (stage) slot.
+  ///
+  /// Deduplicated by identity: one participant sharing a screen AND a camera
+  /// appears in [videos] twice, but is ONE person and gets ONE tile, whose
+  /// track resolves screen-share-over-camera exactly like a call tile does
+  /// ([resolveTileVideoTrack]).
+  List<LiveKitParticipantSnapshot> _livePeople() {
+    final byIdentity = <String, LiveKitParticipantSnapshot>{
+      for (final p in participants) p.identity: p,
+    };
+    final seen = <String>{};
+    final out = <LiveKitParticipantSnapshot>[];
+    for (final v in videos) {
+      if (!seen.add(v.identity)) continue;
+      final person = byIdentity[v.identity];
+      if (person != null) out.add(person);
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final primary = videos.first;
-    final others = videos.length - 1;
-    final soul = _soulColorFor(primary.identity);
-    final who = primary.isLocal ? "You" : primary.identity;
-    final verb = primary.isCamera ? "is live on camera" : "is sharing their screen";
-    final label = primary.isCamera ? "Live: $who" : "Streaming: $who";
+    final people = _livePeople();
+    // The system-audio hint only applies to a screen share (the dedicated
+    // toggle lives in the Screen share panel); a camera go-live has no such
+    // control, so the hint stays screen-only. It is about what YOU are
+    // publishing, so it keys on the local participant's own share, wherever
+    // that share sits on the stage.
+    final localSharingScreen = videos.any((v) => v.isLocal && !v.isCamera);
+    final semanticsLabel = people.length == 1
+        ? "${videos.first.isLocal ? "You" : videos.first.identity} "
+            "${videos.first.isCamera ? "is live on camera" : "is sharing their screen"}. "
+            "Pinch to zoom, double-tap for fullscreen."
+        : "${people.length} people are live. "
+            "Pinch to zoom, double-tap for fullscreen.";
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // FullscreenableVideo owns the fullscreen toggle (overlay button,
         // double-tap, Esc / exit control on the pushed route) and pops
-        // itself automatically if this tile is removed from the tree
-        // (i.e. the share/go-live ends while the viewer is fullscreen). It
-        // also wraps this video (screen-share or camera go-live alike) in a
-        // ZoomableVideo internally, so the viewer can pinch-to-zoom and pan
-        // it both here inline and in fullscreen.
+        // itself automatically if this stage is removed from the tree
+        // (i.e. the last share/go-live ends while the viewer is fullscreen).
+        // It also wraps its content in a ZoomableVideo internally, so the
+        // viewer can pinch-to-zoom and pan, both here inline and in
+        // fullscreen.
+        //
+        // It supplies the 16:9 AspectRatio the grid needs to self-size its
+        // height inside the width _CappedStageVideo hands down (the stage
+        // sits in a ListView, so height is unbounded here by construction and
+        // ParticipantGrid requires bounded constraints).
         _CappedStageVideo(
           availableHeight: availableHeight,
           child: FullscreenableVideo(
-          aspectRatio: 16 / 9,
-          borderRadius: 14,
-          semanticsLabel: "$who $verb. Pinch to zoom, double-tap for fullscreen.",
-          video: VideoTrackRenderer(primary.track),
-          // "Streaming: <identity>" / "Live: <identity>" label pill,
-          // top-left, in both modes.
-          overlay: Positioned(
-            left: 10,
-            top: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: soul.withValues(alpha: 0.6)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: soul,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: SovereignColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ],
-              ),
-            ),
+            aspectRatio: 16 / 9,
+            borderRadius: 14,
+            semanticsLabel: semanticsLabel,
+            video: ParticipantGrid(participants: people, room: room),
           ),
         ),
-        ),
-        if (others > 0) ...[
-          const SizedBox(height: 8),
-          Text(
-            others == 1 ? "+1 other is also live" : "+$others others are also live",
-            style: SovereignTypography.micro().copyWith(
-              color: SovereignColors.textTertiary,
-            ),
-          ),
-        ],
-        // The system-audio hint only applies to a screen share (the
-        // dedicated toggle lives in the Screen share panel); a camera
-        // go-live has no such control, so the hint stays screen-only.
-        if (primary.isLocal && !primary.isCamera) ...[
+        if (localSharingScreen) ...[
           const SizedBox(height: 8),
           Row(
             children: [
