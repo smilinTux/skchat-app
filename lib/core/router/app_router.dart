@@ -20,6 +20,7 @@ import '../../features/profile/linked_devices_screen.dart';
 import '../../features/calls/livekit_call_screen.dart';
 import '../../features/spaces/spaces_directory_screen.dart';
 import '../../features/spaces/space_room_screen.dart';
+import '../../features/spaces/space_deep_link_screen.dart';
 import '../../features/recordings/recordings_screen.dart';
 import '../../features/requests/requests_screen.dart';
 import '../../features/spaces/space_models.dart';
@@ -256,8 +257,14 @@ String? backendSetupRedirect({
 /// so the first-run onboarding gate has to let them through untouched, even
 /// on a neutral (unconfigured) build. Verified against the actual guest-facing
 /// routes below: `/g/:token` (guest group landing), `/join` (conference
-/// deep-link chooser), and `/conf` (native conf hand-off with a minted token).
-const kGuestDeepLinkPrefixes = <String>['/g/', '/join', '/conf'];
+/// deep-link chooser), `/conf` (native conf hand-off with a minted token), and
+/// `/spaces/` (a shared SK Space link, `spaceJoinUrl` in space_share.dart).
+///
+/// The Space prefix keeps its trailing slash deliberately: it exempts a
+/// SHARED ROOM link (`/spaces/{id}`), which is handed to someone who has
+/// never onboarded, while leaving the Spaces directory TAB (`/spaces`, a
+/// normal in-app destination) behind the first-run gate.
+const kGuestDeepLinkPrefixes = <String>['/g/', '/join', '/conf', '/spaces/'];
 
 /// True when [location] is (or is under) a guest deep-link that the onboarding
 /// gate must never redirect away from.
@@ -639,13 +646,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // -- SK Space audio room (role-scoped LiveKit token via extra)
       GoRoute(
         path: AppRoutes.spaceRoom,
-        pageBuilder: (context, state) {
-          final join = state.extra as SpaceJoin;
-          return MaterialPage(
-            fullscreenDialog: true,
-            child: SpaceRoomScreen(join: join),
-          );
-        },
+        pageBuilder: spaceRoomPageBuilder,
       ),
 
       // -- Conference room (sovereign /conf REST surface).
@@ -684,6 +685,41 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Builds the [AppRoutes.spaceRoom] page, from EITHER entry point.
+///
+/// In-app navigation (the Spaces directory) passes an already-minted,
+/// role-scoped [SpaceJoin] via `extra` and goes straight into the room, the
+/// common path, unchanged.
+///
+/// A shared link cannot carry `extra`: `spaceJoinUrl` (space_share.dart)
+/// produces `{base}/app/#/spaces/{id}`, and a URL holds only the id. This
+/// used to be `state.extra as SpaceJoin`, an unguarded cast, so every shared
+/// link threw a _TypeError while building and the guest got a blank grey
+/// screen. Now a missing/foreign `extra` routes to [SpaceDeepLinkScreen],
+/// which mints the join itself (async, hence its own loading and error
+/// states) before rendering the same room.
+///
+/// Top-level (not an inline closure) so a widget test can mount the app's
+/// REAL route builder in a minimal router, instead of restating it and
+/// testing a copy.
+Page<void> spaceRoomPageBuilder(BuildContext context, GoRouterState state) {
+  final extra = state.extra;
+  if (extra is SpaceJoin) {
+    return MaterialPage(
+      fullscreenDialog: true,
+      child: SpaceRoomScreen(join: extra),
+    );
+  }
+  final spaceId = state.pathParameters['id'] ?? '';
+  if (spaceId.isEmpty) {
+    return const MaterialPage(child: _InvalidJoinScreen());
+  }
+  return MaterialPage(
+    fullscreenDialog: true,
+    child: SpaceDeepLinkScreen(spaceId: spaceId),
+  );
+}
 
 /// Instant tab switch, no transition animation on tab change.
 /// Push navigation (conversations) uses the default spring transition.

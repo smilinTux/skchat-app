@@ -34,6 +34,51 @@ bool isHostOfSpace(SpaceSummary space, SpacesIdentity identity) =>
     space.hostFqid.isNotEmpty &&
     space.hostFqid == localHostIdentityValue(identity);
 
+/// Joins [space] as its host when the local user IS that Space's host
+/// (per [isHostOfSpace]), otherwise as a listener.
+///
+/// The host branch still asks the server for a host-role token via
+/// `joinHost`, which independently re-verifies the requester against
+/// `host_fqid` server-side (this client-side check is only what decides
+/// which endpoint to call, it does not weaken that server check). If the
+/// server ever rejects the host join anyway (stale directory data, etc.)
+/// this falls back to a normal listener join so the user still gets into
+/// the Space instead of seeing an error.
+///
+/// The listener join uses [identity]'s device id directly as the LiveKit
+/// participant identity, with no per-device suffix: the id is already
+/// globally unique per device (see [SpacesIdentity]), so a suffix would
+/// only add the risk of the host's own participant identity no longer
+/// matching the `host_fqid` it minted at create time.
+///
+/// Top-level (it used to be private to [SpacesDirectoryScreen]) because a
+/// shared-link deep link has to mint the very same role-scoped join, from a
+/// route with no directory screen anywhere in its tree. See
+/// `space_deep_link_screen.dart`.
+Future<SpaceJoin> joinSpaceAsAppropriateRole(
+  SpacesService svc, {
+  required SpaceSummary space,
+  required SpacesIdentity identity,
+}) async {
+  if (isHostOfSpace(space, identity)) {
+    try {
+      return await svc.joinHost(
+        space.spaceId,
+        requester: localHostIdentityValue(identity),
+      );
+    } on Object catch (e) {
+      debugPrint(
+        "joinHost rejected for ${space.spaceId} ($e); falling back to listener join",
+      );
+    }
+  }
+  return svc.joinListener(
+    space.spaceId,
+    identity: identity.id,
+    name: identity.displayName,
+  );
+}
+
 /// Polls the sovereign /spaces API for live Spaces every 5s.
 ///
 /// Emits the current list of [SpaceSummary]; surfaces errors as an
@@ -138,7 +183,7 @@ class SpacesDirectoryScreen extends ConsumerWidget {
     // whether this device is the Space's host and what identity to join as.
     final identity = await ref.read(spacesIdentityProvider.future);
     try {
-      final join = await _joinAsAppropriateRole(
+      final join = await joinSpaceAsAppropriateRole(
         svc,
         space: space,
         identity: identity,
@@ -154,46 +199,6 @@ class SpacesDirectoryScreen extends ConsumerWidget {
         ),
       );
     }
-  }
-
-  /// Joins [space] as its host when the local user IS that Space's host
-  /// (per [isHostOfSpace]), otherwise as a listener.
-  ///
-  /// The host branch still asks the server for a host-role token via
-  /// `joinHost`, which independently re-verifies the requester against
-  /// `host_fqid` server-side (this client-side check is only what decides
-  /// which endpoint to call, it does not weaken that server check). If the
-  /// server ever rejects the host join anyway (stale directory data, etc.)
-  /// this falls back to a normal listener join so the user still gets into
-  /// the Space instead of seeing an error.
-  ///
-  /// The listener join uses [identity]'s device id directly as the LiveKit
-  /// participant identity, with no per-device suffix: the id is already
-  /// globally unique per device (see [SpacesIdentity]), so a suffix would
-  /// only add the risk of the host's own participant identity no longer
-  /// matching the `host_fqid` it minted at create time.
-  Future<SpaceJoin> _joinAsAppropriateRole(
-    SpacesService svc, {
-    required SpaceSummary space,
-    required SpacesIdentity identity,
-  }) async {
-    if (isHostOfSpace(space, identity)) {
-      try {
-        return await svc.joinHost(
-          space.spaceId,
-          requester: localHostIdentityValue(identity),
-        );
-      } on Object catch (e) {
-        debugPrint(
-          "joinHost rejected for ${space.spaceId} ($e); falling back to listener join",
-        );
-      }
-    }
-    return svc.joinListener(
-      space.spaceId,
-      identity: identity.id,
-      name: identity.displayName,
-    );
   }
 
   Future<void> _showCreateSheet(BuildContext context, WidgetRef ref) async {
