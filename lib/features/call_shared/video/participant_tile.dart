@@ -26,6 +26,7 @@ class ParticipantTile extends ConsumerWidget {
     required this.snapshot,
     required this.room,
     this.fullScreen = false,
+    this.onLongPress,
   });
 
   final LiveKitParticipantSnapshot snapshot;
@@ -34,6 +35,11 @@ class ParticipantTile extends ConsumerWidget {
   /// Stage presentation: no margin, no border, no corner ring. Used for the
   /// screen-share stage and for a grid that has resolved to a single tile.
   final bool fullScreen;
+
+  /// Optional long-press hook, e.g. a host removing an invited agent from a
+  /// conference. Null on every surface that has no such action (calls,
+  /// Spaces): the gesture layer only appears when a caller asks for it.
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -52,7 +58,7 @@ class ParticipantTile extends ConsumerWidget {
     // participant is speaking (LiveKit audio-level detection).
     final speaking = snapshot.isSpeaking;
 
-    return Container(
+    final tile = Container(
       margin: fullScreen ? EdgeInsets.zero : const EdgeInsets.all(1),
       decoration: BoxDecoration(
         color: SovereignColors.surfaceCard,
@@ -177,6 +183,9 @@ class ParticipantTile extends ConsumerWidget {
         ],
       ),
     );
+
+    if (onLongPress == null) return tile;
+    return GestureDetector(onLongPress: onLongPress, child: tile);
   }
 }
 

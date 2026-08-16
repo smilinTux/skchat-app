@@ -34,10 +34,17 @@ class ParticipantGrid extends StatelessWidget {
     super.key,
     required this.participants,
     required this.room,
+    this.onTileLongPress,
   });
 
   final List<LiveKitParticipantSnapshot> participants;
   final Room? room;
+
+  /// Optional per-tile long-press hook, e.g. a conference host removing an
+  /// invited agent. Returns null for a participant with no such action
+  /// available; the tile then has no gesture layer at all. Unused by every
+  /// existing caller (calls, Spaces), so it changes nothing there.
+  final VoidCallback? Function(LiveKitParticipantSnapshot)? onTileLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +78,7 @@ class ParticipantGrid extends StatelessWidget {
         snapshot: participants.first,
         room: room,
         fullScreen: true,
+        onLongPress: onTileLongPress?.call(participants.first),
       );
     }
 
@@ -167,7 +175,11 @@ class ParticipantGrid extends StatelessWidget {
         for (final p in row)
           Expanded(
             flex: tileColumnSpan,
-            child: ParticipantTile(snapshot: p, room: room),
+            child: ParticipantTile(
+              snapshot: p,
+              room: room,
+              onLongPress: onTileLongPress?.call(p),
+            ),
           ),
         if (trailing > 0) Spacer(flex: trailing),
       ],
@@ -188,6 +200,7 @@ class ParticipantGrid extends StatelessWidget {
             snapshot: sharer,
             room: room,
             fullScreen: true,
+            onLongPress: onTileLongPress?.call(sharer),
           ),
         ),
         if (others.isNotEmpty)
@@ -200,7 +213,11 @@ class ParticipantGrid extends StatelessWidget {
               separatorBuilder: (_, _) => const SizedBox(width: 2),
               itemBuilder: (_, i) => AspectRatio(
                 aspectRatio: 1,
-                child: ParticipantTile(snapshot: others[i], room: room),
+                child: ParticipantTile(
+                  snapshot: others[i],
+                  room: room,
+                  onLongPress: onTileLongPress?.call(others[i]),
+                ),
               ),
             ),
           ),

@@ -9,13 +9,11 @@ import "../../core/theme/theme.dart";
 import "../../services/conf_service.dart";
 import "../../services/livekit_call_service.dart";
 import "../../services/self_identity_provider.dart";
-import "../../services/peer_trust_store.dart";
-import "../identity/widgets/trust_badge.dart";
 import "../call_shared/call_elapsed_timer.dart";
-import "../call_shared/connection_quality_bars.dart";
 import "../call_shared/in_call_panels.dart";
 import "../call_shared/reactions.dart";
 import "../call_shared/screen_share_source.dart";
+import "../call_shared/video/participant_grid.dart";
 import "../calls/call_device_picker.dart";
 import "../calls/cast_sheet.dart";
 
@@ -542,7 +540,13 @@ class _ConfScreenState extends ConsumerState<ConfScreen> {
                     child: st.isConnected
                         ? Stack(
                             children: [
-                              _Body(args: widget.args, state: st),
+                              // Positioned.fill gives the grid tight, bounded
+                              // constraints (it is a stage, not a scrolling
+                              // list; ParticipantGrid throws on an unbounded
+                              // height).
+                              Positioned.fill(
+                                child: _Body(args: widget.args, state: st),
+                              ),
                               // Floating emoji reactions over the participants.
                               const Positioned.fill(child: ReactionsOverlay()),
                             ],
@@ -773,40 +777,55 @@ class _Body extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+    final room = ref.watch(liveKitCallServiceProvider).room;
+    return Column(
       children: [
-        // Host-only: waiting room.
-        if (state.isHost && state.waiting.isNotEmpty) ...[
-          _sectionLabel(context, "Waiting room", state.waiting.length),
-          const SizedBox(height: 12),
-          for (final g in state.waiting)
-            _WaitingTile(
-              guest: g,
-              onAdmit: () =>
-                  ref.read(confProvider(args).notifier).admit(g.identity),
-              onDeny: () =>
-                  ref.read(confProvider(args).notifier).deny(g.identity),
+        // Host-only: waiting room. Bounded height so a long queue scrolls
+        // inside its own panel instead of squeezing the video grid below it
+        // off the fixed conf stage.
+        if (state.isHost && state.waiting.isNotEmpty)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _sectionLabel(context, "Waiting room", state.waiting.length),
+                  const SizedBox(height: 12),
+                  for (final g in state.waiting)
+                    _WaitingTile(
+                      guest: g,
+                      onAdmit: () => ref
+                          .read(confProvider(args).notifier)
+                          .admit(g.identity),
+                      onDeny: () => ref
+                          .read(confProvider(args).notifier)
+                          .deny(g.identity),
+                    ),
+                ],
+              ),
             ),
-          const SizedBox(height: 24),
-        ],
-        _sectionLabel(context, "Participants", state.participants.length),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 20,
-          runSpacing: 20,
-          children: [
-            for (final p in state.participants)
-              _ParticipantTile(
-                snapshot: p,
-                isHost: state.isHost,
-                onAgentRemove: state.isHost && !p.isLocal
-                    ? () => ref
+          ),
+        // The shared multi-party video grid: real camera / screen-share
+        // surfaces when published, the soul-ring avatar fallback otherwise.
+        // Same widget the calls screen already uses (card V6), so a
+        // conference finally shows what a camera toggle actually publishes.
+        Expanded(
+          child: ParticipantGrid(
+            participants: state.participants,
+            room: room,
+            // Host-only: long-press an agent's tile to remove it from the
+            // conference. Never offered on your own tile.
+            onTileLongPress: state.isHost
+                ? (p) => p.isLocal
+                    ? null
+                    : () => ref
                         .read(confProvider(args).notifier)
                         .removeAgent(p.identity)
-                    : null,
-              ),
-          ],
+                : null,
+          ),
         ),
       ],
     );
@@ -875,120 +894,6 @@ class _WaitingTile extends StatelessWidget {
                 color: SovereignColors.accentDanger),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ParticipantTile extends ConsumerWidget {
-  const _ParticipantTile({
-    required this.snapshot,
-    required this.isHost,
-    this.onAgentRemove,
-  });
-
-  final LiveKitParticipantSnapshot snapshot;
-  final bool isHost;
-  final VoidCallback? onAgentRemove;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final soul = SovereignColors.fromFingerprint(snapshot.identity);
-    final initials =
-        snapshot.identity.isNotEmpty ? snapshot.identity[0].toUpperCase() : "?";
-    // Per-participant trust tier from the server-set soul_fingerprint (M1b).
-    // A missing/keyless fingerprint resolves to `unverifiable` -> no badge.
-    final tier = ref
-        .watch(peerTrustTierProvider((
-          peerId: snapshot.identity,
-          fingerprint: snapshot.soulFingerprint,
-        )))
-        .valueOrNull;
-    // Never badge your own tile ("You"): the TOFU store has no self record, so
-    // it would resolve red ("Untrusted") on your own device, which is wrong and
-    // desensitizes users to the red badge that flags genuinely-unverified peers.
-    final showBadge = !snapshot.isLocal &&
-        (tier == PeerTrustTier.red || tier == PeerTrustTier.amber);
-    return Semantics(
-      label: "${snapshot.identity}"
-          "${snapshot.isLocal ? " (you)" : ""}"
-          "${snapshot.isMuted ? ", muted" : ""}",
-      button: onAgentRemove != null,
-      child: GestureDetector(
-        onLongPress: onAgentRemove,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: soul.withValues(alpha: 0.15),
-                border: Border.all(
-                  color: snapshot.isSpeaking ? soul : soul.withValues(alpha: 0.5),
-                  width: snapshot.isSpeaking ? 3 : 1.5,
-                ),
-              ),
-              child: Stack(
-                children: [
-                  Center(
-                    child: Text(
-                      initials,
-                      style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                            color: soul,
-                          ),
-                    ),
-                  ),
-                  if (snapshot.isMuted)
-                    Positioned(
-                      right: 2,
-                      bottom: 2,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: SovereignColors.surfaceCard,
-                        ),
-                        child: const Icon(Icons.mic_off_rounded,
-                            size: 12, color: SovereignColors.accentWarning),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: 76,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      snapshot.isLocal ? "You" : snapshot.identity,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: SovereignColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                  ),
-                  if (showBadge) ...[
-                    const SizedBox(width: 4),
-                    TrustBadge(tier: selfTierForPeer(tier!), compact: true),
-                  ],
-                ],
-              ),
-            ),
-            // Connection-quality signal bars (subtle; hidden until known).
-            if (snapshot.connectionQuality != ConnectionQuality.unknown) ...[
-              const SizedBox(height: 4),
-              ConnectionQualityBars(quality: snapshot.connectionQuality),
-            ],
-          ],
-        ),
       ),
     );
   }
