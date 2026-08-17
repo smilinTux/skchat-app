@@ -36,8 +36,11 @@ enum _LinkStatus { idle, linking, linked, error }
 ///     (read internally by the service via `operator_token.dart`). This
 ///     section renders the paste field for that token, above the Link
 ///     button, so the flow reads top-to-bottom: paste the token, then link.
-///  2. [OperatorSessionService.enroll] with the returned window nonce
-///     (`POST /api/v1/auth/enroll`).
+///     The response may additionally carry a server-derived
+///     `capauth_challenge` (`inc-c72a9120` part 3), passed straight through
+///     to step 2.
+///  2. [OperatorSessionService.enroll] with the returned window nonce and
+///     `capauth_challenge` (`POST /api/v1/auth/enroll`).
 ///  3. [OperatorSessionService.ensureSession] to confirm a session can
 ///     actually be obtained with the newly-enrolled key.
 ///
@@ -168,7 +171,17 @@ class _OperatorEnrollmentSectionState
       // platform read; enroll() treats a null label as "send none", which
       // keeps the original two-field signed payload, the documented
       // backwards-compatible path.
-      await service.enroll(windowNonce, label: guessDeviceLabel());
+      //
+      // capauth_challenge (inc-c72a9120 part 3): server-derived proof
+      // material, passed straight through unmodified. Absent on an older
+      // daemon or when the server couldn't derive it, and service.enroll()
+      // already degrades gracefully when it's null, so no presence check is
+      // needed here.
+      await service.enroll(
+        windowNonce,
+        label: guessDeviceLabel(),
+        capauthChallengeB64: window["capauth_challenge"] as String?,
+      );
       await service.ensureSession();
       final kp = await service.identity.ensure();
       // This device just went from unenrolled to a live operator session:

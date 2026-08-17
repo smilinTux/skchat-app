@@ -230,6 +230,104 @@ void main() {
     });
   });
 
+  group("capauth_challenge wiring (inc-c72a9120 part 3)", () {
+    testWidgets(
+      "a capauth_challenge on the open response flows through to the "
+      "enroll request as capauth_proof",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        // base64(utf8) of a fixed challenge text, derived (not hand-
+        // transcribed) so there is one source of truth for the fixture; same
+        // shape as operator_session_service_test.dart. Deriving it also
+        // avoids a raw high-entropy base64 literal in source, which secret
+        // scanners flag as a "Generic High Entropy Secret" even though this
+        // is test fixture data, not a credential.
+        const challengeText =
+            "capauth-pairing-enrollment-verified-v1:"
+            "91DD32D8B3037750899BA284917FD5ED33829026:device:91dd32d8b3037750";
+        final challengeB64 = base64Encode(utf8.encode(challengeText));
+        final adapter = _CannedAdapter({
+          "/api/v1/auth/enroll/open": {
+            "window_nonce": "WIN-CHAL",
+            "exp": future,
+            "capauth_challenge": challengeB64,
+          },
+          "/api/v1/auth/enroll": {"device_fp": "deadbeefdeadbeef"},
+          "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
+          "/api/v1/auth/session": {
+            "session_token": _fakeJwt(future),
+            "expires_at": future,
+          },
+        });
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+        );
+
+        await tester.pumpWidget(_wrap(service));
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key("operator-enroll-action")));
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+
+        final enrollReq = adapter.requests.firstWhere(
+          (r) => r.uri.path == "/api/v1/auth/enroll",
+        );
+        final body = enrollReq.data is String
+            ? jsonDecode(enrollReq.data as String) as Map
+            : (enrollReq.data as Map);
+        expect(body["capauth_proof"], isNotEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      "no capauth_challenge on the open response still links successfully, "
+      "with no capauth_proof sent",
+      (tester) async {
+        final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
+        final adapter = _CannedAdapter({
+          "/api/v1/auth/enroll/open": {"window_nonce": "WIN-NOCHAL", "exp": future},
+          "/api/v1/auth/enroll": {"device_fp": "deadbeefdeadbeef"},
+          "/api/v1/auth/challenge": {"nonce": "N1", "exp": future},
+          "/api/v1/auth/session": {
+            "session_token": _fakeJwt(future),
+            "expires_at": future,
+          },
+        });
+        final dio = Dio()..httpClientAdapter = adapter;
+        final service = OperatorSessionService(
+          dio: dio,
+          baseUrl: "http://localhost:9384",
+          identity: _FakeIdentity(),
+        );
+
+        await tester.pumpWidget(_wrap(service));
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key("operator-enroll-action")));
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        expect(find.text("This device is linked"), findsOneWidget);
+
+        final enrollReq = adapter.requests.firstWhere(
+          (r) => r.uri.path == "/api/v1/auth/enroll",
+        );
+        final body = enrollReq.data is String
+            ? jsonDecode(enrollReq.data as String) as Map
+            : (enrollReq.data as Map);
+        expect(body.containsKey("capauth_proof"), isFalse);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
   group("audience fallback status (CR-3.4 PR4)", () {
     testWidgets(
       "a linked seat that has fallen back surfaces the fallback count",

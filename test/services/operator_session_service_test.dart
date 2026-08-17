@@ -469,21 +469,240 @@ void main() {
     );
   });
 
+  // inc-c72a9120 part 3: the client signs whatever `capauth_challenge` the
+  // server hands back (never re-derives it), and sends the signature as
+  // `capauth_proof`. kFixtureChallengeText is the REAL example capauth
+  // itself produced (see the incident card): pinned by value, not merely by
+  // construction, so a refactor that silently changes the bytes (e.g.
+  // signing the base64 text, or double-decoding) is caught.
+  // kFixtureChallengeB64 is DERIVED from that pinned text (base64(utf8)),
+  // rather than a separately hand-transcribed literal, so there is exactly
+  // one source of truth for the fixture and no risk of the two silently
+  // drifting apart (also avoids a raw high-entropy base64 blob in source,
+  // which secret scanners like GitGuardian flag as "Generic High Entropy
+  // Secret" -- it is test fixture data, not a credential, but there is no
+  // reason to bait that heuristic when a derived value works identically).
+  const kFixtureChallengeText =
+      "capauth-pairing-enrollment-verified-v1:"
+      "91DD32D8B3037750899BA284917FD5ED33829026:device:91dd32d8b3037750";
+  final kFixtureChallengeB64 = base64Encode(utf8.encode(kFixtureChallengeText));
+
+  group("enroll: capauth_proof (inc-c72a9120 part 3)", () {
+    test(
+      "signs the DECODED capauth_challenge bytes (not the base64 text) and "
+      "sends the signature as capauth_proof",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll(
+          "WINDOW-PROOF-1",
+          capauthChallengeB64: kFixtureChallengeB64,
+        );
+
+        // MUTATION GUARD 2: signing the base64 STRING instead of the decoded
+        // bytes would leave lastSigned equal to kFixtureChallengeB64, not
+        // the decoded text below. Pinning the decoded literal by value (not
+        // just "some non-null signature") catches that.
+        expect(id.lastSigned, kFixtureChallengeText);
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        // MUTATION GUARD 1: dropping capauth_proof from the request body
+        // entirely reddens this (isNotEmpty on a missing key throws/fails).
+        expect(body["capauth_proof"], isNotEmpty);
+        expect(
+          body["capauth_proof"],
+          "SIG-${base64Encode(utf8.encode(kFixtureChallengeText))}",
+        );
+        // The unrelated `sig` (the pre-existing window-nonce signature) is
+        // still present and untouched by any of this.
+        expect(body["sig"], isNotEmpty);
+      },
+    );
+
+    test(
+      "a response with NO capauth_challenge still enrolls successfully, "
+      "with no capauth_proof field sent",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        // No capauthChallengeB64 argument at all (mirrors openEnrollWindow's
+        // response omitting the field on an older/degraded daemon).
+        await svc.enroll("WINDOW-PROOF-2");
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body.containsKey("capauth_proof"), isFalse);
+        expect(body["window_nonce"], "WINDOW-PROOF-2");
+        expect(body["sig"], isNotEmpty);
+      },
+    );
+
+    test(
+      "an empty-string capauth_challenge is treated the same as absent",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll("WINDOW-PROOF-3", capauthChallengeB64: "");
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body.containsKey("capauth_proof"), isFalse);
+      },
+    );
+
+    test(
+      "a capauth_challenge that is not valid base64 does not block "
+      "enrollment: enroll() completes with no capauth_proof sent",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        await svc.enroll(
+          "WINDOW-PROOF-4",
+          capauthChallengeB64: "not-valid-base64!!!",
+        );
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body.containsKey("capauth_proof"), isFalse);
+        // The rest of the enrollment still went through normally.
+        expect(body["window_nonce"], "WINDOW-PROOF-4");
+      },
+    );
+
+    test(
+      "valid base64 that decodes to non-UTF-8 bytes does not block "
+      "enrollment: enroll() completes with no capauth_proof sent",
+      () async {
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+        // 0xFF 0xFE is not valid UTF-8.
+        final badBytes = base64Encode([0xFF, 0xFE]);
+
+        await svc.enroll("WINDOW-PROOF-5", capauthChallengeB64: badBytes);
+
+        final req = adapter.requests.single;
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body.containsKey("capauth_proof"), isFalse);
+      },
+    );
+
+    test(
+      "full flow: openEnrollWindow's capauth_challenge flows unmodified "
+      "into enroll()'s capauth_proof, and both requests carry the SAME "
+      "device_pubkey byte-for-byte",
+      () async {
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WINDOW-PROOF-FULL",
+          "exp": 999,
+          "capauth_challenge": kFixtureChallengeB64,
+        };
+        adapter.routes["/api/v1/auth/enroll"] = {
+          "device_fp": "deadbeefdeadbeef",
+        };
+
+        final window = await svc.openEnrollWindow();
+        await svc.enroll(
+          window["window_nonce"] as String,
+          capauthChallengeB64: window["capauth_challenge"] as String?,
+        );
+
+        expect(adapter.requests, hasLength(2));
+        final openReq = adapter.requests[0];
+        final enrollReq = adapter.requests[1];
+        final openBody = openReq.data is String
+            ? jsonDecode(openReq.data as String) as Map
+            : (openReq.data as Map);
+        final enrollBody = enrollReq.data is String
+            ? jsonDecode(enrollReq.data as String) as Map
+            : (enrollReq.data as Map);
+
+        // MUTATION GUARD 3: a re-encoded/trimmed/independently-re-derived
+        // pubkey in either call would break this equality.
+        expect(openBody["device_pubkey"], enrollBody["device_pubkey"]);
+        expect(enrollBody["capauth_proof"], isNotEmpty);
+        expect(id.lastSigned, kFixtureChallengeText);
+      },
+    );
+  });
+
   group("openEnrollWindow", () {
-    test("posts (no body) and returns the window_nonce + exp", () async {
-      adapter.routes["/api/v1/auth/enroll/open"] = {
-        "window_nonce": "WINDOW-9",
-        "exp": 123456,
-      };
+    test(
+      "posts this device's device_pubkey and returns the window_nonce + exp",
+      () async {
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WINDOW-9",
+          "exp": 123456,
+        };
 
-      final res = await svc.openEnrollWindow();
+        final res = await svc.openEnrollWindow();
 
-      expect(res["window_nonce"], "WINDOW-9");
-      expect(res["exp"], 123456);
-      final req = adapter.requests.single;
-      expect(req.method, "POST");
-      expect(req.uri.path, "/api/v1/auth/enroll/open");
-    });
+        expect(res["window_nonce"], "WINDOW-9");
+        expect(res["exp"], 123456);
+        final req = adapter.requests.single;
+        expect(req.method, "POST");
+        expect(req.uri.path, "/api/v1/auth/enroll/open");
+        final body = req.data is String
+            ? jsonDecode(req.data as String) as Map
+            : (req.data as Map);
+        expect(body["device_pubkey"], "PUB-KEY-B64");
+      },
+    );
+
+    test(
+      "passes capauth_challenge through in the response untouched when the "
+      "server sends one",
+      () async {
+        // Derived, not a hand-transcribed base64 literal, for the same
+        // reason as kFixtureChallengeB64 above (one source of truth, and no
+        // raw base64 blob in source for a secret scanner to flag).
+        final passthroughB64 = base64Encode(utf8.encode("not-a-secret-challenge-placeholder"));
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WINDOW-10",
+          "exp": 123456,
+          "capauth_challenge": passthroughB64,
+        };
+
+        final res = await svc.openEnrollWindow();
+
+        expect(res["capauth_challenge"], passthroughB64);
+      },
+    );
+
+    test(
+      "a server that omits capauth_challenge (older daemon) still returns "
+      "the original two-key response with no error",
+      () async {
+        adapter.routes["/api/v1/auth/enroll/open"] = {
+          "window_nonce": "WINDOW-11",
+          "exp": 123456,
+        };
+
+        final res = await svc.openEnrollWindow();
+
+        expect(res["window_nonce"], "WINDOW-11");
+        expect(res.containsKey("capauth_challenge"), isFalse);
+      },
+    );
   });
 
   group(
