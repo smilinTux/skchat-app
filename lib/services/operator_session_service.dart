@@ -563,6 +563,20 @@ class OperatorSessionService {
   /// a client that sends no label at all, so this call keeps working
   /// unchanged for any caller that does not pass one.
   ///
+  /// [capauthChallengeB64] is [openEnrollWindow]'s `capauth_challenge`
+  /// field, verbatim, when it was present in that response (`inc-c72a9120`
+  /// part 3): base64 of the exact bytes capauth's `enroll_device` requires a
+  /// signature over for a `verified` enrollment
+  /// (`operator_grants.verified_enrollment_challenge`, server-side). This
+  /// method never re-derives those bytes itself, only signs whatever the
+  /// server handed back, see [_signCapauthChallenge] for why. When present
+  /// and signable, the resulting signature is sent as `capauth_proof`. When
+  /// absent, empty, or unusable (not valid base64, or the decoded bytes are
+  /// not valid UTF-8), enrollment proceeds with NO `capauth_proof` field
+  /// rather than failing: the server's own documented behavior for a missing
+  /// proof is a graceful `tofu`-tier fallback, not a hard refusal, so this
+  /// client must not turn a best-effort proof into a blocking requirement.
+  ///
   /// A successful enroll invalidates any negative cache armed by earlier
   /// pre-enrollment [ensureSession] failures (every gated request runs
   /// [ensureSession] via the Dio interceptor, so an unenrolled device racks
@@ -571,7 +585,11 @@ class OperatorSessionService {
   /// UI's link flow would rethrow that stale failure instead of running a
   /// fresh handshake against the now-enrolled device, even though enrollment
   /// itself just succeeded.
-  Future<void> enroll(String windowNonce, {String? label}) async {
+  Future<void> enroll(
+    String windowNonce, {
+    String? label,
+    String? capauthChallengeB64,
+  }) async {
     final kp = await _identity.ensure();
     final signedLabel = _normalizeSignedLabel(label);
     final claims = <String, Object?>{
@@ -581,6 +599,10 @@ class OperatorSessionService {
     };
     final signed = canonicalJson(claims);
     final sig = await _identity.sign(signed);
+    final capauthProof =
+        (capauthChallengeB64 != null && capauthChallengeB64.isNotEmpty)
+        ? await _signCapauthChallenge(capauthChallengeB64)
+        : null;
     await _dio.post<Map<String, dynamic>>(
       "/api/v1/auth/enroll",
       data: {
@@ -588,15 +610,50 @@ class OperatorSessionService {
         "window_nonce": windowNonce,
         "sig": sig,
         if (signedLabel != null) "label": signedLabel,
+        if (capauthProof != null) "capauth_proof": capauthProof,
       },
     );
     _resetNegativeCache();
   }
 
+  /// Sign the SERVER-derived capauth enrollment challenge
+  /// ([openEnrollWindow]'s `capauth_challenge`, base64 of capauth's own
+  /// domain-separated bytes). Returns null (never throws) on any malformed
+  /// input, so [enroll] degrades to an un-proofed enrollment instead of
+  /// blocking the whole flow on a bad or absent challenge.
+  ///
+  /// Signs the DECODED bytes, never the base64 TEXT: capauth verifies the
+  /// signature against the raw challenge bytes it built server-side
+  /// (`verified_challenge()`: a domain literal + capauth's 40-char-uppercase
+  /// fingerprint + the canonicalized subject, colon-joined, UTF-8 encoded),
+  /// so signing the base64 string instead would be a real signature over the
+  /// WRONG bytes. capauth rejects that exactly like a missing proof (a quiet
+  /// tier downgrade, not a loud error), which is precisely the trap called
+  /// out in the incident: re-deriving OR mis-signing the challenge fails
+  /// silently, so this deliberately signs only what the server handed back.
+  ///
+  /// [GuestIdentity.sign] takes a [String] and UTF-8-encodes it internally
+  /// (see e.g. `guest_identity_io.dart`'s `sign()`); the round trip through
+  /// [utf8.decode] here is lossless because the server always builds the
+  /// challenge as `f"...".encode("utf-8")`, i.e. the decoded bytes are valid
+  /// UTF-8 text by construction, and `utf8.encode(utf8.decode(bytes)) ==
+  /// bytes` for any valid UTF-8 input. [utf8.decode]'s default strict mode
+  /// (no `allowMalformed`) throws on anything else, caught below and treated
+  /// as "no usable challenge" rather than guessing at a repair.
+  Future<String?> _signCapauthChallenge(String challengeB64) async {
+    try {
+      final bytes = base64.decode(challengeB64);
+      final text = utf8.decode(bytes);
+      return await _identity.sign(text);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Operator-side call that opens a time-boxed enrollment window: `POST
-  /// /api/v1/auth/enroll/open` (no body) -> `{window_nonce, exp}`. The
-  /// returned `window_nonce` is what a NEW device signs via [enroll] to
-  /// complete registration before the window's `exp`.
+  /// /api/v1/auth/enroll/open` -> `{window_nonce, exp}`. The returned
+  /// `window_nonce` is what a NEW device signs via [enroll] to complete
+  /// registration before the window's `exp`.
   ///
   /// The server guards this route with `_require_operator`: when
   /// `SKCHAT_GUEST_OPERATOR_TOKEN` is set, a caller must present it as the
@@ -608,14 +665,32 @@ class OperatorSessionService {
   /// request goes out with no header, and the server's own 401/403 is
   /// surfaced to the caller as-is (the enrollment UI already turns that into
   /// a friendly "set your operator token" message).
+  ///
+  /// The body now carries this device's own `device_pubkey`
+  /// (`inc-c72a9120` part 3), the SAME pubkey [enroll] will send in its own
+  /// request (both read [_identity], whose `ensure()` caches, so the two
+  /// calls always see byte-identical key material, never independently
+  /// re-derived or re-encoded copies -- that matters because the server
+  /// fingerprints the raw string exactly as presented, and a variant would
+  /// yield a challenge whose signature [enroll]'s later request rejects).
+  /// A server that recognizes this field hands back an ADDITIONAL
+  /// `capauth_challenge` (base64 of the exact bytes a `verified` enrollment
+  /// must sign, derived server-side -- see [enroll]'s doc for why that
+  /// derivation deliberately does not happen here). This is purely additive:
+  /// a server that ignores or doesn't understand `device_pubkey` still
+  /// returns the original two-key `{window_nonce, exp}` response, and
+  /// [enroll] degrades gracefully to an un-proofed enrollment when
+  /// `capauth_challenge` is absent.
   Future<Map<String, dynamic>> openEnrollWindow() async {
     final tok = _readOperatorToken();
     final headers = <String, dynamic>{};
     if (tok != null && tok.isNotEmpty) {
       headers["X-Operator-Token"] = tok;
     }
+    final kp = await _identity.ensure();
     final resp = await _dio.post<Map<String, dynamic>>(
       "/api/v1/auth/enroll/open",
+      data: {"device_pubkey": kp.publicKeyB64},
       options: headers.isEmpty ? null : Options(headers: headers),
     );
     return resp.data ?? const {};
