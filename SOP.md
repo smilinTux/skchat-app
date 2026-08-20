@@ -181,6 +181,16 @@ order, because the local two-liner above is a subset:
 
 ## 5. Release / Deploy
 
+### 2026-08-20 capability-header rollout
+
+PR `#101` made `SKCapstoneClient` fetch `/api/auth/capability` once and attach the
+resolved `x-sk-actor` and optional `x-sk-capability` to every dashboard mutation.
+The focused regression suite passed on the `.41` build host and GitHub's analyze,
+test, web-build, import-gate, docs, and secret checks were green. A missing or failed
+capability response degrades to `unattributed`; it never restores the retired
+hard-coded `skworld-app` actor. Deploy only from a GitHub commit/tag, then rebuild the
+Flutter artifact on `.41` using the commands in section 3.
+
 Multi-platform Flutter client — there is no server to deploy, only artifacts to
 build and (for web) to serve.
 
@@ -358,7 +368,7 @@ _Honest-claims note: no part of this repo is "quantum-proof", "quantum-safe", or
 by `sk_pqc`; the call-media leg is DTLS-SRTP (classical)._
 
 <!-- docs-evidence
-verified: 2026-08-15
+verified: 2026-08-20
 checks:
   - name: Dart package name is still skchat (section 0 surface-only-rename claim)
     run: grep -qxF "name: skchat" pubspec.yaml
@@ -381,4 +391,3 @@ checks:
   - name: CI web artifact name is still skchat-web (section 0 rename claim)
     run: grep -qxF "          name: skchat-web-\${{ github.sha }}" .github/workflows/ci.yml
 -->
-

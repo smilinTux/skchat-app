@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-20
+
+### Security
+
+- `SKCapstoneClient` now resolves and caches the dashboard capability response and
+  sends its actor/capability headers on every mutation; focused Flutter coverage was
+  revalidated on the `.41` build host before rollout.
+
 ### Fixed (docs)
 - **`SOP.md` and `README.md` both quoted a stale version.** Both said `1.0.0`
   build `1`; `pubspec.yaml:5` was already four minor versions ahead. Neither doc
