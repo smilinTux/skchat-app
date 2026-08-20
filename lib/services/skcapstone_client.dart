@@ -71,6 +71,40 @@ class SKCapstoneClient {
   final Dio _dashDio;
   final OperatorSessionService? _sessionService;
 
+  /// Cached capability-fetch (Unified Consent Plane P1.3b, coord card
+  /// 280348ef). Mirrors skdashboard's `getCapability()` in
+  /// static/js/api.js: fetched once from GET /api/auth/capability and
+  /// cached for the client's lifetime so every mutating call after the
+  /// first does not re-fetch. A fetch failure (dashboard offline, seat not
+  /// configured) degrades to `{actor: "unattributed", capability: null}` --
+  /// the fleet-wide convention for a claim that cannot be backed -- rather
+  /// than any hardcoded actor string. Never synthesize an identity.
+  Future<Map<String, dynamic>>? _capabilityFetch;
+
+  Future<Map<String, dynamic>> _getCapability() {
+    return _capabilityFetch ??= _dashDio
+        .get<Map<String, dynamic>>('/api/auth/capability')
+        .then((r) => r.data ?? const <String, dynamic>{})
+        .catchError((_) => <String, dynamic>{});
+  }
+
+  /// Headers every mutating `_dashDio` call attaches: `x-sk-actor` (the PDP
+  /// subject) and, when this seat is configured with one, `x-sk-capability`
+  /// (queue_authz's staged token/pdp/both gate reads it). Mirrors
+  /// skdashboard's `authHeaders()` in static/js/api.js so the two clients
+  /// cannot drift.
+  Future<Map<String, String>> _authHeaders() async {
+    final cap = await _getCapability();
+    final headers = <String, String>{
+      'x-sk-actor': (cap['actor'] as String?) ?? 'unattributed',
+    };
+    final capability = cap['capability'] as String?;
+    if (capability != null && capability.isNotEmpty) {
+      headers['x-sk-capability'] = capability;
+    }
+    return headers;
+  }
+
   /// GET /ping, verify the daemon is running.
   Future<bool> isAlive() async {
     try {
@@ -167,7 +201,7 @@ class SKCapstoneClient {
       final resp = await _dashDio.post<Map<String, dynamic>>(
         '/api/card/$cardId/$action',
         data: body,
-        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+        options: Options(headers: await _authHeaders()),
       );
       return (resp.data?['ok'] as bool?) ?? (resp.statusCode == 200);
     } catch (_) {
@@ -213,7 +247,7 @@ class SKCapstoneClient {
       final resp = await _dashDio.post<Map<String, dynamic>>(
         '/api/card/$cardId/queue-ai',
         data: {'instruction': instruction, 'mode': mode, 'agent': agent},
-        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+        options: Options(headers: await _authHeaders()),
       );
       if ((resp.data?['ok'] as bool?) == true) {
         return resp.data?['run_id'] as String?;
@@ -244,7 +278,7 @@ class SKCapstoneClient {
       final resp = await _dashDio.post<Map<String, dynamic>>(
         '/api/change/$changeId/$action',
         data: body,
-        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+        options: Options(headers: await _authHeaders()),
       );
       return ChangeActionResult(ok: true, data: resp.data ?? const {});
     } on DioException catch (e) {
@@ -265,7 +299,7 @@ class SKCapstoneClient {
     try {
       final resp = await _dashDio.get<Map<String, dynamic>>(
         '/api/change/$changeId/$action',
-        options: Options(headers: const {'x-sk-actor': 'skworld-app'}),
+        options: Options(headers: await _authHeaders()),
       );
       return ChangeActionResult(ok: true, data: resp.data ?? const {});
     } on DioException catch (e) {
